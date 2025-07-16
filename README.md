@@ -76,13 +76,13 @@ func main() {
 		close(in)
 	}()
 
-	handler := func(ctx context.Context, batch []int) ([]gopipeline.BatchRes[int], error) {
-		res := make([]gopipeline.BatchRes[int], len(batch))
+	handler := func(ctx context.Context, batch []int) ([]gopipeline.BatchResult[int], error) {
+		res := make([]gopipeline.BatchResult[int], len(batch))
 		for i, v := range batch {
 			if v%4 == 0 {
-				res[i] = gopipeline.NewBatchRes(0, fmt.Errorf("rejecting %d", v))
+				res[i] = gopipeline.NewBatchResult(0, fmt.Errorf("rejecting %d", v))
 			} else {
-				res[i] = gopipeline.NewBatchRes(v*10, nil)
+				res[i] = gopipeline.NewBatchResult(v*10, nil)
 			}
 		}
 		return res, nil
@@ -92,13 +92,14 @@ func main() {
 		ctx,
 		in,
 		handler,
+		gopipeline.HandleBatchResult,
 		3,
 		2*time.Second,
 		gopipeline.WithErrorHandler(func(val any, err error) {
 			switch {
 			case errors.Is(err, gopipeline.ErrProcessBatch):
 				fmt.Printf("error: '%v', batch: '%v'\n", err, val)
-			case errors.Is(err, gopipeline.ErrProcessBatchRes):
+			case errors.Is(err, gopipeline.ErrProcessBatchResult):
 				fmt.Printf("error: '%v', item: '%v'\n", err, val)
 			}
 		}),
