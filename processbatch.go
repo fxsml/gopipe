@@ -10,38 +10,32 @@ import (
 var (
 	// ErrProcessBatch is returned when a batch process function returns an error.
 	ErrProcessBatch = fmt.Errorf("gopipeline: process batch")
-	// ErrProcessBatchRes is returned when a batch process function returns an error for a specific item.
-	ErrProcessBatchRes = fmt.Errorf("gopipeline: process batch result")
+	// ErrProcessBatchResult is returned when a batch process function returns an error for a specific item.
+	ErrProcessBatchResult = fmt.Errorf("gopipeline: process batch result")
 )
 
-type BatchRes[T any] interface {
-	Val() T
-	Err() error
+type BatchResult[T any] struct {
+	Val T
+	Err error
 }
 
-type batchRes[T any] struct {
-	val T
-	err error
+func NewBatchResult[T any](val T, err error) BatchResult[T] {
+	return BatchResult[T]{Val: val, Err: err}
 }
 
-func (r batchRes[T]) Val() T {
-	return r.val
+func HandleBatchResult[T any](res BatchResult[T]) (T, error) {
+	return res.Val, res.Err
 }
 
-func (r batchRes[T]) Err() error {
-	return r.err
-}
+type BatchResultHandler[BatchResult, Out any] func(BatchResult) (Out, error)
 
-func NewBatchRes[T any](val T, err error) BatchRes[T] {
-	return batchRes[T]{val: val, err: err}
-}
+type ProcessBatchHandler[In, BatchResult any] func(context.Context, []In) ([]BatchResult, error)
 
-type ProcessBatchHandler[In, Out any] func(context.Context, []In) ([]BatchRes[Out], error)
-
-func ProcessBatch[In, Out any](
+func ProcessBatch[In, BatchResult, Out any](
 	ctx context.Context,
 	in <-chan In,
-	handler ProcessBatchHandler[In, Out],
+	processHandler ProcessBatchHandler[In, BatchResult],
+	resultHandler BatchResultHandler[BatchResult, Out],
 	maxSize int,
 	maxDuration time.Duration,
 	opts ...Option,
@@ -105,23 +99,24 @@ func ProcessBatch[In, Out any](
 						return
 					}
 					ctxProcessBatch, cancel := cfg.ctx(ctx)
-					batchRes, err := handler(ctxProcessBatch, batch)
+					batchResult, err := processHandler(ctxProcessBatch, batch)
 					if err != nil {
 						cfg.err(batch, fmt.Errorf("%w: %w", ErrProcessBatch, err))
 						cancel()
 						continue
 					}
-					for i, res := range batchRes {
-						if res.Err() != nil {
+					for i, res := range batchResult {
+						o, err := resultHandler(res)
+						if err != nil {
 							val := any(nil)
-							if len(batch) == len(batchRes) {
+							if len(batch) == len(batchResult) {
 								val = batch[i]
 							}
-							cfg.err(val, fmt.Errorf("%w: %w", ErrProcessBatchRes, res.Err()))
+							cfg.err(val, fmt.Errorf("%w: %w", ErrProcessBatchResult, err))
 							continue
 						}
 						select {
-						case out <- res.Val():
+						case out <- o:
 						case <-ctxProcessBatch.Done():
 						}
 					}

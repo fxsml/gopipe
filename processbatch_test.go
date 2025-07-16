@@ -19,15 +19,15 @@ func TestProcessBatch_Basic(t *testing.T) {
 	close(in)
 
 	batchSize := 3
-	handler := func(ctx context.Context, batch []int) ([]BatchRes[int], error) {
-		results := make([]BatchRes[int], len(batch))
+	handler := func(ctx context.Context, batch []int) ([]BatchResult[int], error) {
+		results := make([]BatchResult[int], len(batch))
 		for i, v := range batch {
-			results[i] = NewBatchRes[int](v*10, nil)
+			results[i] = NewBatchResult[int](v*10, nil)
 		}
 		return results, nil
 	}
 
-	out := ProcessBatch(ctx, in, handler, batchSize, 100*time.Millisecond)
+	out := ProcessBatch(ctx, in, handler, HandleBatchResult, batchSize, 100*time.Millisecond)
 	results := []int{}
 	for v := range out {
 		results = append(results, v)
@@ -51,20 +51,20 @@ func TestProcessBatch_Timeout(t *testing.T) {
 	in <- 2
 	close(in)
 
-	handler := func(ctx context.Context, batch []int) ([]BatchRes[int], error) {
+	handler := func(ctx context.Context, batch []int) ([]BatchResult[int], error) {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(50 * time.Millisecond):
-			results := make([]BatchRes[int], len(batch))
+			results := make([]BatchResult[int], len(batch))
 			for i, v := range batch {
-				results[i] = NewBatchRes[int](v*10, nil)
+				results[i] = NewBatchResult[int](v*10, nil)
 			}
 			return results, nil
 		}
 	}
 
-	out := ProcessBatch(ctx, in, handler, 2, 10*time.Millisecond, WithProcessTimeout(30*time.Millisecond), WithErrorHandler(func(val any, err error) {
+	out := ProcessBatch(ctx, in, handler, HandleBatchResult, 2, 10*time.Millisecond, WithProcessTimeout(30*time.Millisecond), WithErrorHandler(func(val any, err error) {
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("expected context.DeadlineExceeded, got %v", err)
 		}
@@ -90,17 +90,17 @@ func TestProcessBatch_Concurrency(t *testing.T) {
 	concurrency := 5
 	batchSize := 2
 	sleep := 50 * time.Millisecond
-	handler := func(ctx context.Context, batch []int) ([]BatchRes[int], error) {
+	handler := func(ctx context.Context, batch []int) ([]BatchResult[int], error) {
 		time.Sleep(sleep)
-		results := make([]BatchRes[int], len(batch))
+		results := make([]BatchResult[int], len(batch))
 		for i, v := range batch {
-			results[i] = NewBatchRes[int](v, nil)
+			results[i] = NewBatchResult[int](v, nil)
 		}
 		return results, nil
 	}
 
 	start := time.Now()
-	out := ProcessBatch(ctx, in, handler, batchSize, 100*time.Millisecond, WithConcurrency(concurrency))
+	out := ProcessBatch(ctx, in, handler, HandleBatchResult, batchSize, 100*time.Millisecond, WithConcurrency(concurrency))
 	results := []int{}
 	for v := range out {
 		results = append(results, v)
@@ -141,19 +141,19 @@ func TestProcessBatch_ErrorHandler(t *testing.T) {
 		}
 	}
 
-	handler := func(ctx context.Context, batch []int) ([]BatchRes[int], error) {
-		results := make([]BatchRes[int], len(batch))
+	handler := func(ctx context.Context, batch []int) ([]BatchResult[int], error) {
+		results := make([]BatchResult[int], len(batch))
 		for i, v := range batch {
 			if v == 2 {
-				results[i] = NewBatchRes[int](0, fail)
+				results[i] = NewBatchResult[int](0, fail)
 			} else {
-				results[i] = NewBatchRes[int](v, nil)
+				results[i] = NewBatchResult[int](v, nil)
 			}
 		}
 		return results, nil
 	}
 
-	out := ProcessBatch(ctx, in, handler, 2, 100*time.Millisecond, WithErrorHandler(errHandler))
+	out := ProcessBatch(ctx, in, handler, HandleBatchResult, 2, 100*time.Millisecond, WithErrorHandler(errHandler))
 	results := []int{}
 	for v := range out {
 		results = append(results, v)
@@ -178,18 +178,18 @@ func TestProcessBatch_MaxDurationAndMaxSize(t *testing.T) {
 	maxDuration := 50 * time.Millisecond
 	var batchLens []int
 	var mu sync.Mutex
-	handler := func(ctx context.Context, batch []int) ([]BatchRes[int], error) {
+	handler := func(ctx context.Context, batch []int) ([]BatchResult[int], error) {
 		mu.Lock()
 		batchLens = append(batchLens, len(batch))
 		mu.Unlock()
-		results := make([]BatchRes[int], len(batch))
+		results := make([]BatchResult[int], len(batch))
 		for i, v := range batch {
-			results[i] = NewBatchRes(v, nil)
+			results[i] = NewBatchResult(v, nil)
 		}
 		return results, nil
 	}
 
-	out := ProcessBatch(ctx, in, handler, batchSize, maxDuration)
+	out := ProcessBatch(ctx, in, handler, HandleBatchResult, batchSize, maxDuration)
 
 	for i := 0; i < 5; i++ {
 		in <- i + 1 // Fill the channel with values 1 to 5
@@ -214,7 +214,7 @@ func TestProcessBatch_MaxDurationAndMaxSize(t *testing.T) {
 func TestProcessBatch_BatchErrorHandler(t *testing.T) {
 	ctx := context.Background()
 	in := make(chan int, 4)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		in <- i
 	}
 	close(in)
@@ -235,11 +235,11 @@ func TestProcessBatch_BatchErrorHandler(t *testing.T) {
 		handledErrs = append(handledErrs, err)
 	}
 
-	handler := func(ctx context.Context, batch []int) ([]BatchRes[int], error) {
+	handler := func(ctx context.Context, batch []int) ([]BatchResult[int], error) {
 		return nil, fail
 	}
 
-	out := ProcessBatch(ctx, in, handler, batchSize, 100*time.Millisecond, WithErrorHandler(errHandler))
+	out := ProcessBatch(ctx, in, handler, HandleBatchResult, batchSize, 100*time.Millisecond, WithErrorHandler(errHandler))
 	for range out {
 		// no output expected
 	}
