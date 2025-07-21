@@ -1,4 +1,4 @@
-package gopipeline
+package gopipe
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 )
 
 // ErrFilter is returned when a filter function returns an error.
-var ErrFilter = fmt.Errorf("gopipeline: filter")
+var ErrFilter = fmt.Errorf("gopipe: filter")
 
 // FilterHandler is a function type that evaluates whether an input value should be included
 // in the output or discarded. It returns a boolean indicating whether to keep the item (true)
@@ -35,9 +35,9 @@ type FilterHandler[In any] func(context.Context, In) (bool, error)
 //
 // Example:
 //
-//	out := gopipeline.Filter(ctx, inputChan, func(ctx context.Context, v int) (bool, error) {
+//	out := gopipe.Filter(ctx, inputChan, func(ctx context.Context, v int) (bool, error) {
 //	    return v%2 == 0, nil // Only keep even numbers
-//	}, gopipeline.WithConcurrency(3))
+//	}, gopipe.WithConcurrency(3))
 //
 // The output channel is automatically closed when all inputs have been processed
 // or when the context is cancelled.

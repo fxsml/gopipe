@@ -1,4 +1,4 @@
-package gopipeline
+package gopipe
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 )
 
 // ErrProcess is returned when a process function returns an error.
-var ErrProcess = fmt.Errorf("gopipeline: process")
+var ErrProcess = fmt.Errorf("gopipe: process")
 
 // ProcessHandler is a function type that processes a single input value and returns
 // an output value or an error. The function receives a context that can be used for
@@ -32,9 +32,9 @@ type ProcessHandler[In, Out any] func(context.Context, In) (Out, error)
 //
 // Example:
 //
-//	out := gopipeline.Process(ctx, inputChan, func(ctx context.Context, v int) (int, error) {
+//	out := gopipe.Process(ctx, inputChan, func(ctx context.Context, v int) (int, error) {
 //	    return v * 2, nil
-//	}, gopipeline.WithConcurrency(5), gopipeline.WithBuffer(10))
+//	}, gopipe.WithConcurrency(5), gopipe.WithBuffer(10))
 //
 // The output channel is automatically closed when all inputs have been processed
 // or when the context is cancelled.

@@ -1,4 +1,4 @@
-package gopipeline
+package gopipe
 
 import (
 	"context"
@@ -9,9 +9,9 @@ import (
 
 var (
 	// ErrProcessBatch is returned when a batch process function returns an error.
-	ErrProcessBatch = fmt.Errorf("gopipeline: process batch")
+	ErrProcessBatch = fmt.Errorf("gopipe: process batch")
 	// ErrProcessBatchResult is returned when a batch process function returns an error for a specific item.
-	ErrProcessBatchResult = fmt.Errorf("gopipeline: process batch result")
+	ErrProcessBatchResult = fmt.Errorf("gopipe: process batch result")
 )
 
 // BatchResult is a generic type that holds both the processed value and any error
@@ -86,21 +86,21 @@ type ProcessBatchHandler[In, BatchResult any] func(context.Context, []In) ([]Bat
 //
 // Example:
 //
-//	handler := func(ctx context.Context, batch []int) ([]gopipeline.BatchResult[int], error) {
-//	    results := make([]gopipeline.BatchResult[int], len(batch))
+//	handler := func(ctx context.Context, batch []int) ([]gopipe.BatchResult[int], error) {
+//	    results := make([]gopipe.BatchResult[int], len(batch))
 //	    for i, v := range batch {
 //	        if v%4 == 0 {
-//	            results[i] = gopipeline.NewBatchResult(0, fmt.Errorf("invalid value: %d", v))
+//	            results[i] = gopipe.NewBatchResult(0, fmt.Errorf("invalid value: %d", v))
 //	        } else {
-//	            results[i] = gopipeline.NewBatchResult(v*10, nil)
+//	            results[i] = gopipe.NewBatchResult(v*10, nil)
 //	        }
 //	    }
 //	    return results, nil
 //	}
 //
-//	out := gopipeline.ProcessBatch(
-//	    ctx, inputChan, handler, gopipeline.HandleBatchResult,
-//	    10, 500*time.Millisecond, gopipeline.WithConcurrency(3),
+//	out := gopipe.ProcessBatch(
+//	    ctx, inputChan, handler, gopipe.HandleBatchResult,
+//	    10, 500*time.Millisecond, gopipe.WithConcurrency(3),
 //	)
 //
 // The output channel is automatically closed when all inputs have been processed

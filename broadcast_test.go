@@ -1,4 +1,4 @@
-package gopipeline_test
+package gopipe_test
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fxsml/gopipeline"
+	"github.com/fxsml/gopipe"
 )
 
 func TestBroadcast_AllOutputsReceiveAllValues(t *testing.T) {
@@ -14,7 +14,7 @@ func TestBroadcast_AllOutputsReceiveAllValues(t *testing.T) {
 	in := make(chan int)
 	n := 3
 	buffer := 2
-	outs := gopipeline.Broadcast(ctx, n, buffer, in)
+	outs := gopipe.Broadcast(ctx, n, buffer, in)
 
 	go func() {
 		for i := 1; i <= 5; i++ {
@@ -48,7 +48,7 @@ func TestBroadcast_AllOutputsReceiveAllValues(t *testing.T) {
 func TestBroadcast_ChannelsClosedOnInputClose(t *testing.T) {
 	ctx := context.Background()
 	in := make(chan int)
-	outs := gopipeline.Broadcast(ctx, 2, 1, in)
+	outs := gopipe.Broadcast(ctx, 2, 1, in)
 	close(in)
 
 	time.Sleep(10 * time.Millisecond)
@@ -66,7 +66,7 @@ func TestBroadcast_ChannelsClosedOnInputClose(t *testing.T) {
 func TestBroadcast_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	in := make(chan int)
-	outs := gopipeline.Broadcast(ctx, 2, 1, in)
+	outs := gopipe.Broadcast(ctx, 2, 1, in)
 	cancel()
 
 	time.Sleep(10 * time.Millisecond)

@@ -1,4 +1,4 @@
-package gopipeline
+package gopipe
 
 import (
 	"context"

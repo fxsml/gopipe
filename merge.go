@@ -1,4 +1,4 @@
-package gopipeline
+package gopipe
 
 import (
 	"context"
@@ -31,7 +31,7 @@ import (
 //	input3 := make(chan int)
 //	
 //	// Combined will receive values from all three input channels
-//	combined := gopipeline.Merge(ctx, 10, input1, input2, input3)
+//	combined := gopipe.Merge(ctx, 10, input1, input2, input3)
 //
 // The output channel is closed when all input channels are closed or the context is cancelled.
 func Merge[T any](ctx context.Context, buffer int, ins ...<-chan T) <-chan T {

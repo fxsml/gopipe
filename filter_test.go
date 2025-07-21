@@ -1,10 +1,10 @@
-package gopipeline_test
+package gopipe_test
 
 import (
 	"context"
 	"testing"
 
-	. "github.com/fxsml/gopipeline"
+	. "github.com/fxsml/gopipe"
 )
 
 func TestFilter_Basic(t *testing.T) {

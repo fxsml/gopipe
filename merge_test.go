@@ -1,18 +1,18 @@
-package gopipeline_test
+package gopipe_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	"github.com/fxsml/gopipeline"
+	"github.com/fxsml/gopipe"
 )
 
 func TestMerge_OutputClosedWhenAllInputsClosed(t *testing.T) {
 	ctx := context.Background()
 	in1 := make(chan int)
 	in2 := make(chan int)
-	out := gopipeline.Merge(ctx, 2, in1, in2)
+	out := gopipe.Merge(ctx, 2, in1, in2)
 	close(in1)
 	close(in2)
 
@@ -36,7 +36,7 @@ func TestMerge_OutputReceivesAllValues(t *testing.T) {
 	in2 <- 4
 	close(in1)
 	close(in2)
-	out := gopipeline.Merge(ctx, 4, in1, in2)
+	out := gopipe.Merge(ctx, 4, in1, in2)
 	var got []int
 	for v := range out {
 		got = append(got, v)
@@ -60,7 +60,7 @@ func TestMerge_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	in1 := make(chan int)
 	in2 := make(chan int)
-	out := gopipeline.Merge(ctx, 2, in1, in2)
+	out := gopipe.Merge(ctx, 2, in1, in2)
 	cancel()
 
 	time.Sleep(10 * time.Millisecond)

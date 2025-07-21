@@ -1,4 +1,4 @@
-package gopipeline
+package gopipe
 
 import "context"
 
@@ -17,14 +17,14 @@ import "context"
 //
 //	// Create a pipeline where we only care about side effects in the Process stage
 //	inputChan := make(chan int)
-//	processed := gopipeline.Process(ctx, inputChan, func(ctx context.Context, v int) (int, error) {
+//	processed := gopipe.Process(ctx, inputChan, func(ctx context.Context, v int) (int, error) {
 //	    // Do some work with side effects
 //	    log.Printf("Processing value: %d", v)
 //	    return v, nil
 //	})
 //
 //	// Drain the processed output since we don't need the values
-//	gopipeline.Drain(ctx, processed)
+//	gopipe.Drain(ctx, processed)
 //
 // Note that Drain does not wait for the channel to be closed before returning.
 // It starts a goroutine that handles the draining operation asynchronously.

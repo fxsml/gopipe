@@ -1,4 +1,4 @@
-# gopipeline
+# gopipe
 
 A lightweight, generic Go library for building concurrent, composable data pipelines using channels and context. Supports processing, filtering, batching, broadcasting, merging, and draining of channel data with robust error handling and cancellation.
 
@@ -14,7 +14,7 @@ A lightweight, generic Go library for building concurrent, composable data pipel
 ## Installation
 
 ```
-go get github.com/fxsml/gopipeline
+go get github.com/fxsml/gopipe
 ```
 
 ## Usage
@@ -28,7 +28,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/fxsml/gopipeline"
+	"github.com/fxsml/gopipe"
 )
 
 func main() {
@@ -42,9 +42,9 @@ func main() {
 		}
 	}()
 
-	out := gopipeline.Process(ctx, in, func(ctx context.Context, v int) (int, error) {
+	out := gopipe.Process(ctx, in, func(ctx context.Context, v int) (int, error) {
 		return v * 2, nil
-	}, gopipeline.WithConcurrency(2))
+	}, gopipe.WithConcurrency(2))
 
 	for v := range out {
 		fmt.Println(v)
@@ -63,7 +63,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fxsml/gopipeline"
+	"github.com/fxsml/gopipe"
 )
 
 func main() {
@@ -76,30 +76,30 @@ func main() {
 		close(in)
 	}()
 
-	handler := func(ctx context.Context, batch []int) ([]gopipeline.BatchResult[int], error) {
-		res := make([]gopipeline.BatchResult[int], len(batch))
+	handler := func(ctx context.Context, batch []int) ([]gopipe.BatchResult[int], error) {
+		res := make([]gopipe.BatchResult[int], len(batch))
 		for i, v := range batch {
 			if v%4 == 0 {
-				res[i] = gopipeline.NewBatchResult(0, fmt.Errorf("rejecting %d", v))
+				res[i] = gopipe.NewBatchResult(0, fmt.Errorf("rejecting %d", v))
 			} else {
-				res[i] = gopipeline.NewBatchResult(v*10, nil)
+				res[i] = gopipe.NewBatchResult(v*10, nil)
 			}
 		}
 		return res, nil
 	}
 
-	out := gopipeline.ProcessBatch(
+	out := gopipe.ProcessBatch(
 		ctx,
 		in,
 		handler,
-		gopipeline.HandleBatchResult,
+		gopipe.HandleBatchResult,
 		3,
 		2*time.Second,
-		gopipeline.WithErrorHandler(func(val any, err error) {
+		gopipe.WithErrorHandler(func(val any, err error) {
 			switch {
-			case errors.Is(err, gopipeline.ErrProcessBatch):
+			case errors.Is(err, gopipe.ErrProcessBatch):
 				fmt.Printf("error: '%v', batch: '%v'\n", err, val)
-			case errors.Is(err, gopipeline.ErrProcessBatchResult):
+			case errors.Is(err, gopipe.ErrProcessBatchResult):
 				fmt.Printf("error: '%v', item: '%v'\n", err, val)
 			}
 		}),

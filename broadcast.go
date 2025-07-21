@@ -1,4 +1,4 @@
-package gopipeline
+package gopipe
 
 import "context"
 
@@ -23,7 +23,7 @@ import "context"
 // Example:
 //
 //	inputChan := make(chan int)
-//	outputs := gopipeline.Broadcast(ctx, 3, 10, inputChan)
+//	outputs := gopipe.Broadcast(ctx, 3, 10, inputChan)
 //
 //	// Each of outputs[0], outputs[1], and outputs[2] will receive all values from inputChan
 //

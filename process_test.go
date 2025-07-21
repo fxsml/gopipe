@@ -1,4 +1,4 @@
-package gopipeline_test
+package gopipe_test
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/fxsml/gopipeline"
+	. "github.com/fxsml/gopipe"
 )
 
 func TestProcess_Basic(t *testing.T) {
