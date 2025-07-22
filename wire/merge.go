@@ -1,11 +1,11 @@
-package gopipe
+package wire
 
 import (
 	"context"
 	"sync"
 )
 
-// Merge creates a fan-in pattern that combines multiple input channels into a single 
+// Merge creates a fan-in pattern that combines multiple input channels into a single
 // buffered output channel.
 //
 // Merge takes a context for cancellation, a buffer size for the output channel, and
@@ -29,9 +29,9 @@ import (
 //	input1 := make(chan int)
 //	input2 := make(chan int)
 //	input3 := make(chan int)
-//	
+//
 //	// Combined will receive values from all three input channels
-//	combined := gopipe.Merge(ctx, 10, input1, input2, input3)
+//	combined := wire.Merge(ctx, 10, input1, input2, input3)
 //
 // The output channel is closed when all input channels are closed or the context is cancelled.
 func Merge[T any](ctx context.Context, buffer int, ins ...<-chan T) <-chan T {

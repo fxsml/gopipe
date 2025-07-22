@@ -1,4 +1,4 @@
-package gopipe
+package wire
 
 import "context"
 
@@ -24,7 +24,7 @@ import "context"
 //	})
 //
 //	// Drain the processed output since we don't need the values
-//	gopipe.Drain(ctx, processed)
+//	wire.Drain(ctx, processed)
 //
 // Note that Drain does not wait for the channel to be closed before returning.
 // It starts a goroutine that handles the draining operation asynchronously.

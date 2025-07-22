@@ -1,11 +1,11 @@
-package gopipe_test
+package wire_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	. "github.com/fxsml/gopipe"
+	. "github.com/fxsml/gopipe/wire"
 )
 
 func TestDrain_Basic(t *testing.T) {
