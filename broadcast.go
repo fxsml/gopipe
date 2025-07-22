@@ -30,8 +30,11 @@ import "context"
 // All output channels are closed when the input channel is closed or the context is cancelled.
 func Broadcast[T any](ctx context.Context, n, buffer int, in <-chan T) []<-chan T {
 	outs := make([]chan T, n)
-	for i := range n {
+	outsReadOnly := make([]<-chan T, n)
+
+	for i := range outs {
 		outs[i] = make(chan T, buffer)
+		outsReadOnly[i] = outs[i]
 	}
 
 	go func() {
@@ -60,9 +63,5 @@ func Broadcast[T any](ctx context.Context, n, buffer int, in <-chan T) []<-chan 
 		}
 	}()
 
-	result := make([]<-chan T, n)
-	for i, ch := range outs {
-		result[i] = ch
-	}
-	return result
+	return outsReadOnly
 }
