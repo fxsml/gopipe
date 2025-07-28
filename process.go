@@ -51,6 +51,9 @@ func Process[In, Out any](
 
 	out := make(chan Out, cfg.buffer)
 
+	ctxReporter, cancelReporter := context.WithCancel(ctx)
+	reporter := newAtomicStatusReporter(ctxReporter, cfg.reporter, cfg.reportInterval, in, out)
+
 	var wg sync.WaitGroup
 	wg.Add(cfg.concurrency)
 	for range cfg.concurrency {
@@ -64,12 +67,15 @@ func Process[In, Out any](
 					if !ok {
 						return
 					}
+					reporter.addReceived(1)
 					ctxProcess, cancel := cfg.ctx(ctx)
 					if res, err := handler(ctxProcess, val); err != nil {
+						reporter.addError(1)
 						cfg.err(val, fmt.Errorf("%w: %w", ErrProcess, err))
 					} else {
 						select {
 						case out <- res:
+							reporter.addProcessed(1)
 						case <-ctx.Done():
 						}
 					}
@@ -82,6 +88,7 @@ func Process[In, Out any](
 	go func() {
 		wg.Wait()
 		close(out)
+		cancelReporter()
 	}()
 
 	return out

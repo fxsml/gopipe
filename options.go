@@ -11,6 +11,17 @@ import (
 // The first parameter is the value that caused the error, and the second is the error itself.
 type ErrorHandler func(any, error)
 
+type StatusReporter func(Status)
+
+type Status struct {
+	Received   int64
+	Processed  int64
+	Elapsed    time.Duration
+	Errors     int64
+	LenInChan  int
+	LenOutChan int
+}
+
 // Create a logger with timestamps (date and time)
 var logger = log.New(os.Stderr, "", log.LstdFlags)
 
@@ -27,10 +38,12 @@ var defaultConfig = config{
 
 // config holds the configuration options for pipeline stages.
 type config struct {
-	concurrency int
-	buffer      int
-	err         ErrorHandler
-	ctx         func(context.Context) (context.Context, context.CancelFunc)
+	concurrency    int
+	buffer         int
+	err            ErrorHandler
+	ctx            func(context.Context) (context.Context, context.CancelFunc)
+	reporter       StatusReporter
+	reportInterval time.Duration
 }
 
 // Option is a function type for configuring pipeline stages.
@@ -78,6 +91,16 @@ func WithErrorHandler(handler ErrorHandler) Option {
 	return func(cfg *config) {
 		if handler != nil {
 			cfg.err = handler
+		}
+	}
+}
+
+// WithStatusReporter sets a custom status reporter for reporting processing status.
+func WithStatusReporter(reporter StatusReporter, interval time.Duration) Option {
+	return func(cfg *config) {
+		if reporter != nil && interval > 0 {
+			cfg.reporter = reporter
+			cfg.reportInterval = interval
 		}
 	}
 }
