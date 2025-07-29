@@ -6,12 +6,25 @@ import (
 	"time"
 )
 
+type StatusReporter func(Status)
+
+type Status struct {
+	Received   int64
+	Processed  int64
+	Sent       int64
+	Elapsed    time.Duration
+	Rejected   int64
+	LenInChan  int
+	LenOutChan int
+}
+
 type atomicStatusReporter[In, Out any] struct {
 	reporting bool
 
 	received  atomic.Int64
 	processed atomic.Int64
-	errors    atomic.Int64
+	sent      atomic.Int64
+	rejected  atomic.Int64
 }
 
 func newAtomicStatusReporter[In, Out any](
@@ -39,7 +52,8 @@ func newAtomicStatusReporter[In, Out any](
 					status := Status{
 						Received:   s.received.Load() - last.Received,
 						Processed:  s.processed.Load() - last.Processed,
-						Errors:     s.errors.Load() - last.Errors,
+						Sent:       s.sent.Load() - last.Sent,
+						Rejected:   s.rejected.Load() - last.Rejected,
 						Elapsed:    now.Sub(start),
 						LenInChan:  len(in),
 						LenOutChan: len(out),
@@ -66,8 +80,14 @@ func (s *atomicStatusReporter[In, Out]) addProcessed(delta int64) {
 	}
 }
 
-func (s *atomicStatusReporter[In, Out]) addError(delta int64) {
+func (s *atomicStatusReporter[In, Out]) addSent(delta int64) {
 	if s.reporting {
-		s.errors.Add(delta)
+		s.sent.Add(delta)
+	}
+}
+
+func (s *atomicStatusReporter[In, Out]) addRejected(delta int64) {
+	if s.reporting {
+		s.rejected.Add(delta)
 	}
 }

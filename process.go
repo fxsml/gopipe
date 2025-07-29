@@ -67,19 +67,25 @@ func Process[In, Out any](
 					if !ok {
 						return
 					}
+
 					reporter.addReceived(1)
 					ctxProcess, cancel := cfg.ctx(ctx)
-					if res, err := handler(ctxProcess, val); err != nil {
-						reporter.addError(1)
-						cfg.err(val, fmt.Errorf("%w: %w", ErrProcess, err))
-					} else {
-						select {
-						case out <- res:
-							reporter.addProcessed(1)
-						case <-ctx.Done():
-						}
-					}
+					res, err := handler(ctxProcess, val)
+					reporter.addProcessed(1)
 					cancel()
+
+					if err != nil {
+						reporter.addRejected(1)
+						cfg.err(val, fmt.Errorf("%w: %w", ErrProcess, err))
+						continue
+					}
+
+					select {
+					case out <- res:
+						reporter.addSent(1)
+					case <-ctx.Done():
+						return
+					}
 				}
 			}
 		}()

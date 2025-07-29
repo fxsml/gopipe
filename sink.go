@@ -3,6 +3,7 @@ package gopipe
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 var ErrSink = fmt.Errorf("gopipe: sink")
@@ -49,8 +50,14 @@ func Sink[In any](
 		opt(&cfg)
 	}
 
+	ctxReporter, cancelReporter := context.WithCancel(ctx)
+	reporter := newAtomicStatusReporter[In, any](ctxReporter, cfg.reporter, cfg.reportInterval, in, nil)
+
+	var wg sync.WaitGroup
+	wg.Add(cfg.concurrency)
 	for range cfg.concurrency {
 		go func() {
+			defer wg.Done()
 			for {
 				select {
 				case <-ctx.Done():
@@ -59,13 +66,24 @@ func Sink[In any](
 					if !ok {
 						return
 					}
+
+					reporter.addReceived(1)
 					ctxSink, cancel := cfg.ctx(ctx)
-					if err := handler(ctxSink, val); err != nil {
+					err := handler(ctxSink, val)
+					reporter.addProcessed(1)
+					cancel()
+
+					if err != nil {
+						reporter.addRejected(1)
 						cfg.err(val, fmt.Errorf("%w: %w", ErrSink, err))
 					}
-					cancel()
 				}
 			}
 		}()
 	}
+
+	go func() {
+		wg.Wait()
+		cancelReporter()
+	}()
 }

@@ -122,6 +122,9 @@ func ProcessBatch[In, BatchResult, Out any](
 	out := make(chan Out, cfg.buffer)
 	batchChan := make(chan []In, cfg.concurrency)
 
+	ctxReporter, cancelReporter := context.WithCancel(ctx)
+	reporter := newAtomicStatusReporter(ctxReporter, cfg.reporter, cfg.reportInterval, in, out)
+
 	// Batch collector goroutine
 	go func() {
 		batch := make([]In, 0, maxSize)
@@ -143,6 +146,7 @@ func ProcessBatch[In, BatchResult, Out any](
 					}
 					return
 				}
+				reporter.addReceived(1)
 				batch = append(batch, val)
 				if len(batch) >= maxSize {
 					batchChan <- batch
@@ -172,29 +176,42 @@ func ProcessBatch[In, BatchResult, Out any](
 					if !ok {
 						return
 					}
+
+					batchLen := len(batch)
+
 					ctxProcessBatch, cancel := cfg.ctx(ctx)
 					batchResult, err := processHandler(ctxProcessBatch, batch)
+					reporter.addProcessed(int64(batchLen))
+					cancel()
+
 					if err != nil {
+						reporter.addRejected(int64(batchLen))
 						cfg.err(batch, fmt.Errorf("%w: %w", ErrProcessBatch, err))
 						cancel()
 						continue
 					}
+
+					isResultConsistent := len(batchResult) == batchLen
+
 					for i, res := range batchResult {
 						o, err := resultHandler(res)
 						if err != nil {
 							val := any(nil)
-							if len(batch) == len(batchResult) {
+							if isResultConsistent {
 								val = batch[i]
 							}
+							reporter.addRejected(1)
 							cfg.err(val, fmt.Errorf("%w: %w", ErrProcessBatchResult, err))
 							continue
 						}
+
 						select {
 						case out <- o:
-						case <-ctxProcessBatch.Done():
+							reporter.addSent(1)
+						case <-ctx.Done():
+							return
 						}
 					}
-					cancel()
 				}
 			}
 		}()
@@ -203,6 +220,7 @@ func ProcessBatch[In, BatchResult, Out any](
 	go func() {
 		wg.Wait()
 		close(out)
+		cancelReporter()
 	}()
 
 	return out

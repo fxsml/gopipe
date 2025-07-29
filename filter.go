@@ -54,6 +54,9 @@ func Filter[T any](
 
 	out := make(chan T, cfg.buffer)
 
+	ctxReporter, cancelReporter := context.WithCancel(ctx)
+	reporter := newAtomicStatusReporter(ctxReporter, cfg.reporter, cfg.reportInterval, in, out)
+
 	var wg sync.WaitGroup
 	wg.Add(cfg.concurrency)
 	for range cfg.concurrency {
@@ -67,16 +70,30 @@ func Filter[T any](
 					if !ok {
 						return
 					}
+
+					reporter.addReceived(1)
 					ctxFilter, cancel := cfg.ctx(ctx)
-					if ok, err := handler(ctxFilter, val); err != nil {
-						cfg.err(val, fmt.Errorf("%w: %w", ErrFilter, err))
-					} else if ok {
-						select {
-						case out <- val:
-						case <-ctx.Done():
-						}
-					}
+					ok, err := handler(ctxFilter, val)
+					reporter.addProcessed(1)
 					cancel()
+
+					if err != nil {
+						reporter.addRejected(1)
+						cfg.err(val, fmt.Errorf("%w: %w", ErrFilter, err))
+						continue
+					}
+
+					if !ok {
+						reporter.addRejected(1)
+						continue
+					}
+
+					select {
+					case out <- val:
+						reporter.addSent(1)
+					case <-ctx.Done():
+						return
+					}
 				}
 			}
 		}()
@@ -85,6 +102,7 @@ func Filter[T any](
 	go func() {
 		wg.Wait()
 		close(out)
+		cancelReporter()
 	}()
 
 	return out

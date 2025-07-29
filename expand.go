@@ -61,6 +61,9 @@ func Expand[In, Out any](
 
 	out := make(chan Out, cfg.buffer)
 
+	ctxReporter, cancelReporter := context.WithCancel(ctx)
+	reporter := newAtomicStatusReporter(ctxReporter, cfg.reporter, cfg.reportInterval, in, out)
+
 	var wg sync.WaitGroup
 	wg.Add(cfg.concurrency)
 	for range cfg.concurrency {
@@ -74,19 +77,26 @@ func Expand[In, Out any](
 					if !ok {
 						return
 					}
+
+					reporter.addReceived(1)
 					ctxExpand, cancel := cfg.ctx(ctx)
-					if res, err := handler(ctxExpand, val); err != nil {
+					res, err := handler(ctxExpand, val)
+					reporter.addProcessed(1)
+					cancel()
+
+					if err != nil {
 						cfg.err(val, fmt.Errorf("%w: %w", ErrExpand, err))
-					} else {
-						for _, res := range res {
-							select {
-							case <-ctx.Done():
-								return
-							case out <- res:
-							}
+						continue
+					}
+
+					for _, res := range res {
+						select {
+						case <-ctx.Done():
+							return
+						case out <- res:
+							reporter.addSent(1)
 						}
 					}
-					cancel()
 				}
 			}
 		}()
@@ -95,6 +105,7 @@ func Expand[In, Out any](
 	go func() {
 		wg.Wait()
 		close(out)
+		cancelReporter()
 	}()
 
 	return out

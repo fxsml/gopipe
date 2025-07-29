@@ -11,17 +11,6 @@ import (
 // The first parameter is the value that caused the error, and the second is the error itself.
 type ErrorHandler func(any, error)
 
-type StatusReporter func(Status)
-
-type Status struct {
-	Received   int64
-	Processed  int64
-	Elapsed    time.Duration
-	Errors     int64
-	LenInChan  int
-	LenOutChan int
-}
-
 // Create a logger with timestamps (date and time)
 var logger = log.New(os.Stderr, "", log.LstdFlags)
 

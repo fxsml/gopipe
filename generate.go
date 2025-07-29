@@ -76,9 +76,15 @@ func Generate[Out any, S any](
 
 	out := make(chan Out, cfg.buffer)
 
+	ctxReporter, cancelReporter := context.WithCancel(ctx)
+	reporter := newAtomicStatusReporter[any](ctxReporter, cfg.reporter, cfg.reportInterval, nil, out)
+
 	// Start the generation process
 	go func() {
-		defer close(out)
+		defer func() {
+			close(out)
+			cancelReporter()
+		}()
 
 		for {
 			select {
@@ -96,6 +102,7 @@ func Generate[Out any, S any](
 				for item := range inCh {
 					select {
 					case out <- item:
+						reporter.addSent(1)
 					case <-ctx.Done():
 						signalDone(cancel, s)
 						return

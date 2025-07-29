@@ -73,6 +73,9 @@ func Route[T any](
 		outsReadOnly[i] = outs[i]
 	}
 
+	ctxReporter, cancelReporter := context.WithCancel(ctx)
+	reporter := newAtomicStatusReporter[T, T](ctxReporter, cfg.reporter, cfg.reportInterval, in, nil)
+
 	var wg sync.WaitGroup
 	wg.Add(cfg.concurrency)
 	for range cfg.concurrency {
@@ -87,7 +90,9 @@ func Route[T any](
 						return
 					}
 
+					reporter.addReceived(1)
 					idx := routeFunc(val)
+					reporter.addProcessed(1)
 
 					if idx < 0 || idx >= n {
 						cfg.err(val, fmt.Errorf("%w %d out of range [0, %d]", ErrRouteIndexOutOfRange, idx, n))
@@ -96,6 +101,7 @@ func Route[T any](
 						case <-ctx.Done():
 							return
 						case outs[idx] <- val:
+							reporter.addSent(1)
 						}
 					}
 				}
@@ -108,6 +114,7 @@ func Route[T any](
 		for i := range outs {
 			close(outs[i])
 		}
+		cancelReporter()
 	}()
 
 	return outsReadOnly
