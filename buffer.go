@@ -1,19 +1,17 @@
 package gopipe
 
-// Filter passes through values from in for which handle returns true.
+// Buffer returns a buffered channel with the specified size.
 // The returned channel is closed after in is closed.
-func Filter[T any](
+func Buffer[T any](
 	in <-chan T,
-	handle func(T) bool,
+	size int,
 ) <-chan T {
-	out := make(chan T)
+	out := make(chan T, size)
 
 	go func() {
 		defer close(out)
 		for val := range in {
-			if handle(val) {
-				out <- val
-			}
+			out <- val
 		}
 	}()
 

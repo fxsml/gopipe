@@ -1,33 +1,61 @@
-package gopipe_test
+package gopipe
 
 import (
-	"context"
 	"testing"
-	"time"
-
-	"github.com/fxsml/gopipe"
 )
 
-func TestMerge_OutputClosedWhenAllInputsClosed(t *testing.T) {
-	ctx := context.Background()
-	in1 := make(chan int)
-	in2 := make(chan int)
-	out := gopipe.Merge(ctx, 2, in1, in2)
-	close(in1)
-	close(in2)
+func TestMerge_AllValues(t *testing.T) {
+	a := make(chan int)
+	b := make(chan int)
+	out := Merge(a, b)
 
-	time.Sleep(10 * time.Millisecond)
-	select {
-	case _, ok := <-out:
-		if ok {
-			t.Error("expected output channel to be closed")
-		}
-	default:
+	go func() {
+		defer close(a)
+		a <- 1
+		a <- 2
+	}()
+	go func() {
+		defer close(b)
+		b <- 3
+		b <- 4
+	}()
+
+	var got []int
+	for v := range out {
+		got = append(got, v)
+	}
+
+	if len(got) != 4 {
+		t.Fatalf("expected 4 values, got %v", got)
+	}
+}
+
+func TestMerge_ClosedInputs(t *testing.T) {
+	a := make(chan int)
+	close(a)
+	out := Merge(a)
+
+	var read bool
+	for range out {
+		read = true
+	}
+	if read {
+		t.Fatalf("expected no values from closed input")
+	}
+}
+
+func TestMerge_ZeroInputs(t *testing.T) {
+	out := Merge[int]()
+	var read bool
+	for range out {
+		read = true
+	}
+	if read {
+		t.Fatalf("expected no values when merging zero inputs")
 	}
 }
 
 func TestMerge_OutputReceivesAllValues(t *testing.T) {
-	ctx := context.Background()
 	in1 := make(chan int, 2)
 	in2 := make(chan int, 2)
 	in1 <- 1
@@ -36,7 +64,7 @@ func TestMerge_OutputReceivesAllValues(t *testing.T) {
 	in2 <- 4
 	close(in1)
 	close(in2)
-	out := gopipe.Merge(ctx, 4, in1, in2)
+	out := Merge(in1, in2)
 	var got []int
 	for v := range out {
 		got = append(got, v)
@@ -53,25 +81,5 @@ func TestMerge_OutputReceivesAllValues(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("missing values: %v", want)
-	}
-}
-
-func TestMerge_ContextCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	in1 := make(chan int)
-	in2 := make(chan int)
-	out := gopipe.Merge(ctx, 2, in1, in2)
-	cancel()
-
-	time.Sleep(10 * time.Millisecond)
-	select {
-	case _, ok := <-out:
-		if !ok {
-			// closed as expected
-		} else {
-			t.Errorf("expected channel to be closed after context cancel")
-		}
-	default:
-		t.Errorf("expected channel to be closed after context cancel")
 	}
 }

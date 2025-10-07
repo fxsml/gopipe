@@ -1,37 +1,66 @@
-package gopipe_test
+package gopipe
 
 import (
-	"context"
 	"testing"
-
-	. "github.com/fxsml/gopipe"
 )
 
-func TestFilter_Basic(t *testing.T) {
-	ctx := context.Background()
-	in := make(chan int, 6)
-	for i := 1; i <= 6; i++ {
-		in <- i
+func TestFilter_Even(t *testing.T) {
+	in := make(chan int)
+	out := Filter(in, func(v int) bool { return v%2 == 0 })
+
+	go func() {
+		for i := 1; i <= 5; i++ {
+			in <- i
+		}
+		close(in)
+	}()
+
+	var got []int
+	for v := range out {
+		got = append(got, v)
 	}
+
+	expected := []int{2, 4}
+	if len(got) != len(expected) {
+		t.Fatalf("expected %v, got %v", expected, got)
+	}
+	for i := range expected {
+		if got[i] != expected[i] {
+			t.Fatalf("at %d expected %d got %d", i, expected[i], got[i])
+		}
+	}
+}
+
+func TestFilter_AllFalse(t *testing.T) {
+	in := make(chan int, 2)
+	in <- 1
+	in <- 3
 	close(in)
 
-	handler := func(ctx context.Context, v int) (bool, error) {
-		return v%2 == 0, nil // keep even numbers
-	}
+	out := Filter(in, func(v int) bool { return false })
 
-	out := Filter(ctx, in, handler)
-	results := []int{}
+	var got []int
 	for v := range out {
-		results = append(results, v)
+		got = append(got, v)
 	}
 
-	expected := []int{2, 4, 6}
-	if len(results) != len(expected) {
-		t.Fatalf("expected %d results, got %d", len(expected), len(results))
+	if len(got) != 0 {
+		t.Fatalf("expected no values, got %v", got)
 	}
-	for i, v := range results {
-		if v != expected[i] {
-			t.Errorf("at %d: expected %d, got %d", i, expected[i], v)
-		}
+}
+
+func TestFilter_Closure(t *testing.T) {
+	in := make(chan int, 1)
+	in <- 42
+	close(in)
+
+	out := Filter(in, func(v int) bool { return true })
+
+	// read the value and ensure the channel is closed afterwards
+	if v, ok := <-out; !ok || v != 42 {
+		t.Fatalf("expected value 42, got %v (ok=%v)", v, ok)
+	}
+	if _, ok := <-out; ok {
+		t.Fatalf("expected output to be closed")
 	}
 }

@@ -2,61 +2,45 @@ package gopipe
 
 import (
 	"context"
-	"fmt"
 	"sync"
 )
 
-// ErrProcess is returned when a process function returns an error.
-var ErrProcess = fmt.Errorf("gopipe: process")
+// ProcessFunc processes a single item with context awareness.
+type ProcessFunc[In, Out any] func(context.Context, In) (Out, error)
 
-// ProcessHandler is a function type that processes a single input value and returns
-// an output value or an error. The function receives a context that can be used for
-// cancellation or timeout control.
-type ProcessHandler[In, Out any] func(context.Context, In) (Out, error)
+// CancelFunc handles errors when processing fails.
+type CancelFunc[In any] func(In, error)
 
-// Process creates a pipeline stage that processes each input value from the input channel
-// using the provided handler function and sends the results to the output channel.
-//
-// Process takes a context for cancellation, an input channel, a handler function, and optional
-// configuration options. It returns an output channel where the processed values will be sent.
-//
-// The handler function is called for each input value. If the handler returns an error, the error
-// is passed to the configured error handler and the value is not sent to the output channel.
-//
-// Process features:
-//   - Concurrent processing with configurable number of workers
-//   - Configurable output channel buffer size
-//   - Custom error handling
-//   - Context-based cancellation
-//   - Optional processing timeouts
-//
-// Example:
-//
-//	out := gopipe.Process(ctx, inputChan, func(ctx context.Context, v int) (int, error) {
-//	    return v * 2, nil
-//	}, gopipe.WithConcurrency(5), gopipe.WithBuffer(10))
-//
-// The output channel is automatically closed when all inputs have been processed
-// or when the context is cancelled.
+// Process applies process function to each item from in concurrently.
+// Successful results are sent to the returned channel; failures invoke cancel.
+// Behavior is configurable with options. The returned channel is closed
+// after processing finishes.
 func Process[In, Out any](
 	ctx context.Context,
 	in <-chan In,
-	handler ProcessHandler[In, Out],
+	process ProcessFunc[In, Out],
+	cancel CancelFunc[In],
 	opts ...Option,
 ) <-chan Out {
-	cfg := defaultConfig
+	c := defaultConfig()
 	for _, opt := range opts {
-		opt(&cfg)
+		opt(&c)
 	}
 
-	out := make(chan Out, cfg.buffer)
+	out := make(chan Out, c.buffer)
 
 	var wg sync.WaitGroup
-	wg.Add(cfg.concurrency)
-	for range cfg.concurrency {
+	wg.Add(c.concurrency)
+	for i := 0; i < c.concurrency; i++ {
 		go func() {
 			defer wg.Done()
 			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
 				select {
 				case <-ctx.Done():
 					return
@@ -64,20 +48,25 @@ func Process[In, Out any](
 					if !ok {
 						return
 					}
-					ctxProcess, cancel := cfg.ctx(ctx)
-					if res, err := handler(ctxProcess, val); err != nil {
-						cfg.err(val, fmt.Errorf("%w: %w", ErrProcess, err))
+					processCtx, processCancel := c.newProcessCtx(ctx)
+					if res, err := process(processCtx, val); err != nil {
+						cancel(val, err)
 					} else {
-						select {
-						case out <- res:
-						case <-ctx.Done():
-						}
+						out <- res
 					}
-					cancel()
+					processCancel()
 				}
 			}
 		}()
 	}
+
+	// Start draining as soon as the parent context is cancelled.
+	go func() {
+		<-ctx.Done()
+		for val := range in {
+			cancel(val, ctx.Err())
+		}
+	}()
 
 	go func() {
 		wg.Wait()

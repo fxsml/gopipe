@@ -1,7 +1,6 @@
 package gopipe_test
 
 import (
-	"context"
 	"sync"
 	"testing"
 	"time"
@@ -10,11 +9,9 @@ import (
 )
 
 func TestBroadcast_AllOutputsReceiveAllValues(t *testing.T) {
-	ctx := context.Background()
 	in := make(chan int)
 	n := 3
-	buffer := 2
-	outs := gopipe.Broadcast(ctx, n, buffer, in)
+	outs := gopipe.Broadcast(in, n)
 
 	go func() {
 		for i := 1; i <= 5; i++ {
@@ -46,9 +43,8 @@ func TestBroadcast_AllOutputsReceiveAllValues(t *testing.T) {
 }
 
 func TestBroadcast_ChannelsClosedOnInputClose(t *testing.T) {
-	ctx := context.Background()
 	in := make(chan int)
-	outs := gopipe.Broadcast(ctx, 2, 1, in)
+	outs := gopipe.Broadcast(in, 5)
 	close(in)
 
 	time.Sleep(10 * time.Millisecond)
@@ -63,23 +59,69 @@ func TestBroadcast_ChannelsClosedOnInputClose(t *testing.T) {
 	}
 }
 
-func TestBroadcast_ContextCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+func TestBroadcast_GlobalBlocking(t *testing.T) {
 	in := make(chan int)
-	outs := gopipe.Broadcast(ctx, 2, 1, in)
-	cancel()
+	outs := gopipe.Broadcast(in, 3)
 
-	time.Sleep(10 * time.Millisecond)
-	for _, out := range outs {
-		select {
-		case _, ok := <-out:
-			if !ok {
-				// closed as expected
-			} else {
-				t.Errorf("expected channel to be closed after context cancel")
-			}
-		default:
-			t.Errorf("expected channel to be closed after context cancel")
+	// make one consumer slow (never read) to observe that broadcaster blocks
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// read only from the first output
+		for v := range outs[0] {
+			_ = v
 		}
+	}()
+
+	// send two values; the second send should block because the broadcaster
+	// can't progress past the slow consumer. The sender goroutine will close
+	// in and signal done when both sends complete.
+	done := make(chan struct{})
+	go func() {
+		in <- 1
+		in <- 2
+		close(in)
+		close(done)
+	}()
+
+	// after a short delay the sender should still be blocked on the second send
+	select {
+	case <-done:
+		t.Fatalf("expected broadcaster to block when some consumers are slow")
+	case <-time.After(50 * time.Millisecond):
+		// expected: still blocked
 	}
+
+	// now start readers for the remaining outputs to allow the broadcaster to
+	// finish and the sender to complete
+	go func() {
+		for v := range outs[1] {
+			_ = v
+		}
+	}()
+	go func() {
+		for v := range outs[2] {
+			_ = v
+		}
+	}()
+
+	// wait for the sender to finish
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("timed out waiting for sender to finish after unblocking consumers")
+	}
+
+	// cleanup: wait for the first reader to finish after channels are closed
+	wg.Wait()
+}
+
+func TestBroadcast_PanicsOnNegativeN(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic for negative n")
+		}
+	}()
+	_ = gopipe.Broadcast[int](make(chan int), -1)
 }
