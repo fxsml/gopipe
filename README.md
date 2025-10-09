@@ -215,35 +215,91 @@ func main() {
 
 ### Batch Processing
 
-For batch processing, replace the `Process` call in the Context-Aware Processing example above with `Batch`. This processes items in groups rather than individually:
-
 ```go
-	processed := gopipe.Batch(
-		ctx,
-		in,
-		func(ctx context.Context, batch []string) (gopipe.BatchResult[string, int], error) {
-			// Simulate processing time
-			time.Sleep(100 * time.Millisecond)
+package main
 
-			// Convert string to int
-			res := gopipe.NewBatchResult[string, int](len(batch))
-			for _, v := range batch {
-				if num, err := strconv.Atoi(v); err == nil {
-					res.AddSuccess(num)
-				} else {
-					res.AddFailure(v, err)
-				}
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/fxsml/gopipe"
+)
+
+// User is a simple user struct for demonstration
+type User struct {
+	ID   int
+	Name string
+}
+
+// UserResponse encapsulates the result of a user creation attempt
+type UserResponse struct {
+	User User
+	Err  error
+}
+
+// NewCreateUserHandler simulates creating users in batches (e.g. database inserts).
+func NewCreateUserHandler() func(context.Context, []string) ([]UserResponse, error) {
+	currentID := 1000
+	return func(ctx context.Context, names []string) ([]UserResponse, error) {
+		// Simulate an error causing the whole batch to fail
+		if currentID%3 == 0 {
+			defer func() {
+				currentID++
+			}()
+			return nil, fmt.Errorf("create user id '%d'", currentID)
+		}
+
+		users := make([]UserResponse, 0, len(names))
+		for _, name := range names {
+			currentID++
+			// Simulate an error for individual name
+			if strings.ContainsAny(name, "!@#$%^&*()+=[]{}|\\;:'\",.<>/?`~") {
+				users = append(users, UserResponse{Err: fmt.Errorf("invalid name: %q", name)})
+				continue
 			}
-			return res, nil
-		},
+			u := User{Name: name, ID: currentID}
+			users = append(users, UserResponse{User: u})
+		}
+		return users, nil
+	}
+}
+
+func main() {
+	// Create an input channel
+	in := make(chan string, 10)
+
+	// Start a goroutine to send new user names - for simplicity just runes
+	go func() {
+		defer func() {
+			close(in)
+		}()
+		for _, c := range "a+bcdefgh!ijkl?mn@op>qrs#tuvwxyz" {
+			in <- string(c)
+		}
+	}()
+
+	// Create new users in batches
+	userResponses := gopipe.Batch(
+		context.Background(),
+		in,
+		NewCreateUserHandler(),
 		func(val []string, err error) {
-			for _, v := range val {
-				fmt.Printf("Failed to process %q: %v\n", v, err)
-			}
+			fmt.Printf("Batch failed: %v, error: %v\n", val, err)
 		},
-		2,                         // Max batch size
-		10*time.Millisecond,       // Max batch duration
-		gopipe.WithConcurrency(5), // Use 5 workers
-		gopipe.WithBuffer(10),     // Buffer up to 10 results
+		5,                     // Max batch size
+		10*time.Millisecond,   // Max batch duration
+		gopipe.WithBuffer(10), // Buffer up to 10 results
 	)
+
+	// Consume responses
+	for userResponse := range userResponses {
+		if userResponse.Err != nil {
+			fmt.Printf("Failed to create new user: %v\n", userResponse.Err)
+			continue
+		}
+		fmt.Printf("Created new user: %v\n", userResponse.User)
+	}
+}
 ```

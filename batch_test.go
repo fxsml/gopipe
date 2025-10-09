@@ -2,137 +2,96 @@ package gopipe
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"reflect"
 	"testing"
 	"time"
 )
 
-func Test_processBatchResult_successAndError(t *testing.T) {
-	proc := func(ctx context.Context, batch []int) (BatchResult[int, string], error) {
-		res := NewBatchResult[int, string](len(batch))
+func TestBatch_Success(t *testing.T) {
+	ctx := context.Background()
+	in := make(chan int, 5)
+
+	// Send test data
+	for i := 1; i <= 5; i++ {
+		in <- i
+	}
+	close(in)
+
+	// Batch processor that doubles each number in the batch
+	batchProcessor := func(ctx context.Context, batch []int) ([]int, error) {
+		result := make([]int, len(batch))
+		for i, v := range batch {
+			result[i] = v * 2
+		}
+		return result, nil
+	}
+
+	var cancelCalled bool
+	cancel := func(batch []int, err error) {
+		cancelCalled = true
+	}
+
+	// Process in batches of 3
+	out := Batch(ctx, in, batchProcessor, cancel, 3, time.Millisecond*100)
+
+	// Collect results
+	var results []int
+	for result := range out {
+		results = append(results, result)
+	}
+
+	// Should have all 5 results, doubled
+	if len(results) != 5 {
+		t.Errorf("Expected 5 results, got %d", len(results))
+	}
+	if cancelCalled {
+		t.Error("Cancel should not have been called")
+	}
+}
+
+func TestBatch_Failure(t *testing.T) {
+	ctx := context.Background()
+	in := make(chan int, 5)
+
+	// Send test data
+	for i := 1; i <= 5; i++ {
+		in <- i
+	}
+	close(in)
+
+	// Batch processor that fails on batches containing number 3
+	batchProcessor := func(ctx context.Context, batch []int) ([]int, error) {
 		for _, v := range batch {
-			if v%2 == 0 {
-				res.AddFailure(v, errors.New("bad"))
-			} else {
-				res.AddSuccess(fmt.Sprintf("v:%d", v))
+			if v == 3 {
+				return nil, fmt.Errorf("batch contains forbidden number 3")
 			}
 		}
-		return res, nil
-	}
-
-	var cancelled [][]int
-	cancel := func(in []int, err error) {
-		cancelled = append(cancelled, in)
-	}
-
-	f := processBatchResult(proc, cancel)
-
-	out, err := f(context.Background(), []int{1, 2, 3})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// expect outputs for 1 and 3 (odd numbers)
-	if !reflect.DeepEqual(out, []string{"v:1", "v:3"}) {
-		t.Fatalf("unexpected outputs: %v", out)
-	}
-
-	// expect cancel called once for the even value 2
-	if len(cancelled) != 1 || len(cancelled[0]) != 1 || cancelled[0][0] != 2 {
-		t.Fatalf("unexpected cancelled calls: %v", cancelled)
-	}
-}
-
-func Test_processBatchResult_multipleErrors(t *testing.T) {
-	proc := func(ctx context.Context, batch []int) (BatchResult[int, string], error) {
-		res := NewBatchResult[int, string](len(batch))
-		res.AddFailure(batch[0], errors.New("err1"))
-		res.AddFailure(batch[1], errors.New("err2"))
-		return res, nil
-	}
-
-	var cancelled [][]int
-	cancel := func(in []int, err error) {
-		cancelled = append(cancelled, in)
-	}
-
-	f := processBatchResult(proc, cancel)
-	out, err := f(context.Background(), []int{7, 9})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(out) != 0 {
-		t.Fatalf("expected no outputs, got %v", out)
-	}
-	if len(cancelled) != 2 || cancelled[0][0] != 7 || cancelled[1][0] != 9 {
-		t.Fatalf("unexpected cancelled sequence: %v", cancelled)
-	}
-}
-
-func Test_processBatchResult_processErrorPropagates(t *testing.T) {
-	sentinel := errors.New("process failed")
-	proc := func(ctx context.Context, batch []int) (BatchResult[int, string], error) {
-		return nil, sentinel
-	}
-
-	var cancelled [][]int
-	cancel := func(in []int, err error) {
-		cancelled = append(cancelled, in)
-	}
-
-	f := processBatchResult(proc, cancel)
-	_, err := f(context.Background(), []int{1, 2})
-	if err == nil {
-		t.Fatalf("expected error but got nil")
-	}
-	if !errors.Is(err, sentinel) {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(cancelled) != 0 {
-		t.Fatalf("cancel should not be called when process returns error, got %v", cancelled)
-	}
-}
-
-func Test_Batch_basic(t *testing.T) {
-	in := make(chan int)
-
-	proc := func(ctx context.Context, batch []int) (BatchResult[int, string], error) {
-		res := NewBatchResult[int, string](len(batch))
-		for _, v := range batch {
-			if v == 2 {
-				res.AddFailure(v, errors.New("bad"))
-			} else {
-				res.AddSuccess(fmt.Sprintf("%d", v*10))
-			}
+		result := make([]int, len(batch))
+		for i, v := range batch {
+			result[i] = v * 2
 		}
-		return res, nil
+		return result, nil
 	}
 
-	var cancelled [][]int
-	cancel := func(in []int, err error) {
-		cancelled = append(cancelled, in)
+	var cancelCalled bool
+	cancel := func(batch []int, err error) {
+		cancelCalled = true
 	}
 
-	out := Batch(context.Background(), in, proc, cancel, 3, time.Second)
+	// Process in batches of 2
+	out := Batch(ctx, in, batchProcessor, cancel, 2, time.Millisecond*100)
 
-	go func() {
-		in <- 1
-		in <- 2
-		in <- 3
-		close(in)
-	}()
-
-	var got []string
-	for v := range out {
-		got = append(got, v)
+	// Collect results
+	var results []int
+	for result := range out {
+		results = append(results, result)
 	}
 
-	if !reflect.DeepEqual(got, []string{"10", "30"}) {
-		t.Fatalf("unexpected outputs: %v", got)
+	// Should have some results from successful batches
+	if len(results) == 0 {
+		t.Error("Expected some successful results")
 	}
-	if len(cancelled) != 1 || cancelled[0][0] != 2 {
-		t.Fatalf("unexpected cancelled calls: %v", cancelled)
+	if !cancelCalled {
+		t.Error("Cancel should have been called for failed batch")
 	}
 }
