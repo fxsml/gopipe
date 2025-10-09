@@ -27,6 +27,7 @@ func Process[In, Out any](
 		opt(&c)
 	}
 
+	ctx, ctxCancel := context.WithCancel(ctx)
 	out := make(chan Out, c.buffer)
 
 	var wg sync.WaitGroup
@@ -71,6 +72,7 @@ func Process[In, Out any](
 	go func() {
 		wg.Wait()
 		close(out)
+		ctxCancel()
 	}()
 
 	return out
