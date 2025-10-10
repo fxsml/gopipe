@@ -3,6 +3,7 @@ package gopipe
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -153,5 +154,41 @@ func TestProcess_WithoutContextPropagation(t *testing.T) {
 	}()
 
 	for range out {
+	}
+}
+
+func TestProcess_NoGoroutineLeakOnChannelClose(t *testing.T) {
+	// Count goroutines before starting
+	initialGoroutines := runtime.NumGoroutine()
+
+	in := make(chan int)
+
+	process := func(ctx context.Context, v int) (int, error) {
+		return v * 2, nil
+	}
+	cancel := func(v int, err error) {}
+
+	ctx := context.Background()
+	out := Process(ctx, in, process, cancel)
+
+	// Add one item and then close the input channel without cancelling the context
+	go func() {
+		in <- 1
+		close(in)
+	}()
+
+	// Drain the output channel - this will complete
+	for range out {
+	}
+
+	// Give some time for goroutines to potentially clean up
+	time.Sleep(100 * time.Millisecond)
+
+	// Check if we have a goroutine leak
+	finalGoroutines := runtime.NumGoroutine()
+	leakedGoroutines := finalGoroutines - initialGoroutines
+
+	if leakedGoroutines > 0 {
+		t.Errorf("Unexpected goroutine leak: %d goroutine(s) leaked even though the channel was closed", leakedGoroutines)
 	}
 }
