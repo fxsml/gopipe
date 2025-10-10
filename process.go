@@ -3,6 +3,7 @@ package gopipe
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 // ProcessFunc processes a single item with context awareness.
@@ -30,6 +31,8 @@ func Process[In, Out any](
 	ctx, ctxCancel := context.WithCancel(ctx)
 	out := make(chan Out, c.buffer)
 
+	m := c.metrics
+
 	var wg sync.WaitGroup
 	wg.Add(c.concurrency)
 	for i := 0; i < c.concurrency; i++ {
@@ -49,11 +52,30 @@ func Process[In, Out any](
 					if !ok {
 						return
 					}
+
+					if m != nil {
+						m.IncInFlight()
+					}
+
 					processCtx, processCancel := c.newProcessCtx(ctx)
+					start := time.Now()
 					if res, err := process(processCtx, val); err != nil {
+						if m != nil {
+							m.IncFailure()
+							m.DecInFlight()
+							m.ObserveProcessingDuration(time.Since(start))
+						}
 						cancel(val, err)
 					} else {
+						if m != nil {
+							m.IncSuccess()
+							m.DecInFlight()
+							m.ObserveProcessingDuration(time.Since(start))
+						}
 						out <- res
+						if m != nil {
+							m.ObserveBufferSize(len(out))
+						}
 					}
 					processCancel()
 				}
@@ -65,6 +87,9 @@ func Process[In, Out any](
 	go func() {
 		<-ctx.Done()
 		for val := range in {
+			if m != nil {
+				m.IncCancelled()
+			}
 			cancel(val, ctx.Err())
 		}
 	}()

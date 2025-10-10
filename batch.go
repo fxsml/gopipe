@@ -21,6 +21,20 @@ func Batch[In, Out any](
 	opts ...Option,
 ) <-chan Out {
 
+	// Read options to see if metrics are configured so we can observe batch sizes.
+	c := defaultConfig()
+	for _, opt := range opts {
+		opt(&c)
+	}
+
+	// Wrap process to emit batch-size metric if available.
+	if m := c.metrics; m != nil {
+		process = func(ctx context.Context, batch []In) ([]Out, error) {
+			m.ObserveBatchSize(len(batch))
+			return process(ctx, batch)
+		}
+	}
+
 	out := Process(
 		ctx,
 		Collect(in, maxSize, maxDuration),
