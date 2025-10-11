@@ -9,6 +9,102 @@ import (
 	"time"
 )
 
+// noOpMetrics is a concurrency-safe, empty Metrics implementation for benchmarking.
+type noOpMetrics struct{}
+
+func (noOpMetrics) IncSuccess()                             {}
+func (noOpMetrics) IncFailure()                             {}
+func (noOpMetrics) IncCancelled()                           {}
+func (noOpMetrics) IncInFlight()                            {}
+func (noOpMetrics) DecInFlight()                            {}
+func (noOpMetrics) ObserveProcessingDuration(time.Duration) {}
+func (noOpMetrics) ObserveBufferSize(int)                   {}
+func (noOpMetrics) ObserveBatchSize(int)                    {}
+
+func BenchmarkProcess_MetricsEnabledVsDisabled(b *testing.B) {
+	const N = 10000
+	process := func(ctx context.Context, v int) (int, error) {
+		time.Sleep(100 * time.Microsecond) // Simulate work
+		return v, nil
+	}
+	cancel := func(v int, err error) {}
+
+	b.Run("NoPipelining", func(b *testing.B) {
+		for b.Loop() {
+			ctx := context.Background()
+			for j := range N {
+				process(ctx, j)
+			}
+		}
+	})
+
+	b.Run("OnlyChannelOps", func(b *testing.B) {
+		for b.Loop() {
+			in := make(chan int, N)
+			for j := range N {
+				in <- j
+			}
+			close(in)
+			for range in {
+			}
+		}
+	})
+
+	b.Run("MinimalPipelining", func(b *testing.B) {
+		for b.Loop() {
+			in := make(chan int, N)
+			for j := range N {
+				in <- j
+			}
+			close(in)
+			for i := range in {
+				process(context.Background(), i)
+			}
+		}
+	})
+
+	b.Run("NoMetrics", func(b *testing.B) {
+		for b.Loop() {
+			in := make(chan int, N)
+			for j := range N {
+				in <- j
+			}
+			close(in)
+			out := Process(context.Background(), in, process, cancel)
+			for range out {
+			}
+		}
+	})
+
+	b.Run("WithMetrics", func(b *testing.B) {
+		metrics := noOpMetrics{}
+		for b.Loop() {
+			in := make(chan int, N)
+			for j := range N {
+				in <- j
+			}
+			close(in)
+			out := Process(context.Background(), in, process, cancel, WithMetrics(metrics))
+			for range out {
+			}
+		}
+	})
+
+	b.Run("WithConcurrency", func(b *testing.B) {
+		for b.Loop() {
+			in := make(chan int, N)
+			for j := range N {
+				in <- j
+			}
+			close(in)
+			out := Process(context.Background(), in, process, cancel, WithConcurrency(100))
+			for range out {
+			}
+		}
+	})
+
+}
+
 func TestProcess_Basic(t *testing.T) {
 	in := make(chan int)
 
