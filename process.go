@@ -3,7 +3,7 @@ package gopipe
 import (
 	"context"
 	"sync"
-	"time"
+	"sync/atomic"
 )
 
 // ProcessFunc processes a single item with context awareness.
@@ -23,15 +23,25 @@ func Process[In, Out any](
 	cancel CancelFunc[In],
 	opts ...Option,
 ) <-chan Out {
-	c := defaultConfig()
-	for _, opt := range opts {
-		opt(&c)
-	}
+	c := newConfig(opts)
 
+	return run(ctx, in, func(ctx context.Context, v In, _ *Metrics) (Out, error) {
+		return process(ctx, v)
+	}, cancel, c)
+}
+
+func run[In, Out any](
+	ctx context.Context,
+	in <-chan In,
+	process func(context.Context, In, *Metrics) (Out, error),
+	cancel CancelFunc[In],
+	c config,
+) <-chan Out {
 	ctx, ctxCancel := context.WithCancel(ctx)
 	out := make(chan Out, c.buffer)
 
-	m := c.metrics
+	mc := c.metricsCollector
+	inFlight := &atomic.Int32{}
 
 	var wg sync.WaitGroup
 	wg.Add(c.concurrency)
@@ -44,7 +54,6 @@ func Process[In, Out any](
 					return
 				default:
 				}
-
 				select {
 				case <-ctx.Done():
 					return
@@ -53,29 +62,26 @@ func Process[In, Out any](
 						return
 					}
 
-					if m != nil {
-						m.IncInFlight()
+					var m *Metrics
+					if mc != nil {
+						m = newProcessMetric(inFlight, len(in))
 					}
 
 					processCtx, processCancel := c.newProcessCtx(ctx)
-					start := time.Now()
-					if res, err := process(processCtx, val); err != nil {
-						if m != nil {
-							m.IncFailure()
-							m.DecInFlight()
-							m.ObserveProcessingDuration(time.Since(start))
+					if res, err := process(processCtx, val, m); err != nil {
+						if mc != nil {
+							m.failure(inFlight, len(out))
 						}
 						cancel(val, err)
 					} else {
-						if m != nil {
-							m.IncSuccess()
-							m.DecInFlight()
-							m.ObserveProcessingDuration(time.Since(start))
+						if mc != nil {
+							m.success(inFlight, len(out))
 						}
 						out <- res
-						if m != nil {
-							m.ObserveBufferSize(len(out))
-						}
+					}
+
+					if mc != nil {
+						mc.collect(m)
 					}
 					processCancel()
 				}
@@ -87,10 +93,19 @@ func Process[In, Out any](
 	go func() {
 		<-ctx.Done()
 		for val := range in {
-			if m != nil {
-				m.IncCancelled()
+			var m *Metrics
+			if mc != nil {
+				m = newCancelMetric(len(in), len(out))
 			}
+
 			cancel(val, ctx.Err())
+
+			if mc != nil {
+				mc.collect(m)
+			}
+		}
+		if mc != nil {
+			mc.Done()
 		}
 	}()
 

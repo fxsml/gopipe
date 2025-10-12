@@ -11,17 +11,23 @@ type config struct {
 	timeout            time.Duration
 	contextPropagation bool
 	// metrics collects optional runtime metrics. Nil means disabled.
-	metrics Metrics
+	metricsCollector *metricsCollector
 }
 
-func defaultConfig() config {
-	return config{
+func newConfig(opts []Option) config {
+	c := config{
 		concurrency:        1,
 		buffer:             0,
 		timeout:            0,
 		contextPropagation: true,
-		metrics:            nil,
+		metricsCollector:   nil,
 	}
+
+	for _, opt := range opts {
+		opt(&c)
+	}
+
+	return c
 }
 
 // Option configures behavior of pipeline processing stages.
@@ -71,23 +77,10 @@ func WithoutContextPropagation() Option {
 	}
 }
 
-// Metrics defines a minimal surface for collecting pipeline metrics.
-// Implementations may forward these to Prometheus, OpenTelemetry, etc.
-type Metrics interface {
-	IncSuccess()
-	IncFailure()
-	IncCancelled()
-	IncInFlight()
-	DecInFlight()
-	ObserveProcessingDuration(d time.Duration)
-	ObserveBufferSize(n int)
-	ObserveBatchSize(n int)
-}
-
 // WithMetrics attaches a Metrics implementation to the pipeline. When set,
 // various stages will emit metric events.
-func WithMetrics(m Metrics) Option {
+func WithMetrics(mc ...MetricsCollector) Option {
 	return func(cfg *config) {
-		cfg.metrics = m
+		cfg.metricsCollector = newMetricsCollector(mc)
 	}
 }
