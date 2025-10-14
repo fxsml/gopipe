@@ -17,22 +17,21 @@ func TestBatch_Success(t *testing.T) {
 	}
 	close(in)
 
+	var cancelCalled bool
+
 	// Batch processor that doubles each number in the batch
-	batchProcessor := func(ctx context.Context, batch []int) ([]int, error) {
+	proc := NewProcessor(func(ctx context.Context, batch []int) ([]int, error) {
 		result := make([]int, len(batch))
 		for i, v := range batch {
 			result[i] = v * 2
 		}
 		return result, nil
-	}
-
-	var cancelCalled bool
-	cancel := func(batch []int, err error) {
+	}, func(batch []int, err error) {
 		cancelCalled = true
-	}
+	})
 
 	// Process in batches of 3
-	out := Batch(ctx, in, batchProcessor, cancel, 3, time.Millisecond*100)
+	out := Batch(ctx, in, proc, 3, time.Millisecond*100)
 
 	// Collect results
 	var results []int
@@ -59,8 +58,10 @@ func TestBatch_Failure(t *testing.T) {
 	}
 	close(in)
 
+	var cancelCalled bool
+
 	// Batch processor that fails on batches containing number 3
-	batchProcessor := func(ctx context.Context, batch []int) ([]int, error) {
+	proc := NewProcessor(func(ctx context.Context, batch []int) ([]int, error) {
 		for _, v := range batch {
 			if v == 3 {
 				return nil, fmt.Errorf("batch contains forbidden number 3")
@@ -71,15 +72,12 @@ func TestBatch_Failure(t *testing.T) {
 			result[i] = v * 2
 		}
 		return result, nil
-	}
-
-	var cancelCalled bool
-	cancel := func(batch []int, err error) {
+	}, func(batch []int, err error) {
 		cancelCalled = true
-	}
+	})
 
 	// Process in batches of 2
-	out := Batch(ctx, in, batchProcessor, cancel, 2, time.Millisecond*100)
+	out := Batch(ctx, in, proc, 2, time.Millisecond*100)
 
 	// Collect results
 	var results []int
