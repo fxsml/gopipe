@@ -171,10 +171,8 @@ func main() {
 	// Create an input channel
 	in := make(chan string, 10)
 
-	// Process values with context-awareness and concurrency
-	processed := gopipe.Process(
-		ctx,
-		in,
+	// Create a processor
+	processor := gopipe.NewProcessor(
 		func(ctx context.Context, val string) (int, error) {
 			// Simulate processing time
 			time.Sleep(100 * time.Millisecond)
@@ -184,7 +182,13 @@ func main() {
 		},
 		func(val string, err error) {
 			fmt.Printf("Failed to process %q: %v\n", val, err)
-		},
+		})
+
+	// Process values with context-awareness and concurrency
+	processed := gopipe.Process(
+		ctx,
+		in,
+		processor,
 		gopipe.WithConcurrency(5), // Use 5 workers
 		gopipe.WithBuffer(10),     // Buffer up to 10 results
 	)
@@ -280,14 +284,19 @@ func main() {
 		}
 	}()
 
-	// Create new users in batches
-	userResponses := gopipe.Batch(
-		context.Background(),
-		in,
+	// Create a processor
+	processor := gopipe.NewProcessor(
 		NewCreateUserHandler(),
 		func(val []string, err error) {
 			fmt.Printf("Batch failed: %v, error: %v\n", val, err)
 		},
+	)
+
+	// Create new users in batches
+	userResponses := gopipe.Batch(
+		context.Background(),
+		in,
+		processor,
 		5,                     // Max batch size
 		10*time.Millisecond,   // Max batch duration
 		gopipe.WithBuffer(10), // Buffer up to 10 results
