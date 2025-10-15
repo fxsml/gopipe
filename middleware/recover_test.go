@@ -10,31 +10,35 @@ import (
 )
 
 func TestRecoverSuccessfulProcessing(t *testing.T) {
-	processor := NewProcessor(
-		func(ctx context.Context, in string) (int, error) {
-			return len(in), nil
+	processor := gopipe.NewProcessor(
+		func(ctx context.Context, in string) ([]int, error) {
+			return []int{len(in)}, nil
 		},
-		UseRecover[string, int](),
+		nil,
 	)
+	processor = UseRecover[string, int]()(processor)
 
 	result, err := processor.Process(context.Background(), "hello")
 
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
-
-	if result != 5 {
+	if len(result) != 1 {
+		t.Fatalf("Expected len to be 1, got %d", len(result))
+	}
+	if result[0] != 5 {
 		t.Errorf("Expected result to be 5, got %d", result)
 	}
 }
 
 func TestRecoverProcessingWithPanic(t *testing.T) {
-	processor := NewProcessor(
-		func(ctx context.Context, in string) (int, error) {
+	processor := gopipe.NewProcessor(
+		func(ctx context.Context, in string) ([]int, error) {
 			panic("test panic")
 		},
-		UseRecover[string, int](),
+		nil,
 	)
+	processor = UseRecover[string, int]()(processor)
 
 	_, err := processor.Process(context.Background(), "hello")
 
@@ -62,16 +66,15 @@ func TestRecoverCancellation(t *testing.T) {
 	var cancelCalled bool
 	var cancelErr error
 
-	processor := NewProcessor(
-		func(ctx context.Context, in string) (int, error) {
-			return 0, nil
+	processor := gopipe.NewProcessor(
+		func(ctx context.Context, in string) ([]int, error) {
+			return []int{0}, nil
 		},
-		UseRecover[string, int](),
-		UseCancel[string, int](func(in string, err error) {
+		func(in string, err error) {
 			cancelCalled = true
 			cancelErr = err
-		}),
-	)
+		})
+	processor = UseRecover[string, int]()(processor)
 
 	testErr := errors.New("test error")
 	processor.Cancel("test", testErr)
@@ -93,15 +96,14 @@ func TestRecoverIntegrationWithPipeline(t *testing.T) {
 
 	var cancelCalls int
 
-	processor := NewProcessor(
-		func(ctx context.Context, in string) (int, error) {
+	processor := gopipe.NewProcessor(
+		func(ctx context.Context, in string) ([]int, error) {
 			if in == "hello" {
 				panic("pipeline panic")
 			}
-			return len(in), nil
+			return []int{len(in)}, nil
 		},
-		UseRecover[string, int](),
-		UseCancel[string, int](func(in string, err error) {
+		func(in string, err error) {
 			cancelCalls++
 			var recError *RecoveryError
 			if errors.As(err, &recError) {
@@ -111,10 +113,9 @@ func TestRecoverIntegrationWithPipeline(t *testing.T) {
 			} else {
 				t.Errorf("Expected error to be of type *RecoveryError, got %T", err)
 			}
-		}),
-	)
+		})
 
-	out := gopipe.Process(ctx, in, processor)
+	out := gopipe.StartProcessor(ctx, in, processor, gopipe.WithMiddleware(UseRecover[string, int]()))
 
 	// Drain the output channel
 	for range out {

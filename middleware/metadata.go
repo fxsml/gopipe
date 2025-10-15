@@ -47,23 +47,17 @@ func newMetadataErrorWrapper(err error, metadata Metadata) error {
 // UseMetadata creates middleware that attaches metadata to the processing context.
 // The provided function produces metadata which may be extracted from the input value.
 // Metadata is then available via MetadataFromContext or MetadataFromError.
-func UseMetadata[In, Out any](m func(in In) Metadata) MiddlewareFunc[In, Out] {
+func UseMetadata[In, Out any](m func(in In) Metadata) gopipe.MiddlewareFunc[In, Out] {
 	return func(next gopipe.Processor[In, Out]) gopipe.Processor[In, Out] {
 		return gopipe.NewProcessor(
-			func(ctx context.Context, in In) (Out, error) {
+			func(ctx context.Context, in In) ([]Out, error) {
 				metadata := m(in)
 				ctx = context.WithValue(ctx, metadataKey, metadata)
-				out, err := next.Process(ctx, in)
-				if err != nil {
-					err = newMetadataErrorWrapper(err, metadata)
-				}
-				return out, err
+				return next.Process(ctx, in)
 			},
 			func(in In, err error) {
-				if gopipe.IsCancel(err) {
-					metadata := m(in)
-					err = newMetadataErrorWrapper(err, metadata)
-				}
+				metadata := m(in)
+				err = newMetadataErrorWrapper(err, metadata)
 				next.Cancel(in, err)
 			})
 	}

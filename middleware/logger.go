@@ -114,14 +114,14 @@ func appendArgs(args ...[]any) []any {
 // UseLogger creates a middleware that logs information about processing results.
 // It logs success, failure, or cancellation messages at configured levels,
 // and includes any Metadata from the processing context in the log message.
-func UseLogger[In, Out any](log Logger, config LoggerConfig) MiddlewareFunc[In, Out] {
+func UseLogger[In, Out any](log Logger, config LoggerConfig) gopipe.MiddlewareFunc[In, Out] {
 	config.parse()
 	logCancel := config.logFunc(config.LevelCancel, log)
 	logFailure := config.logFunc(config.LevelFailure, log)
 	logSuccess := config.logFunc(config.LevelSuccess, log)
 	return func(next gopipe.Processor[In, Out]) gopipe.Processor[In, Out] {
 		return gopipe.NewProcessor(
-			func(ctx context.Context, in In) (Out, error) {
+			func(ctx context.Context, in In) ([]Out, error) {
 				val, err := next.Process(ctx, in)
 				if err == nil {
 					logSuccess(config.MessageSuccess,
@@ -144,7 +144,7 @@ func UseLogger[In, Out any](log Logger, config LoggerConfig) MiddlewareFunc[In, 
 
 // UseSlog creates a middleware that logs using the default slog logger.
 // Additional arguments can be included in all log messages.
-func UseSlog[In, Out any](args ...any) MiddlewareFunc[In, Out] {
+func UseSlog[In, Out any](args ...any) gopipe.MiddlewareFunc[In, Out] {
 	return UseLogger[In, Out](slog.Default(), LoggerConfig{
 		Args: args,
 	})
