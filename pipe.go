@@ -40,7 +40,7 @@ func pipe[In, Out any](
 					}
 					processCtx, processCancel := c.newProcessCtx(ctx)
 					if res, err := proc.Process(processCtx, val); err != nil {
-						proc.Cancel(val, err)
+						proc.Cancel(val, newErrFailure(err))
 					} else {
 						out <- res
 					}
@@ -54,7 +54,7 @@ func pipe[In, Out any](
 	go func() {
 		<-ctx.Done()
 		for val := range in {
-			proc.Cancel(val, ctx.Err())
+			proc.Cancel(val, newErrCancel(ctx.Err()))
 		}
 	}()
 
