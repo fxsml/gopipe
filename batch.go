@@ -14,18 +14,16 @@ import (
 func Batch[In, Out any](
 	ctx context.Context,
 	in <-chan In,
-	process ProcessFunc[[]In, []Out],
-	cancel CancelFunc[[]In],
+	proc Processor[[]In, []Out],
 	maxSize int,
 	maxDuration time.Duration,
 	opts ...Option,
 ) <-chan Out {
 
-	out := Process(
+	out := pipe(
 		ctx,
 		Collect(in, maxSize, maxDuration),
-		process,
-		cancel,
+		proc,
 		opts...)
 
 	return Split(out)

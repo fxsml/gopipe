@@ -23,7 +23,9 @@ func TestProcess_Basic(t *testing.T) {
 		mu.Unlock()
 	}
 
-	out := Process(context.Background(), in, process, cancel, WithConcurrency(2))
+	proc := NewProcessor(process, cancel)
+
+	out := Process(context.Background(), in, proc, WithConcurrency(2))
 
 	go func() {
 		in <- 1
@@ -56,7 +58,9 @@ func TestProcess_ErrorCallsCancel(t *testing.T) {
 		mu.Unlock()
 	}
 
-	out := Process(context.Background(), in, process, cancel, WithConcurrency(1))
+	proc := NewProcessor(process, cancel)
+
+	out := Process(context.Background(), in, proc, WithConcurrency(1))
 
 	go func() {
 		in <- 7
@@ -80,12 +84,14 @@ func TestProcess_ErrorCallsCancel(t *testing.T) {
 func TestProcess_WithBufferAndConcurrency(t *testing.T) {
 	in := make(chan int)
 
-	proc := func(ctx context.Context, v int) (int, error) {
+	process := func(ctx context.Context, v int) (int, error) {
 		return v + 1, nil
 	}
 	cancel := func(v int, err error) {}
 
-	out := Process(context.Background(), in, proc, cancel, WithConcurrency(3), WithBuffer(2))
+	proc := NewProcessor(process, cancel)
+
+	out := Process(context.Background(), in, proc, WithConcurrency(3), WithBuffer(2))
 
 	go func() {
 		in <- 1
@@ -106,7 +112,7 @@ func TestProcess_WithBufferAndConcurrency(t *testing.T) {
 
 func TestProcess_WithTimeoutCancelsProcess(t *testing.T) {
 	in := make(chan int)
-	proc := func(ctx context.Context, v int) (int, error) {
+	process := func(ctx context.Context, v int) (int, error) {
 		select {
 		case <-time.After(200 * time.Millisecond):
 			return v, nil
@@ -119,7 +125,9 @@ func TestProcess_WithTimeoutCancelsProcess(t *testing.T) {
 		cancelled = append(cancelled, v)
 	}
 
-	out := Process(context.Background(), in, proc, cancel, WithTimeout(50*time.Millisecond), WithConcurrency(1))
+	proc := NewProcessor(process, cancel)
+
+	out := Process(context.Background(), in, proc, WithTimeout(50*time.Millisecond), WithConcurrency(1))
 
 	go func() {
 		in <- 10
@@ -137,7 +145,7 @@ func TestProcess_WithTimeoutCancelsProcess(t *testing.T) {
 
 func TestProcess_WithoutContextPropagation(t *testing.T) {
 	in := make(chan int)
-	proc := func(ctx context.Context, v int) (int, error) {
+	process := func(ctx context.Context, v int) (int, error) {
 		// ctx should not be the parent context
 		if ctx == context.Background() {
 			// acceptable
@@ -146,7 +154,9 @@ func TestProcess_WithoutContextPropagation(t *testing.T) {
 	}
 	cancel := func(v int, err error) {}
 
-	out := Process(context.Background(), in, proc, cancel, WithoutContextPropagation(), WithConcurrency(1))
+	proc := NewProcessor(process, cancel)
+
+	out := Process(context.Background(), in, proc, WithoutContextPropagation(), WithConcurrency(1))
 
 	go func() {
 		in <- 1
@@ -168,8 +178,10 @@ func TestProcess_NoGoroutineLeakOnChannelClose(t *testing.T) {
 	}
 	cancel := func(v int, err error) {}
 
+	proc := NewProcessor(process, cancel)
+
 	ctx := context.Background()
-	out := Process(ctx, in, process, cancel)
+	out := Process(ctx, in, proc)
 
 	// Add one item and then close the input channel without cancelling the context
 	go func() {
