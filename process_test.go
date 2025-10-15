@@ -2,205 +2,93 @@ package gopipe
 
 import (
 	"context"
-	"errors"
-	"runtime"
-	"sync"
+	"strconv"
 	"testing"
-	"time"
 )
 
-func TestProcess_Basic(t *testing.T) {
-	in := make(chan int)
+func TestProcess_Success(t *testing.T) {
+	// Define a function type for both Process implementations
+	type processFunc[In, Out any] func(
+		in <-chan In,
+		handle func(In) []Out,
+	) <-chan Out
 
-	process := func(ctx context.Context, v int) (int, error) {
-		return v * 2, nil
-	}
-	var mu sync.Mutex
-	var cancelled []int
-	cancel := func(v int, err error) {
-		mu.Lock()
-		cancelled = append(cancelled, v)
-		mu.Unlock()
-	}
-
-	proc := NewProcessor(process, cancel)
-
-	out := Process(context.Background(), in, proc, WithConcurrency(2))
-
-	go func() {
-		in <- 1
-		in <- 2
-		close(in)
-	}()
-
-	var got []int
-	for v := range out {
-		got = append(got, v)
+	// Map of process functions to test
+	processFuncs := map[string]processFunc[int, string]{
+		"Process": Process[int, string],
+		"ProcessPipe": func(in <-chan int, handle func(int) []string) <-chan string {
+			// Adapter to use NewProcessPipe with the same signature
+			handlePipe := func(_ context.Context, val int) ([]string, error) {
+				return handle(val), nil
+			}
+			return NewProcessPipe(
+				handlePipe,
+			).Start(context.Background(), in)
+		},
 	}
 
-	if len(got) != 2 {
-		t.Fatalf("expected 2 results, got %v", got)
-	}
-}
+	// Run the test for each implementation
+	for name, procFunc := range processFuncs {
+		t.Run(name, func(t *testing.T) {
+			// Create input channel
+			in := make(chan int, 5)
 
-func TestProcess_ErrorCallsCancel(t *testing.T) {
-	in := make(chan int)
+			// Send test data
+			for i := 1; i <= 5; i++ {
+				in <- i
+			}
+			close(in)
 
-	process := func(ctx context.Context, v int) (int, error) {
-		return 0, errors.New("fail")
-	}
+			// Process function that converts integers to strings
+			// Each integer produces multiple outputs: the integer itself and its square
+			handle := func(val int) []string {
+				if val == 3 {
+					// Test empty result for specific value
+					return []string{}
+				}
+				if val == 4 {
+					// Test nil result for specific value
+					return nil
+				}
+				return []string{
+					"Value: " + strconv.Itoa(val),
+					"Square: " + strconv.Itoa(val*val),
+				}
+			}
 
-	var mu sync.Mutex
-	var cancelled []int
-	cancel := func(v int, err error) {
-		mu.Lock()
-		cancelled = append(cancelled, v)
-		mu.Unlock()
-	}
+			// Process values using the function from the map
+			out := procFunc(in, handle)
 
-	proc := NewProcessor(process, cancel)
+			// Collect results
+			var results []string
+			for result := range out {
+				results = append(results, result)
+			}
 
-	out := Process(context.Background(), in, proc, WithConcurrency(1))
+			// Expected results: val 1, 2, 5 produce 2 outputs each, 3 and 4 produce none
+			expectedCount := 6
+			if len(results) != expectedCount {
+				t.Errorf("Expected %d results, got %d", expectedCount, len(results))
+			}
 
-	go func() {
-		in <- 7
-		close(in)
-	}()
+			// Verify that the results contain the expected values
+			expectedValues := map[string]bool{
+				"Value: 1": true, "Square: 1": true,
+				"Value: 2": true, "Square: 4": true,
+				"Value: 5": true, "Square: 25": true,
+			}
 
-	// drain out and wait a bit for cancel callback
-	go func() {
-		for range out {
-		}
-	}()
-	time.Sleep(50 * time.Millisecond)
+			for _, val := range results {
+				if !expectedValues[val] {
+					t.Errorf("Unexpected result value: %q", val)
+				}
+				delete(expectedValues, val) // Remove to catch duplicates
+			}
 
-	mu.Lock()
-	if len(cancelled) != 1 || cancelled[0] != 7 {
-		t.Fatalf("expected cancel called with 7, got %v", cancelled)
-	}
-	mu.Unlock()
-}
-
-func TestProcess_WithBufferAndConcurrency(t *testing.T) {
-	in := make(chan int)
-
-	process := func(ctx context.Context, v int) (int, error) {
-		return v + 1, nil
-	}
-	cancel := func(v int, err error) {}
-
-	proc := NewProcessor(process, cancel)
-
-	out := Process(context.Background(), in, proc, WithConcurrency(3), WithBuffer(2))
-
-	go func() {
-		in <- 1
-		in <- 2
-		in <- 3
-		close(in)
-	}()
-
-	var got []int
-	for v := range out {
-		got = append(got, v)
-	}
-
-	if len(got) != 3 {
-		t.Fatalf("expected 3 results, got %v", got)
-	}
-}
-
-func TestProcess_WithTimeoutCancelsProcess(t *testing.T) {
-	in := make(chan int)
-	process := func(ctx context.Context, v int) (int, error) {
-		select {
-		case <-time.After(200 * time.Millisecond):
-			return v, nil
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		}
-	}
-	var cancelled []int
-	cancel := func(v int, err error) {
-		cancelled = append(cancelled, v)
-	}
-
-	proc := NewProcessor(process, cancel)
-
-	out := Process(context.Background(), in, proc, WithTimeout(50*time.Millisecond), WithConcurrency(1))
-
-	go func() {
-		in <- 10
-		close(in)
-	}()
-
-	// drain out
-	for range out {
-	}
-
-	if len(cancelled) != 1 {
-		t.Fatalf("expected process to be cancelled, got %v", cancelled)
-	}
-}
-
-func TestProcess_WithoutContextPropagation(t *testing.T) {
-	in := make(chan int)
-	process := func(ctx context.Context, v int) (int, error) {
-		// ctx should not be the parent context
-		if ctx == context.Background() {
-			// acceptable
-		}
-		return v, nil
-	}
-	cancel := func(v int, err error) {}
-
-	proc := NewProcessor(process, cancel)
-
-	out := Process(context.Background(), in, proc, WithoutContextPropagation(), WithConcurrency(1))
-
-	go func() {
-		in <- 1
-		close(in)
-	}()
-
-	for range out {
-	}
-}
-
-func TestProcess_NoGoroutineLeakOnChannelClose(t *testing.T) {
-	// Count goroutines before starting
-	initialGoroutines := runtime.NumGoroutine()
-
-	in := make(chan int)
-
-	process := func(ctx context.Context, v int) (int, error) {
-		return v * 2, nil
-	}
-	cancel := func(v int, err error) {}
-
-	proc := NewProcessor(process, cancel)
-
-	ctx := context.Background()
-	out := Process(ctx, in, proc)
-
-	// Add one item and then close the input channel without cancelling the context
-	go func() {
-		in <- 1
-		close(in)
-	}()
-
-	// Drain the output channel - this will complete
-	for range out {
-	}
-
-	// Give some time for goroutines to potentially clean up
-	time.Sleep(100 * time.Millisecond)
-
-	// Check if we have a goroutine leak
-	finalGoroutines := runtime.NumGoroutine()
-	leakedGoroutines := finalGoroutines - initialGoroutines
-
-	if leakedGoroutines > 0 {
-		t.Errorf("Unexpected goroutine leak: %d goroutine(s) leaked even though the channel was closed", leakedGoroutines)
+			// Make sure we got all expected values
+			if len(expectedValues) != 0 {
+				t.Errorf("Missing expected values: %v", expectedValues)
+			}
+		})
 	}
 }

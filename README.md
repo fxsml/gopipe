@@ -8,12 +8,15 @@ A lightweight, generic Go library for building composable data pipelines using c
 - **Simple Core Functions**: Basic channel manipulation (`Transform`, `Filter`, `Broadcast`, `Merge`, etc.).
 - **Helper Functions**: Buffering and context cancellation support through `Buffer` and `Cancel`/`Break`.
 - **Advanced Processing**: Context-aware processing with `Process` and `Batch` functions.
+- **Processor Abstraction**: Composable processing units with middleware support.
 
 ## Philosophy
 
 gopipe provides minimalistic building blocks for channel-based pipelines. By design, the core functions are simple and focused. The two main processing functions (`Process` and `Batch`) are context-aware and highly configurable with options for concurrency, buffering, and context propagation.
 
 The helper functions `Buffer` and `Cancel` are provided when you need buffering or context-aware cancellation, keeping the core functions simple while still offering all needed functionality.
+
+For more complex pipelines, the `Processor` abstraction allows you to encapsulate processing logic with error handling and compose functionality using middleware.
 
 ## Installation
 
@@ -69,7 +72,7 @@ func main() {
 }
 ```
 
-### Advanced Operations: Merge, Split, Expand, Route
+### Advanced Operations: Merge, Split, Process, Route
 
 ```go
 package main
@@ -112,7 +115,7 @@ func main() {
 	shops := []string{"ShopA", "ShopB"}
 
 	// Expand articles to multiple shops
-	articlesCh = gopipe.Expand(articlesCh, func(a Article) []Article {
+	articlesCh = gopipe.Process(articlesCh, func(a Article) []Article {
 		articles := make([]Article, len(shops))
 		for i, shop := range shops {
 			articles[i] = Article{
@@ -171,8 +174,8 @@ func main() {
 	// Create an input channel
 	in := make(chan string, 10)
 
-	// Create a processor
-	processor := gopipe.NewProcessor(
+	// Create a pipe with context-awareness and concurrency
+	pipe := gopipe.NewTransformPipe(
 		func(ctx context.Context, val string) (int, error) {
 			// Simulate processing time
 			time.Sleep(100 * time.Millisecond)
@@ -180,18 +183,13 @@ func main() {
 			// Convert string to int
 			return strconv.Atoi(val)
 		},
-		func(val string, err error) {
-			fmt.Printf("Failed to process %q: %v\n", val, err)
-		})
-
-	// Process values with context-awareness and concurrency
-	processed := gopipe.Process(
-		ctx,
-		in,
-		processor,
-		gopipe.WithConcurrency(5), // Use 5 workers
-		gopipe.WithBuffer(10),     // Buffer up to 10 results
+		// gopipe.WithCancel is optional; a default error log will be printed if omitted
+		gopipe.WithConcurrency[string, int](5), // Use 5 workers
+		gopipe.WithBuffer[string, int](10),     // Buffer up to 10 results
 	)
+
+	// Start processing
+	processed := pipe.Start(ctx, in)
 
 	// Start a goroutine to send values
 	go func() {
@@ -284,23 +282,16 @@ func main() {
 		}
 	}()
 
-	// Create a processor
-	processor := gopipe.NewProcessor(
+	// Create a pipe
+	pipe := gopipe.NewBatchPipe(
 		NewCreateUserHandler(),
-		func(val []string, err error) {
-			fmt.Printf("Batch failed: %v, error: %v\n", val, err)
-		},
+		5,                   // Max batch size
+		10*time.Millisecond, // Max batch duration
+		gopipe.WithBuffer[[]string, UserResponse](10), // Buffer up to 10 results
 	)
 
 	// Create new users in batches
-	userResponses := gopipe.Batch(
-		context.Background(),
-		in,
-		processor,
-		5,                     // Max batch size
-		10*time.Millisecond,   // Max batch duration
-		gopipe.WithBuffer(10), // Buffer up to 10 results
-	)
+	userResponses := pipe.Start(context.Background(), in)
 
 	// Consume responses
 	for userResponse := range userResponses {
