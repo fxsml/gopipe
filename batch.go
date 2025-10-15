@@ -12,19 +12,25 @@ import (
 // transformation. Behavior is configurable with options. The returned channel
 // is closed after processing finishes.
 func Batch[In, Out any](
-	ctx context.Context,
 	in <-chan In,
-	proc Processor[[]In, []Out],
+	handle func([]In) []Out,
 	maxSize int,
 	maxDuration time.Duration,
-	opts ...Option,
 ) <-chan Out {
+	return Split(Transform(Collect(in, maxSize, maxDuration), handle))
+}
 
-	out := pipe(
-		ctx,
-		Collect(in, maxSize, maxDuration),
-		proc,
-		opts...)
-
-	return Split(out)
+// NewBatchPipe creates a Pipe that groups inputs into batches before processing.
+// Each batch is processed as a whole by the handle function, which can return multiple outputs.
+// Batches are created when either maxSize items are collected or maxDuration elapses since the first item.
+func NewBatchPipe[In any, Out any](
+	handle func(context.Context, []In) ([]Out, error),
+	maxSize int,
+	maxDuration time.Duration,
+	opts ...Option[[]In, Out],
+) Pipe[In, Out] {
+	proc := NewProcessor(handle, nil)
+	return NewPipe(func(pre <-chan In) <-chan []In {
+		return Collect(pre, maxSize, maxDuration)
+	}, proc, opts...)
 }

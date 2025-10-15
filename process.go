@@ -1,18 +1,34 @@
 package gopipe
 
-import (
-	"context"
-)
+import "context"
 
-// Process applies process function to each item from in concurrently.
-// Successful results are sent to the returned channel; failures invoke cancel.
-// Behavior is configurable with options. The returned channel is closed
-// after processing finishes.
+// Process maps each value from in to zero or more values using handle.
+// The returned channel is closed after in is closed.
 func Process[In, Out any](
-	ctx context.Context,
 	in <-chan In,
-	proc Processor[In, Out],
-	opts ...Option,
+	handle func(In) []Out,
 ) <-chan Out {
-	return pipe(ctx, in, proc, opts...)
+	out := make(chan Out)
+
+	go func() {
+		defer close(out)
+		for val := range in {
+			for _, item := range handle(val) {
+				out <- item
+			}
+		}
+	}()
+
+	return out
+}
+
+// NewProcessPipe creates a Pipe that can transform each input into multiple outputs.
+// Unlike NewTransformPipe, this can produce zero, one, or many outputs for each input.
+// The handle function receives a context and input item, and returns a slice of outputs or an error.
+func NewProcessPipe[In, Out any](
+	handle func(context.Context, In) ([]Out, error),
+	opts ...Option[In, Out],
+) Pipe[In, Out] {
+	proc := NewProcessor(handle, nil)
+	return NewPipe(NoopPreProcessorFunc[In], proc, opts...)
 }
