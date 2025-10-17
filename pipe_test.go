@@ -46,3 +46,16 @@ func TestProcess(t *testing.T) {
 	}
 	test.RunProcess_Success(t, f)
 }
+
+func TestSink(t *testing.T) {
+	f := func(in <-chan int, handle func(int)) <-chan struct{} {
+		handlePipe := func(_ context.Context, in int) error {
+			handle(in)
+			return nil
+		}
+		return NewSinkPipe(handlePipe).Start(context.Background(), in)
+	}
+	test.RunSink_handleCalled(t, f)
+	test.RunSink_ExitsOnClose(t, f)
+	test.RunSink_EmptyChannel(t, f)
+}
