@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"context"
 	"log/slog"
 	"strings"
 
@@ -115,30 +114,28 @@ func appendArgs(args ...[]any) []any {
 // It logs success, failure, or cancellation messages at configured levels,
 // and includes any Metadata from the processing context in the log message.
 func UseLogger[In, Out any](log Logger, config LoggerConfig) gopipe.MiddlewareFunc[In, Out] {
+	return UseMetrics[In, Out](NewMetricsLogger(log, config))
+}
+
+func NewMetricsLogger(log Logger, config LoggerConfig) MetricsFunc {
 	config.parse()
 	logCancel := config.logFunc(config.LevelCancel, log)
 	logFailure := config.logFunc(config.LevelFailure, log)
 	logSuccess := config.logFunc(config.LevelSuccess, log)
-	return func(next gopipe.Processor[In, Out]) gopipe.Processor[In, Out] {
-		return gopipe.NewProcessor(
-			func(ctx context.Context, in In) ([]Out, error) {
-				val, err := next.Process(ctx, in)
-				if err == nil {
-					logSuccess(config.MessageSuccess,
-						appendArgs(config.Args, MetadataFromContext(ctx).Args())...)
-				}
-				return val, err
-			},
-			func(in In, err error) {
-				next.Cancel(in, err)
-				if gopipe.IsCancel(err) {
-					logCancel(config.MessageCancel,
-						appendArgs(config.Args, MetadataFromError(err).Args(), []any{"error", err})...)
-				} else {
-					logFailure(config.MessageFailure,
-						appendArgs(config.Args, MetadataFromError(err).Args(), []any{"error", err})...)
-				}
-			})
+	return func(metrics *Metrics) {
+		if metrics.Error == nil {
+			logSuccess(config.MessageSuccess,
+				appendArgs(config.Args, metrics.Metadata.Args(), []any{"duration", metrics.Duration})...)
+			return
+		}
+		if gopipe.IsFailure(metrics.Error) {
+			logFailure(config.MessageFailure,
+				appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error, "duration", metrics.Duration})...)
+			return
+		}
+		logCancel(config.MessageCancel,
+			appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error})...)
+
 	}
 }
 
