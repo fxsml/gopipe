@@ -26,11 +26,11 @@ func Filter[T any](
 // If the handle function returns true, the input is passed through; if false, the input is discarded.
 // If the handle function returns an error, processing for that item stops and the error is handled.
 func NewFilterPipe[In any](
-	handle func(In) (bool, error),
+	handle func(context.Context, In) (bool, error),
 	opts ...Option[In, In],
 ) Pipe[In, In] {
 	proc := NewProcessor(func(ctx context.Context, in In) ([]In, error) {
-		ok, err := handle(in)
+		ok, err := handle(ctx, in)
 		if err != nil {
 			return nil, err
 		}
