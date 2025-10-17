@@ -47,8 +47,8 @@ func TestRecoverProcessingWithPanic(t *testing.T) {
 		return
 	}
 
-	recoveryErr, ok := err.(*RecoveryError)
-	if !ok {
+	var recoveryErr *RecoveryError
+	if !errors.As(err, &recoveryErr) {
 		t.Errorf("Expected *RecoveryError, got %T", err)
 		return
 	}

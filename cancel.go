@@ -39,7 +39,7 @@ func Cancel[T any](
 				}
 				select {
 				case <-ctx.Done():
-					cancel(val, newErrCancel(ctx.Err()))
+					cancel(val, ctx.Err())
 					return
 				case out <- val:
 				}
@@ -50,7 +50,7 @@ func Cancel[T any](
 	go func() {
 		wg.Wait()
 		for val := range in {
-			cancel(val, newErrCancel(ctx.Err()))
+			cancel(val, ctx.Err())
 		}
 	}()
 
