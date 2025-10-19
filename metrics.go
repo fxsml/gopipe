@@ -6,7 +6,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
 )
 
 // Metrics holds processing metrics for a single input.
@@ -44,12 +43,12 @@ func (m *Metrics) Cancel() int {
 	return 0
 }
 
-// MetricsFunc defines a function that collects single input metrics.
-type MetricsFunc func(metrics *Metrics)
+// MetricsCollector defines a function that collects single input metrics.
+type MetricsCollector func(metrics *Metrics)
 
 // UseMetrics creates a middleware that collects processing metrics for each input.
 // It records the start time, duration, and output count for each processing call.
-func UseMetrics[In, Out any](collect MetricsFunc) MiddlewareFunc[In, Out] {
+func UseMetrics[In, Out any](collect MetricsCollector) MiddlewareFunc[In, Out] {
 	inFlight := atomic.Int32{}
 	return func(next Processor[In, Out]) Processor[In, Out] {
 		return NewProcessor(
@@ -88,7 +87,7 @@ func UseMetrics[In, Out any](collect MetricsFunc) MiddlewareFunc[In, Out] {
 }
 
 // NewMetricsDistributor creates a CollectMetricsFunc that distributes collected metrics.
-func NewMetricsDistributor(ctx context.Context, collectors ...MetricsFunc) MetricsFunc {
+func NewMetricsDistributor(ctx context.Context, collectors ...MetricsCollector) MetricsCollector {
 	ch := make(chan *Metrics, len(collectors)*100)
 
 	go func() {
@@ -153,7 +152,7 @@ func NewDeltaMetricsCollector(
 	collect DeltaMetricsFunc,
 	maxSize int,
 	maxDuration time.Duration,
-) MetricsFunc {
+) MetricsCollector {
 	ch := make(chan *Metrics, 10)
 
 	startTime := time.Now()

@@ -11,7 +11,12 @@ type config[In, Out any] struct {
 	timeout            time.Duration
 	contextPropagation bool
 	cancel             CancelFunc[In]
-	middleware         []MiddlewareFunc[In, Out]
+
+	middleware       []MiddlewareFunc[In, Out]
+	metricsCollector []MetricsCollector
+	metadataProvider []MiddlewareFunc[In, Out]
+	recover          bool
+	loggerConfig     *LoggerConfig
 }
 
 func parseConfig[In, Out any](opts []Option[In, Out]) config[In, Out] {
@@ -25,6 +30,27 @@ func parseConfig[In, Out any](opts []Option[In, Out]) config[In, Out] {
 		opt(&c)
 	}
 	return c
+}
+
+func (c *config[In, Out]) apply(ctx context.Context, proc Processor[In, Out]) Processor[In, Out] {
+	if c.cancel != nil {
+		proc = NewProcessor(proc.Process, c.cancel)
+	}
+	if c.timeout > 0 || !c.contextPropagation {
+		proc = UseContext[In, Out](c.timeout, c.contextPropagation)(proc)
+	}
+	if logger := NewMetricsLogger(c.loggerConfig); logger != nil {
+		c.metricsCollector = append(c.metricsCollector, logger)
+	}
+	if len(c.metricsCollector) > 0 {
+		proc = UseMetrics[In, Out](NewMetricsDistributor(ctx, c.metricsCollector...))(proc)
+	}
+	proc = ApplyMiddleware(proc, c.middleware...)
+	proc = ApplyMiddleware(proc, c.metadataProvider...)
+	if c.recover {
+		proc = UseRecover[In, Out]()(proc)
+	}
+	return proc
 }
 
 func (p *config[In, Out]) newProcessCtx(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -85,8 +111,32 @@ func WithCancel[In, Out any](cancel func(In, error)) Option[In, Out] {
 // WithMiddleware adds middleware to the processing pipeline.
 // Can be used multiple times. Middleware is applied in reverse order:
 // for middlewares A, B, C, the execution flow is A→B→C→process.
-func WithMiddleware[In, Out any](mw MiddlewareFunc[In, Out]) Option[In, Out] {
+func WithMiddleware[In, Out any](middleware MiddlewareFunc[In, Out]) Option[In, Out] {
 	return func(cfg *config[In, Out]) {
-		cfg.middleware = append(cfg.middleware, mw)
+		cfg.middleware = append(cfg.middleware, middleware)
+	}
+}
+
+func WithMetrics[In, Out any](collector MetricsCollector) Option[In, Out] {
+	return func(cfg *config[In, Out]) {
+		cfg.metricsCollector = append(cfg.metricsCollector, collector)
+	}
+}
+
+func WithMetadata[In, Out any](provider MetadataProvider[In]) Option[In, Out] {
+	return func(cfg *config[In, Out]) {
+		cfg.metadataProvider = append(cfg.metadataProvider, UseMetadata[In, Out](provider))
+	}
+}
+
+func WithRecover[In, Out any]() Option[In, Out] {
+	return func(cfg *config[In, Out]) {
+		cfg.recover = true
+	}
+}
+
+func WithLoggerConfig[In, Out any](loggerConfig *LoggerConfig) Option[In, Out] {
+	return func(cfg *config[In, Out]) {
+		cfg.loggerConfig = loggerConfig
 	}
 }

@@ -54,7 +54,7 @@ func TestLogger_LogsSuccessfulProcessing(t *testing.T) {
 	)
 
 	// Apply logger middleware with default config
-	processor := UseLogger[string, string](logger, LoggerConfig{})(baseProcessor)
+	processor := UseLogger[string, string](&LoggerConfig{})(baseProcessor)
 
 	// Process an item - should succeed and log
 	_, err := processor.Process(context.Background(), "test-input")
@@ -85,7 +85,7 @@ func TestLogger_LogsFailure(t *testing.T) {
 	)
 
 	// Apply logger middleware with default config
-	processor := UseLogger[string, string](logger, LoggerConfig{})(baseProcessor)
+	processor := UseLogger[string, string](&LoggerConfig{})(baseProcessor)
 
 	// Process an item - should fail and log
 	_, err := processor.Process(context.Background(), "test-input")
@@ -139,7 +139,7 @@ func TestLogger_CustomLogLevels(t *testing.T) {
 	)
 
 	// Apply logger middleware with custom config
-	processor := UseLogger[string, string](logger, config)(baseProcessor)
+	processor := UseLogger[string, string](&config)(baseProcessor)
 
 	// Process an item successfully
 	_, err := processor.Process(context.Background(), "test-input")
@@ -178,7 +178,7 @@ func TestLogger_CustomMessages(t *testing.T) {
 	)
 
 	// Apply logger middleware with custom config
-	processor := UseLogger[string, string](logger, config)(baseProcessor)
+	processor := UseLogger[string, string](&config)(baseProcessor)
 
 	// Test success
 	_, err := processor.Process(context.Background(), "success")
@@ -204,25 +204,4 @@ func TestLogger_CustomMessages(t *testing.T) {
 	if len(logger.errorCalls) != 1 || logger.errorCalls[0].msg != "Custom failure message" {
 		t.Errorf("Expected custom failure message, got %v", logger.errorCalls)
 	}
-}
-
-func TestUseSlog(t *testing.T) {
-	// This is just a smoke test to ensure the function doesn't panic
-	// Real slog testing would require a more complex setup with output capture
-
-	baseProcessor := NewProcessor(
-		func(ctx context.Context, in string) ([]string, error) {
-			return []string{in + "-processed"}, nil
-		},
-		func(in string, err error) {},
-	)
-
-	// Should not panic
-	processor := UseSlog[string, string]("service", "logger-test")(baseProcessor)
-
-	_, err := processor.Process(context.Background(), "test-input")
-	if err != nil {
-		t.Fatalf("Expected no error, got %v", err)
-	}
-	// No assertions, just ensuring it doesn't panic
 }
