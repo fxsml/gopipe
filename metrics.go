@@ -1,4 +1,4 @@
-package middleware
+package gopipe
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/fxsml/gopipe"
 )
 
 // Metrics holds processing metrics for a single input.
@@ -32,14 +31,14 @@ func (m *Metrics) Success() int {
 }
 
 func (m *Metrics) Failure() int {
-	if gopipe.IsFailure(m.Error) {
+	if IsFailure(m.Error) {
 		return 1
 	}
 	return 0
 }
 
 func (m *Metrics) Cancel() int {
-	if gopipe.IsCancel(m.Error) {
+	if IsCancel(m.Error) {
 		return 1
 	}
 	return 0
@@ -50,10 +49,10 @@ type MetricsFunc func(metrics *Metrics)
 
 // UseMetrics creates a middleware that collects processing metrics for each input.
 // It records the start time, duration, and output count for each processing call.
-func UseMetrics[In, Out any](collect MetricsFunc) gopipe.MiddlewareFunc[In, Out] {
+func UseMetrics[In, Out any](collect MetricsFunc) MiddlewareFunc[In, Out] {
 	inFlight := atomic.Int32{}
-	return func(next gopipe.Processor[In, Out]) gopipe.Processor[In, Out] {
-		return gopipe.NewProcessor(
+	return func(next Processor[In, Out]) Processor[In, Out] {
+		return NewProcessor(
 			func(ctx context.Context, in In) ([]Out, error) {
 				m := &Metrics{
 					StartTime:  time.Now(),
@@ -75,7 +74,7 @@ func UseMetrics[In, Out any](collect MetricsFunc) gopipe.MiddlewareFunc[In, Out]
 			},
 			func(in In, err error) {
 				next.Cancel(in, err)
-				if !gopipe.IsFailure(err) {
+				if !IsFailure(err) {
 					collect(&Metrics{
 						InputCount: 1,
 						InFlight:   int(inFlight.Load()),
@@ -159,7 +158,7 @@ func NewDeltaMetricsCollector(
 
 	startTime := time.Now()
 
-	gopipe.Batch(
+	Batch(
 		ch,
 		func(batch []*Metrics) []struct{} {
 			now := time.Now()
@@ -191,7 +190,7 @@ func NewDeltaMetricsCollector(
 
 				if m.Error == nil {
 					dm.SuccessTotal++
-				} else if gopipe.IsFailure(m.Error) {
+				} else if IsFailure(m.Error) {
 					dm.FailureTotal++
 				} else {
 					dm.CancelTotal++

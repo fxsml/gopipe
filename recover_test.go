@@ -1,16 +1,14 @@
-package middleware
+package gopipe
 
 import (
 	"context"
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/fxsml/gopipe"
 )
 
 func TestRecoverSuccessfulProcessing(t *testing.T) {
-	processor := gopipe.NewProcessor(
+	processor := NewProcessor(
 		func(ctx context.Context, in string) ([]int, error) {
 			return []int{len(in)}, nil
 		},
@@ -32,7 +30,7 @@ func TestRecoverSuccessfulProcessing(t *testing.T) {
 }
 
 func TestRecoverProcessingWithPanic(t *testing.T) {
-	processor := gopipe.NewProcessor(
+	processor := NewProcessor(
 		func(ctx context.Context, in string) ([]int, error) {
 			panic("test panic")
 		},
@@ -66,7 +64,7 @@ func TestRecoverCancellation(t *testing.T) {
 	var cancelCalled bool
 	var cancelErr error
 
-	processor := gopipe.NewProcessor(
+	processor := NewProcessor(
 		func(ctx context.Context, in string) ([]int, error) {
 			return []int{0}, nil
 		},
@@ -96,7 +94,7 @@ func TestRecoverIntegrationWithPipeline(t *testing.T) {
 
 	var cancelCalls int
 
-	processor := gopipe.NewProcessor(
+	processor := NewProcessor(
 		func(ctx context.Context, in string) ([]int, error) {
 			if in == "hello" {
 				panic("pipeline panic")
@@ -115,7 +113,7 @@ func TestRecoverIntegrationWithPipeline(t *testing.T) {
 			}
 		})
 
-	out := gopipe.StartProcessor(ctx, in, processor, gopipe.WithMiddleware(UseRecover[string, int]()))
+	out := StartProcessor(ctx, in, processor, WithMiddleware(UseRecover[string, int]()))
 
 	// Drain the output channel
 	for range out {
