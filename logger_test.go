@@ -1,15 +1,12 @@
-package middleware_test
+package gopipe
 
 import (
 	"context"
 	"errors"
 	"testing"
-
-	"github.com/fxsml/gopipe"
-	"github.com/fxsml/gopipe/middleware"
 )
 
-// mockLogger implements the middleware.Logger interface for testing
+// mockLogger implements the Logger interface for testing
 type mockLogger struct {
 	debugCalls []logCall
 	infoCalls  []logCall
@@ -49,7 +46,7 @@ func TestLogger_LogsSuccessfulProcessing(t *testing.T) {
 	logger := &mockLogger{}
 
 	// Create a processor that always succeeds
-	baseProcessor := gopipe.NewProcessor(
+	baseProcessor := NewProcessor(
 		func(ctx context.Context, in string) ([]string, error) {
 			return []string{in + "-processed"}, nil
 		},
@@ -57,7 +54,7 @@ func TestLogger_LogsSuccessfulProcessing(t *testing.T) {
 	)
 
 	// Apply logger middleware with default config
-	processor := middleware.UseLogger[string, string](logger, middleware.LoggerConfig{})(baseProcessor)
+	processor := UseLogger[string, string](logger, LoggerConfig{})(baseProcessor)
 
 	// Process an item - should succeed and log
 	_, err := processor.Process(context.Background(), "test-input")
@@ -80,7 +77,7 @@ func TestLogger_LogsFailure(t *testing.T) {
 	testError := errors.New("processing failed")
 
 	// Create a processor that always fails
-	baseProcessor := gopipe.NewProcessor(
+	baseProcessor := NewProcessor(
 		func(ctx context.Context, in string) ([]string, error) {
 			return nil, testError
 		},
@@ -88,7 +85,7 @@ func TestLogger_LogsFailure(t *testing.T) {
 	)
 
 	// Apply logger middleware with default config
-	processor := middleware.UseLogger[string, string](logger, middleware.LoggerConfig{})(baseProcessor)
+	processor := UseLogger[string, string](logger, LoggerConfig{})(baseProcessor)
 
 	// Process an item - should fail and log
 	_, err := processor.Process(context.Background(), "test-input")
@@ -128,13 +125,13 @@ func TestLogger_CustomLogLevels(t *testing.T) {
 	logger := &mockLogger{}
 
 	// Create a config with custom log levels
-	config := middleware.LoggerConfig{
-		LevelSuccess: middleware.LogLevelInfo,  // Change from default debug
-		LevelFailure: middleware.LogLevelError, // Same as default
+	config := LoggerConfig{
+		LevelSuccess: LogLevelInfo,  // Change from default debug
+		LevelFailure: LogLevelError, // Same as default
 	}
 
 	// Create a processor for testing
-	baseProcessor := gopipe.NewProcessor(
+	baseProcessor := NewProcessor(
 		func(ctx context.Context, in string) ([]string, error) {
 			return []string{in + "-processed"}, nil
 		},
@@ -142,7 +139,7 @@ func TestLogger_CustomLogLevels(t *testing.T) {
 	)
 
 	// Apply logger middleware with custom config
-	processor := middleware.UseLogger[string, string](logger, config)(baseProcessor)
+	processor := UseLogger[string, string](logger, config)(baseProcessor)
 
 	// Process an item successfully
 	_, err := processor.Process(context.Background(), "test-input")
@@ -164,13 +161,13 @@ func TestLogger_CustomMessages(t *testing.T) {
 	testError := errors.New("failure")
 
 	// Create a config with custom messages
-	config := middleware.LoggerConfig{
+	config := LoggerConfig{
 		MessageSuccess: "Custom success message",
 		MessageFailure: "Custom failure message",
 	}
 
 	// Create a processor for testing
-	baseProcessor := gopipe.NewProcessor(
+	baseProcessor := NewProcessor(
 		func(ctx context.Context, in string) ([]string, error) {
 			if in == "fail" {
 				return nil, testError
@@ -181,7 +178,7 @@ func TestLogger_CustomMessages(t *testing.T) {
 	)
 
 	// Apply logger middleware with custom config
-	processor := middleware.UseLogger[string, string](logger, config)(baseProcessor)
+	processor := UseLogger[string, string](logger, config)(baseProcessor)
 
 	// Test success
 	_, err := processor.Process(context.Background(), "success")
@@ -213,7 +210,7 @@ func TestUseSlog(t *testing.T) {
 	// This is just a smoke test to ensure the function doesn't panic
 	// Real slog testing would require a more complex setup with output capture
 
-	baseProcessor := gopipe.NewProcessor(
+	baseProcessor := NewProcessor(
 		func(ctx context.Context, in string) ([]string, error) {
 			return []string{in + "-processed"}, nil
 		},
@@ -221,7 +218,7 @@ func TestUseSlog(t *testing.T) {
 	)
 
 	// Should not panic
-	processor := middleware.UseSlog[string, string]("service", "logger-test")(baseProcessor)
+	processor := UseSlog[string, string]("service", "logger-test")(baseProcessor)
 
 	_, err := processor.Process(context.Background(), "test-input")
 	if err != nil {

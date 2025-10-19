@@ -1,10 +1,9 @@
-package middleware
+package gopipe
 
 import (
 	"log/slog"
 	"strings"
 
-	"github.com/fxsml/gopipe"
 )
 
 // LogLevel represents the severity level for logging messages.
@@ -113,7 +112,7 @@ func appendArgs(args ...[]any) []any {
 // UseLogger creates a middleware that logs information about processing results.
 // It logs success, failure, or cancellation messages at configured levels,
 // and includes any Metadata from the processing context in the log message.
-func UseLogger[In, Out any](log Logger, config LoggerConfig) gopipe.MiddlewareFunc[In, Out] {
+func UseLogger[In, Out any](log Logger, config LoggerConfig) MiddlewareFunc[In, Out] {
 	return UseMetrics[In, Out](NewMetricsLogger(log, config))
 }
 
@@ -128,7 +127,7 @@ func NewMetricsLogger(log Logger, config LoggerConfig) MetricsFunc {
 				appendArgs(config.Args, metrics.Metadata.Args(), []any{"duration", metrics.Duration})...)
 			return
 		}
-		if gopipe.IsFailure(metrics.Error) {
+		if IsFailure(metrics.Error) {
 			logFailure(config.MessageFailure,
 				appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error, "duration", metrics.Duration})...)
 			return
@@ -141,7 +140,7 @@ func NewMetricsLogger(log Logger, config LoggerConfig) MetricsFunc {
 
 // UseSlog creates a middleware that logs using the default slog logger.
 // Additional arguments can be included in all log messages.
-func UseSlog[In, Out any](args ...any) gopipe.MiddlewareFunc[In, Out] {
+func UseSlog[In, Out any](args ...any) MiddlewareFunc[In, Out] {
 	return UseLogger[In, Out](slog.Default(), LoggerConfig{
 		Args: args,
 	})

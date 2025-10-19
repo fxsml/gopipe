@@ -1,37 +1,34 @@
-package middleware_test
+package gopipe
 
 import (
 	"context"
 	"errors"
 	"reflect"
 	"testing"
-
-	"github.com/fxsml/gopipe"
-	"github.com/fxsml/gopipe/middleware"
 )
 
 func TestMetadata_AttachesToContext(t *testing.T) {
 	// Create metadata provider function
-	metadataFn := func(in string) middleware.Metadata {
-		return middleware.Metadata{
+	metadataFn := func(in string) Metadata {
+		return Metadata{
 			"request_id": "12345",
 			"input_len":  len(in),
 		}
 	}
 
 	// Create a processor that checks for metadata in its context
-	var receivedMetadata middleware.Metadata
-	baseProcessor := gopipe.NewProcessor(
+	var receivedMetadata Metadata
+	baseProcessor := NewProcessor(
 		func(ctx context.Context, in string) ([]string, error) {
 			// Extract and store metadata from context for verification
-			receivedMetadata = middleware.MetadataFromContext(ctx)
+			receivedMetadata = MetadataFromContext(ctx)
 			return []string{in + "-processed"}, nil
 		},
 		func(in string, err error) {},
 	)
 
 	// Apply the metadata middleware
-	processor := middleware.UseMetadata[string, string](metadataFn)(baseProcessor)
+	processor := UseMetadata[string, string](metadataFn)(baseProcessor)
 
 	// Process an item
 	input := "test-input"
@@ -46,7 +43,7 @@ func TestMetadata_AttachesToContext(t *testing.T) {
 	}
 
 	// Verify metadata was properly attached to context
-	expectedMetadata := middleware.Metadata{
+	expectedMetadata := Metadata{
 		"request_id": "12345",
 		"input_len":  10, // len("test-input")
 	}
@@ -60,8 +57,8 @@ func TestMetadata_AttachesToError(t *testing.T) {
 	testError := errors.New("processing error")
 
 	// Create metadata provider function
-	metadataFn := func(in string) middleware.Metadata {
-		return middleware.Metadata{
+	metadataFn := func(in string) Metadata {
+		return Metadata{
 			"request_id": "12345",
 			"input_len":  len(in),
 		}
@@ -70,7 +67,7 @@ func TestMetadata_AttachesToError(t *testing.T) {
 	// Create a processor that captures the cancel call
 	var cancelCalled bool
 	var cancelError error
-	baseProcessor := gopipe.NewProcessor(
+	baseProcessor := NewProcessor(
 		func(ctx context.Context, in string) ([]string, error) {
 			return []string{in}, nil
 		},
@@ -81,7 +78,7 @@ func TestMetadata_AttachesToError(t *testing.T) {
 	)
 
 	// Apply the metadata middleware
-	processor := middleware.UseMetadata[string, string](metadataFn)(baseProcessor)
+	processor := UseMetadata[string, string](metadataFn)(baseProcessor)
 
 	// Call Cancel directly to test metadata attachment
 	input := "test-input"
@@ -93,13 +90,13 @@ func TestMetadata_AttachesToError(t *testing.T) {
 	}
 
 	// Verify metadata was attached to the error
-	metadata := middleware.MetadataFromError(cancelError)
+	metadata := MetadataFromError(cancelError)
 	if metadata == nil {
 		t.Fatal("Expected metadata to be attached to error, got nil")
 	}
 
 	// Verify metadata content
-	expectedMetadata := middleware.Metadata{
+	expectedMetadata := Metadata{
 		"request_id": "12345",
 		"input_len":  10, // len("test-input")
 	}
@@ -117,9 +114,9 @@ func TestMetadata_AttachesToError(t *testing.T) {
 func TestMetadata_ErrorPassthrough(t *testing.T) {
 	// Create metadata provider function with tracking
 	metadataCalls := 0
-	metadataFn := func(in string) middleware.Metadata {
+	metadataFn := func(in string) Metadata {
 		metadataCalls++
-		return middleware.Metadata{
+		return Metadata{
 			"request_id": "12345",
 			"input_len":  len(in),
 		}
@@ -128,7 +125,7 @@ func TestMetadata_ErrorPassthrough(t *testing.T) {
 	// Create a processor that just passes errors to Cancel
 	var cancelCalled bool
 	var receivedErr error
-	baseProcessor := gopipe.NewProcessor(
+	baseProcessor := NewProcessor(
 		func(ctx context.Context, in string) ([]string, error) {
 			return []string{in + "-processed"}, nil
 		},
@@ -139,7 +136,7 @@ func TestMetadata_ErrorPassthrough(t *testing.T) {
 	)
 
 	// Apply the metadata middleware
-	processor := middleware.UseMetadata[string, string](metadataFn)(baseProcessor)
+	processor := UseMetadata[string, string](metadataFn)(baseProcessor)
 
 	// Create a simple error (not a cancel error)
 	testError := errors.New("test error")
@@ -164,13 +161,13 @@ func TestMetadata_ErrorPassthrough(t *testing.T) {
 	}
 
 	// Verify metadata was attached to the error
-	metadata := middleware.MetadataFromError(receivedErr)
+	metadata := MetadataFromError(receivedErr)
 	if metadata == nil {
 		t.Fatal("Expected metadata to be attached to error, got nil")
 	}
 
 	// Verify metadata content
-	expectedMetadata := middleware.Metadata{
+	expectedMetadata := Metadata{
 		"request_id": "12345",
 		"input_len":  10, // len("test-input")
 	}
@@ -182,7 +179,7 @@ func TestMetadata_ErrorPassthrough(t *testing.T) {
 
 func TestMetadataArgs_ConvertsToKeyValuePairs(t *testing.T) {
 	// Create metadata with various types of values
-	metadata := middleware.Metadata{
+	metadata := Metadata{
 		"string":  "value",
 		"integer": 42,
 		"boolean": true,
@@ -223,13 +220,13 @@ func TestMetadataArgs_ConvertsToKeyValuePairs(t *testing.T) {
 
 func TestMetadataFromContext_HandlesNil(t *testing.T) {
 	// Using context.TODO() instead of nil context
-	metadata := middleware.MetadataFromContext(context.TODO())
+	metadata := MetadataFromContext(context.TODO())
 	if metadata != nil {
 		t.Errorf("Expected nil metadata from empty context, got %v", metadata)
 	}
 
 	// Context without metadata should return nil metadata
-	metadata = middleware.MetadataFromContext(context.Background())
+	metadata = MetadataFromContext(context.Background())
 	if metadata != nil {
 		t.Errorf("Expected nil metadata from context without metadata, got %v", metadata)
 	}
@@ -237,13 +234,13 @@ func TestMetadataFromContext_HandlesNil(t *testing.T) {
 
 func TestMetadataFromError_HandlesNil(t *testing.T) {
 	// Nil error should return nil metadata
-	metadata := middleware.MetadataFromError(nil)
+	metadata := MetadataFromError(nil)
 	if metadata != nil {
 		t.Errorf("Expected nil metadata from nil error, got %v", metadata)
 	}
 
 	// Error without metadata should return nil metadata
-	metadata2 := middleware.MetadataFromError(errors.New("plain error"))
+	metadata2 := MetadataFromError(errors.New("plain error"))
 	if metadata2 != nil {
 		t.Errorf("Expected nil metadata from error without metadata, got %v", metadata2)
 	}
