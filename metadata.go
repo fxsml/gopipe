@@ -1,10 +1,9 @@
-package middleware
+package gopipe
 
 import (
 	"context"
 	"errors"
 
-	"github.com/fxsml/gopipe"
 )
 
 // Metadata is a key-value store for additional information about pipeline items.
@@ -47,9 +46,9 @@ func newMetadataErrorWrapper(err error, metadata Metadata) error {
 // UseMetadata creates middleware that attaches metadata to the processing context.
 // The provided function produces metadata which may be extracted from the input value.
 // Metadata is then available via MetadataFromContext or MetadataFromError.
-func UseMetadata[In, Out any](m func(in In) Metadata) gopipe.MiddlewareFunc[In, Out] {
-	return func(next gopipe.Processor[In, Out]) gopipe.Processor[In, Out] {
-		return gopipe.NewProcessor(
+func UseMetadata[In, Out any](m func(in In) Metadata) MiddlewareFunc[In, Out] {
+	return func(next Processor[In, Out]) Processor[In, Out] {
+		return NewProcessor(
 			func(ctx context.Context, in In) ([]Out, error) {
 				metadata := m(in)
 				ctx = context.WithValue(ctx, metadataKey, metadata)
