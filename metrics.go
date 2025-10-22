@@ -3,7 +3,6 @@ package gopipe
 import (
 	"context"
 	"math"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -128,8 +127,8 @@ type DurationStats struct {
 	Avg time.Duration
 }
 
-// DeltaMetrics holds aggregated metrics over a period.
-type DeltaMetrics struct {
+// SnapshotMetrics holds aggregated metrics over a period.
+type SnapshotMetrics struct {
 	StartTime time.Time
 	Duration  time.Duration
 
@@ -147,78 +146,74 @@ type DeltaMetrics struct {
 	CancelTotal  int
 }
 
-// DeltaMetricsFunc defines a function that collects delta metrics.
-type DeltaMetricsFunc func(metrics *DeltaMetrics)
+// SnapshotMetricsFunc defines a function that collects snapshot metrics.
+type SnapshotMetricsFunc func(metrics *SnapshotMetrics)
 
-// NewDeltaMetricsCollector creates a DeltaMetricsFunc that aggregates metrics into delta metrics.
-func NewDeltaMetricsCollector(
+// NewSnapshotMetricsCollector creates a MetricsCollector that aggregates metrics into snapshot metrics.
+func NewSnapshotMetricsCollector(
 	ctx context.Context,
-	collect DeltaMetricsFunc,
+	collect SnapshotMetricsFunc,
 	maxSize int,
 	maxDuration time.Duration,
-) MetricsCollector {
-	ch := make(chan *Metrics, 10)
+) (MetricsCollector, <-chan struct{}) {
+	ch := make(chan *Metrics)
 
 	startTime := time.Now()
 
-	Batch(
-		ch,
-		func(batch []*Metrics) []struct{} {
-			now := time.Now()
-			batchSize := len(batch)
-			dm := &DeltaMetrics{
-				StartTime: startTime,
-				Duration:  startTime.Sub(now),
-				Total:     batchSize,
-				InFlightStats: Stats{
-					Min: math.MaxInt64,
-				},
-				DurationStats: DurationStats{
-					Min: math.MaxInt64,
-				},
-			}
-			inFlightTotal := 0
-			durationTotal := time.Duration(0)
-			for _, m := range batch {
-				inFlightTotal += m.InFlight
-				dm.InFlightStats.Max = max(dm.InFlightStats.Max, m.InFlight)
-				dm.InFlightStats.Min = min(dm.InFlightStats.Min, m.InFlight)
-
-				durationTotal += m.Duration
-				dm.DurationStats.Max = max(dm.DurationStats.Max, m.Duration)
-				dm.DurationStats.Min = min(dm.DurationStats.Min, m.Duration)
-
-				dm.InputCountTotal += m.InputCount
-				dm.OutputCountTotal += m.OutputCount
-
-				if m.Error == nil {
-					dm.SuccessTotal++
-				} else if IsFailure(m.Error) {
-					dm.FailureTotal++
-				} else {
-					dm.CancelTotal++
-				}
-			}
-
-			dm.InFlightStats.Avg = float64(inFlightTotal) / float64(batchSize)
-			dm.DurationStats.Avg = durationTotal / time.Duration(batchSize)
-
-			startTime = now
-			collect(dm)
-			return nil
-		},
+	batchCh := Collect(
+		Cancel(ctx, ch, func(_ *Metrics, _ error) {}),
 		maxSize,
 		maxDuration,
 	)
 
-	once := sync.Once{}
+	out := Sink(batchCh, func(batch []*Metrics) {
+		now := time.Now()
+		batchSize := len(batch)
+		dm := &SnapshotMetrics{
+			StartTime: startTime,
+			Duration:  startTime.Sub(now),
+			Total:     batchSize,
+			InFlightStats: Stats{
+				Min: math.MaxInt64,
+			},
+			DurationStats: DurationStats{
+				Min: math.MaxInt64,
+			},
+		}
+		inFlightTotal := 0
+		durationTotal := time.Duration(0)
+		for _, m := range batch {
+			inFlightTotal += m.InFlight
+			dm.InFlightStats.Max = max(dm.InFlightStats.Max, m.InFlight)
+			dm.InFlightStats.Min = min(dm.InFlightStats.Min, m.InFlight)
+
+			durationTotal += m.Duration
+			dm.DurationStats.Max = max(dm.DurationStats.Max, m.Duration)
+			dm.DurationStats.Min = min(dm.DurationStats.Min, m.Duration)
+
+			dm.InputCountTotal += m.InputCount
+			dm.OutputCountTotal += m.OutputCount
+
+			if m.Error == nil {
+				dm.SuccessTotal++
+			} else if IsFailure(m.Error) {
+				dm.FailureTotal++
+			} else {
+				dm.CancelTotal++
+			}
+		}
+
+		dm.InFlightStats.Avg = float64(inFlightTotal) / float64(batchSize)
+		dm.DurationStats.Avg = durationTotal / time.Duration(batchSize)
+
+		startTime = now
+		collect(dm)
+	})
+
 	return func(m *Metrics) {
 		select {
 		case <-ctx.Done():
-			once.Do(func() {
-				close(ch)
-			})
 		case ch <- m:
 		}
-	}
+	}, out
 }
