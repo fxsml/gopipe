@@ -73,8 +73,8 @@ func SetDefaultLoggerConfig(config *LoggerConfig) {
 
 var logger Logger = slog.Default()
 
-func SetDefaultLogger(logger Logger) {
-	logger = logger
+func SetDefaultLogger(l Logger) {
+	logger = l
 }
 
 func parseLogLevel(level LogLevel) LogLevel {

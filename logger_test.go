@@ -44,6 +44,7 @@ func (l *mockLogger) reset() {
 
 func TestLogger_LogsSuccessfulProcessing(t *testing.T) {
 	logger := &mockLogger{}
+	SetDefaultLogger(logger)
 
 	// Create a processor that always succeeds
 	baseProcessor := NewProcessor(
@@ -74,6 +75,7 @@ func TestLogger_LogsSuccessfulProcessing(t *testing.T) {
 
 func TestLogger_LogsFailure(t *testing.T) {
 	logger := &mockLogger{}
+	SetDefaultLogger(logger)
 	testError := errors.New("processing failed")
 
 	// Create a processor that always fails
@@ -123,6 +125,7 @@ func TestLogger_LogsFailure(t *testing.T) {
 
 func TestLogger_CustomLogLevels(t *testing.T) {
 	logger := &mockLogger{}
+	SetDefaultLogger(logger)
 
 	// Create a config with custom log levels
 	config := LoggerConfig{
@@ -158,6 +161,7 @@ func TestLogger_CustomLogLevels(t *testing.T) {
 
 func TestLogger_CustomMessages(t *testing.T) {
 	logger := &mockLogger{}
+	SetDefaultLogger(logger)
 	testError := errors.New("failure")
 
 	// Create a config with custom messages

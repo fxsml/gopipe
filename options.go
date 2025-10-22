@@ -32,35 +32,38 @@ func parseConfig[In, Out any](opts []Option[In, Out]) config[In, Out] {
 	return c
 }
 
-func (c *config[In, Out]) apply(ctx context.Context, proc Processor[In, Out]) Processor[In, Out] {
+func (c *config[In, Out]) applyMiddleware(ctx context.Context, proc Processor[In, Out]) (Processor[In, Out], <-chan struct{}) {
 	if c.cancel != nil {
 		proc = NewProcessor(proc.Process, c.cancel)
 	}
+
 	if c.timeout > 0 || !c.contextPropagation {
 		proc = UseContext[In, Out](c.timeout, c.contextPropagation)(proc)
 	}
+
 	if logger := NewMetricsLogger(c.loggerConfig); logger != nil {
 		c.metricsCollector = append(c.metricsCollector, logger)
 	}
+
+	var done <-chan struct{}
 	if len(c.metricsCollector) > 0 {
-		proc = UseMetrics[In, Out](NewMetricsDistributor(ctx, c.metricsCollector...))(proc)
+		distributor, doneCh := NewMetricsDistributor(ctx, c.metricsCollector...)
+		done = doneCh
+		proc = UseMetrics[In, Out](distributor)(proc)
+	} else {
+		doneCh := make(chan struct{})
+		close(doneCh)
+		done = doneCh
 	}
+
 	proc = ApplyMiddleware(proc, c.middleware...)
 	proc = ApplyMiddleware(proc, c.metadataProvider...)
+
 	if c.recover {
 		proc = UseRecover[In, Out]()(proc)
 	}
-	return proc
-}
 
-func (p *config[In, Out]) newProcessCtx(ctx context.Context) (context.Context, context.CancelFunc) {
-	if !p.contextPropagation {
-		ctx = context.Background()
-	}
-	if p.timeout > 0 {
-		return context.WithTimeout(ctx, p.timeout)
-	}
-	return context.WithCancel(ctx)
+	return proc, done
 }
 
 // Option configures behavior of a Pipe.

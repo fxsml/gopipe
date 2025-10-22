@@ -79,34 +79,34 @@ func startProcessor[In, Out any](
 	proc Processor[In, Out],
 	opts []Option[In, Out],
 ) <-chan Out {
-	mainCtx, mainCancel := context.WithCancel(ctx)
-	middlewareCtx, middlewareCancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 
 	c := parseConfig(opts)
-	proc = c.apply(middlewareCtx, proc)
+	ctxMW, cancelMW := context.WithCancel(context.Background())
+	proc, doneMW := c.applyMiddleware(ctxMW, proc)
 
 	out := make(chan Out, c.buffer)
 
-	var wg sync.WaitGroup
-	wg.Add(c.concurrency)
-	for i := 0; i < c.concurrency; i++ {
+	var wgProcess sync.WaitGroup
+	wgProcess.Add(c.concurrency)
+	for range c.concurrency {
 		go func() {
-			defer wg.Done()
+			defer wgProcess.Done()
 			for {
 				select {
-				case <-mainCtx.Done():
+				case <-ctx.Done():
 					return
 				default:
 				}
 
 				select {
-				case <-mainCtx.Done():
+				case <-ctx.Done():
 					return
 				case val, ok := <-in:
 					if !ok {
 						return
 					}
-					if res, err := proc.Process(mainCtx, val); err != nil {
+					if res, err := proc.Process(ctx, val); err != nil {
 						proc.Cancel(val, err)
 					} else {
 						for _, r := range res {
@@ -118,23 +118,26 @@ func startProcessor[In, Out any](
 		}()
 	}
 
-	// Start draining as soon as the parent context is cancelled.
-	wgDrain := sync.WaitGroup{}
-	wgDrain.Add(1)
+	wgCancel := sync.WaitGroup{}
+	wgCancel.Add(1)
 	go func() {
-		<-mainCtx.Done()
+		<-ctx.Done()
 		for val := range in {
-			proc.Cancel(val, mainCtx.Err())
+			proc.Cancel(val, ctx.Err())
 		}
-		wgDrain.Done()
+		wgCancel.Done()
 	}()
 
 	go func() {
-		wg.Wait()
+		wgProcess.Wait()
+
+		cancel()
+		wgCancel.Wait()
+
+		cancelMW()
+		<-doneMW
+
 		close(out)
-		mainCancel()
-		wgDrain.Wait()
-		middlewareCancel()
 	}()
 
 	return out

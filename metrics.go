@@ -87,27 +87,31 @@ func UseMetrics[In, Out any](collect MetricsCollector) MiddlewareFunc[In, Out] {
 }
 
 // NewMetricsDistributor creates a CollectMetricsFunc that distributes collected metrics.
-func NewMetricsDistributor(ctx context.Context, collectors ...MetricsCollector) MetricsCollector {
-	ch := make(chan *Metrics, len(collectors)*100)
+func NewMetricsDistributor(ctx context.Context, collectors ...MetricsCollector) (MetricsCollector, <-chan struct{}) {
+	ch := make(chan *Metrics)
+	out := make(chan struct{})
 
 	go func() {
-		for metrics := range ch {
-			for _, collect := range collectors {
-				collect(metrics)
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				close(ch)
+				return
+			case metrics := <-ch:
+				for _, collect := range collectors {
+					collect(metrics)
+				}
 			}
 		}
 	}()
 
-	once := sync.Once{}
 	return func(metrics *Metrics) {
-		if ctx.Err() != nil {
-			once.Do(func() {
-				close(ch)
-			})
-			return
+		select {
+		case <-ctx.Done():
+		case ch <- metrics:
 		}
-		ch <- metrics
-	}
+	}, out
 }
 
 // Stats holds statistical data.
@@ -209,12 +213,12 @@ func NewDeltaMetricsCollector(
 
 	once := sync.Once{}
 	return func(m *Metrics) {
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
 			once.Do(func() {
 				close(ch)
 			})
-			return
+		case ch <- m:
 		}
-		ch <- m
 	}
 }
