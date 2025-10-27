@@ -3,11 +3,13 @@ package gopipe
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 )
 
 // mockLogger implements the Logger interface for testing
 type mockLogger struct {
+	mu         sync.Mutex
 	debugCalls []logCall
 	infoCalls  []logCall
 	warnCalls  []logCall
@@ -20,30 +22,41 @@ type logCall struct {
 }
 
 func (l *mockLogger) Debug(msg string, args ...any) {
+	l.mu.Lock()
 	l.debugCalls = append(l.debugCalls, logCall{msg: msg, args: args})
+	l.mu.Unlock()
 }
 
 func (l *mockLogger) Info(msg string, args ...any) {
+	l.mu.Lock()
 	l.infoCalls = append(l.infoCalls, logCall{msg: msg, args: args})
+	l.mu.Unlock()
 }
 
 func (l *mockLogger) Warn(msg string, args ...any) {
+	l.mu.Lock()
 	l.warnCalls = append(l.warnCalls, logCall{msg: msg, args: args})
+	l.mu.Unlock()
 }
 
 func (l *mockLogger) Error(msg string, args ...any) {
+	l.mu.Lock()
 	l.errorCalls = append(l.errorCalls, logCall{msg: msg, args: args})
+	l.mu.Unlock()
 }
 
 func (l *mockLogger) reset() {
+	l.mu.Lock()
 	l.debugCalls = nil
 	l.infoCalls = nil
 	l.warnCalls = nil
 	l.errorCalls = nil
+	l.mu.Unlock()
 }
 
 func TestLogger_LogsSuccessfulProcessing(t *testing.T) {
 	logger := &mockLogger{}
+	SetDefaultLogger(logger)
 
 	// Create a processor that always succeeds
 	baseProcessor := NewProcessor(
@@ -54,7 +67,7 @@ func TestLogger_LogsSuccessfulProcessing(t *testing.T) {
 	)
 
 	// Apply logger middleware with default config
-	processor := UseLogger[string, string](logger, LoggerConfig{})(baseProcessor)
+	processor := UseLogger[string, string](&LoggerConfig{})(baseProcessor)
 
 	// Process an item - should succeed and log
 	_, err := processor.Process(context.Background(), "test-input")
@@ -63,17 +76,26 @@ func TestLogger_LogsSuccessfulProcessing(t *testing.T) {
 	}
 
 	// Check debug logs (default success level is debug)
-	if len(logger.debugCalls) != 1 {
-		t.Fatalf("Expected 1 debug log, got %d", len(logger.debugCalls))
+	logger.mu.Lock()
+	debugCallsLen := len(logger.debugCalls)
+	var debugCallMsg string
+	if debugCallsLen > 0 {
+		debugCallMsg = logger.debugCalls[0].msg
+	}
+	logger.mu.Unlock()
+
+	if debugCallsLen != 1 {
+		t.Fatalf("Expected 1 debug log, got %d", debugCallsLen)
 	}
 
-	if logger.debugCalls[0].msg != "GOPIPE: Success" {
-		t.Errorf("Expected success message, got %q", logger.debugCalls[0].msg)
+	if debugCallMsg != "GOPIPE: Success" {
+		t.Errorf("Expected success message, got %q", debugCallMsg)
 	}
 }
 
 func TestLogger_LogsFailure(t *testing.T) {
 	logger := &mockLogger{}
+	SetDefaultLogger(logger)
 	testError := errors.New("processing failed")
 
 	// Create a processor that always fails
@@ -85,7 +107,7 @@ func TestLogger_LogsFailure(t *testing.T) {
 	)
 
 	// Apply logger middleware with default config
-	processor := UseLogger[string, string](logger, LoggerConfig{})(baseProcessor)
+	processor := UseLogger[string, string](&LoggerConfig{})(baseProcessor)
 
 	// Process an item - should fail and log
 	_, err := processor.Process(context.Background(), "test-input")
@@ -98,19 +120,29 @@ func TestLogger_LogsFailure(t *testing.T) {
 	processor.Cancel("test-input", testError)
 
 	// Check error logs (default failure level is error)
-	if len(logger.errorCalls) != 1 {
-		t.Fatalf("Expected 1 error log, got %d", len(logger.errorCalls))
+	logger.mu.Lock()
+	errorCallsLen := len(logger.errorCalls)
+	var errorCallMsg string
+	var errorCallArgs []any
+	if errorCallsLen > 0 {
+		errorCallMsg = logger.errorCalls[0].msg
+		errorCallArgs = logger.errorCalls[0].args
+	}
+	logger.mu.Unlock()
+
+	if errorCallsLen != 1 {
+		t.Fatalf("Expected 1 error log, got %d", errorCallsLen)
 	}
 
-	if logger.errorCalls[0].msg != "GOPIPE: Failure" {
-		t.Errorf("Expected failure message, got %q", logger.errorCalls[0].msg)
+	if errorCallMsg != "GOPIPE: Failure" {
+		t.Errorf("Expected failure message, got %q", errorCallMsg)
 	}
 
 	// Check that error is included in log args
 	hasErrorArg := false
-	for i := 0; i < len(logger.errorCalls[0].args); i += 2 {
-		if i+1 < len(logger.errorCalls[0].args) &&
-			logger.errorCalls[0].args[i] == "error" {
+	for i := 0; i < len(errorCallArgs); i += 2 {
+		if i+1 < len(errorCallArgs) &&
+			errorCallArgs[i] == "error" {
 			hasErrorArg = true
 			break
 		}
@@ -123,6 +155,7 @@ func TestLogger_LogsFailure(t *testing.T) {
 
 func TestLogger_CustomLogLevels(t *testing.T) {
 	logger := &mockLogger{}
+	SetDefaultLogger(logger)
 
 	// Create a config with custom log levels
 	config := LoggerConfig{
@@ -139,7 +172,7 @@ func TestLogger_CustomLogLevels(t *testing.T) {
 	)
 
 	// Apply logger middleware with custom config
-	processor := UseLogger[string, string](logger, config)(baseProcessor)
+	processor := UseLogger[string, string](&config)(baseProcessor)
 
 	// Process an item successfully
 	_, err := processor.Process(context.Background(), "test-input")
@@ -148,16 +181,22 @@ func TestLogger_CustomLogLevels(t *testing.T) {
 	}
 
 	// Check that it logged at info level (not debug)
-	if len(logger.debugCalls) != 0 {
-		t.Errorf("Should not have debug logs, got %d", len(logger.debugCalls))
+	logger.mu.Lock()
+	debugCallsLen := len(logger.debugCalls)
+	infoCallsLen := len(logger.infoCalls)
+	logger.mu.Unlock()
+
+	if debugCallsLen != 0 {
+		t.Errorf("Should not have debug logs, got %d", debugCallsLen)
 	}
-	if len(logger.infoCalls) != 1 {
-		t.Errorf("Expected 1 info log, got %d", len(logger.infoCalls))
+	if infoCallsLen != 1 {
+		t.Errorf("Expected 1 info log, got %d", infoCallsLen)
 	}
 }
 
 func TestLogger_CustomMessages(t *testing.T) {
 	logger := &mockLogger{}
+	SetDefaultLogger(logger)
 	testError := errors.New("failure")
 
 	// Create a config with custom messages
@@ -178,7 +217,7 @@ func TestLogger_CustomMessages(t *testing.T) {
 	)
 
 	// Apply logger middleware with custom config
-	processor := UseLogger[string, string](logger, config)(baseProcessor)
+	processor := UseLogger[string, string](&config)(baseProcessor)
 
 	// Test success
 	_, err := processor.Process(context.Background(), "success")
@@ -186,8 +225,16 @@ func TestLogger_CustomMessages(t *testing.T) {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	if len(logger.debugCalls) != 1 || logger.debugCalls[0].msg != "Custom success message" {
-		t.Errorf("Expected custom success message, got %v", logger.debugCalls)
+	logger.mu.Lock()
+	debugCallsLen := len(logger.debugCalls)
+	var debugCallMsg string
+	if debugCallsLen > 0 {
+		debugCallMsg = logger.debugCalls[0].msg
+	}
+	logger.mu.Unlock()
+
+	if debugCallsLen != 1 || debugCallMsg != "Custom success message" {
+		t.Errorf("Expected custom success message, got len=%d msg=%q", debugCallsLen, debugCallMsg)
 	}
 
 	logger.reset()
@@ -201,28 +248,15 @@ func TestLogger_CustomMessages(t *testing.T) {
 	// Manually invoke Cancel to trigger failure logging
 	processor.Cancel("fail", testError)
 
-	if len(logger.errorCalls) != 1 || logger.errorCalls[0].msg != "Custom failure message" {
-		t.Errorf("Expected custom failure message, got %v", logger.errorCalls)
+	logger.mu.Lock()
+	errorCallsLen := len(logger.errorCalls)
+	var errorCallMsg string
+	if errorCallsLen > 0 {
+		errorCallMsg = logger.errorCalls[0].msg
 	}
-}
+	logger.mu.Unlock()
 
-func TestUseSlog(t *testing.T) {
-	// This is just a smoke test to ensure the function doesn't panic
-	// Real slog testing would require a more complex setup with output capture
-
-	baseProcessor := NewProcessor(
-		func(ctx context.Context, in string) ([]string, error) {
-			return []string{in + "-processed"}, nil
-		},
-		func(in string, err error) {},
-	)
-
-	// Should not panic
-	processor := UseSlog[string, string]("service", "logger-test")(baseProcessor)
-
-	_, err := processor.Process(context.Background(), "test-input")
-	if err != nil {
-		t.Fatalf("Expected no error, got %v", err)
+	if errorCallsLen != 1 || errorCallMsg != "Custom failure message" {
+		t.Errorf("Expected custom failure message, got len=%d msg=%q", errorCallsLen, errorCallMsg)
 	}
-	// No assertions, just ensuring it doesn't panic
 }
