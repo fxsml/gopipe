@@ -2,9 +2,6 @@ package gopipe
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"os"
 	"sync"
 )
 
@@ -43,21 +40,17 @@ func (p *processor[In, Out]) Cancel(in In, err error) {
 
 // NewProcessor creates a new Processor with the provided process and cancel functions.
 //
-// If process is nil, a default function that returns an error is used.
-// If cancel is nil, a default function that prints to stderr is used.
+// Panics if process is nil.
+// If cancel is nil, a no-op function is used.
 func NewProcessor[In, Out any](
 	process ProcessFunc[In, Out],
 	cancel CancelFunc[In],
 ) Processor[In, Out] {
 	if process == nil {
-		process = func(context.Context, In) ([]Out, error) {
-			return nil, errors.New("ProcessFunc not provided")
-		}
+		panic("ProcessFunc cannot be nil")
 	}
 	if cancel == nil {
-		cancel = func(in In, err error) {
-			fmt.Fprintf(os.Stderr, "gopipe error: %v, input: %+v\n", err, in)
-		}
+		cancel = func(in In, err error) {}
 	}
 	return &processor[In, Out]{
 		process: process,
@@ -86,22 +79,18 @@ func startProcessor[In, Out any](
 	proc Processor[In, Out],
 	opts []Option[In, Out],
 ) <-chan Out {
+	ctx, cancel := context.WithCancel(ctx)
+
 	c := parseConfig(opts)
+	proc = c.applyMiddleware(proc)
 
-	if c.cancel != nil {
-		proc = NewProcessor(proc.Process, c.cancel)
-	}
-
-	proc = ApplyMiddleware(proc, c.middleware...)
-
-	ctx, ctxCancel := context.WithCancel(ctx)
 	out := make(chan Out, c.buffer)
 
-	var wg sync.WaitGroup
-	wg.Add(c.concurrency)
-	for i := 0; i < c.concurrency; i++ {
+	var wgProcess sync.WaitGroup
+	wgProcess.Add(c.concurrency)
+	for range c.concurrency {
 		go func() {
-			defer wg.Done()
+			defer wgProcess.Done()
 			for {
 				select {
 				case <-ctx.Done():
@@ -116,32 +105,33 @@ func startProcessor[In, Out any](
 					if !ok {
 						return
 					}
-					processCtx, processCancel := c.newProcessCtx(ctx)
-					if res, err := proc.Process(processCtx, val); err != nil {
+					if res, err := proc.Process(ctx, val); err != nil {
 						proc.Cancel(val, err)
 					} else {
 						for _, r := range res {
 							out <- r
 						}
 					}
-					processCancel()
 				}
 			}
 		}()
 	}
 
-	// Start draining as soon as the parent context is cancelled.
+	wgCancel := sync.WaitGroup{}
+	wgCancel.Add(1)
 	go func() {
 		<-ctx.Done()
 		for val := range in {
 			proc.Cancel(val, ctx.Err())
 		}
+		wgCancel.Done()
 	}()
 
 	go func() {
-		wg.Wait()
+		wgProcess.Wait()
+		cancel()
+		wgCancel.Wait()
 		close(out)
-		ctxCancel()
 	}()
 
 	return out

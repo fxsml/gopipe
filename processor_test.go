@@ -181,7 +181,9 @@ func TestStartProcessor_NoGoroutineLeakOnChannelClose(t *testing.T) {
 	proc := NewProcessor(process, cancel)
 
 	ctx := context.Background()
-	out := StartProcessor(ctx, in, proc)
+	out := StartProcessor(ctx, in, proc, WithLoggerConfig[int, int](&LoggerConfig{
+		Disabled: false,
+	}))
 
 	// Add one item and then close the input channel without cancelling the context
 	go func() {
@@ -192,9 +194,6 @@ func TestStartProcessor_NoGoroutineLeakOnChannelClose(t *testing.T) {
 	// Drain the output channel - this will complete
 	for range out {
 	}
-
-	// Give some time for goroutines to potentially clean up
-	time.Sleep(100 * time.Millisecond)
 
 	// Check if we have a goroutine leak
 	finalGoroutines := runtime.NumGoroutine()

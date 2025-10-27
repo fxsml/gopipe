@@ -3,11 +3,14 @@ package gopipe
 import (
 	"context"
 	"errors"
-
+	"maps"
 )
 
 // Metadata is a key-value store for additional information about pipeline items.
 type Metadata map[string]any
+
+// MetadataProvider is a function that provides Metadata for a given input.
+type MetadataProvider[In any] func(in In) Metadata
 
 // Args converts the metadata map into a slice of alternating keys and values,
 // suitable for use with structured logging systems like slog.
@@ -46,16 +49,26 @@ func newMetadataErrorWrapper(err error, metadata Metadata) error {
 // UseMetadata creates middleware that attaches metadata to the processing context.
 // The provided function produces metadata which may be extracted from the input value.
 // Metadata is then available via MetadataFromContext or MetadataFromError.
-func UseMetadata[In, Out any](m func(in In) Metadata) MiddlewareFunc[In, Out] {
+func UseMetadata[In, Out any](m MetadataProvider[In]) MiddlewareFunc[In, Out] {
 	return func(next Processor[In, Out]) Processor[In, Out] {
 		return NewProcessor(
 			func(ctx context.Context, in In) ([]Out, error) {
-				metadata := m(in)
+				metadata := MetadataFromContext(ctx)
+				if metadata == nil {
+					metadata = m(in)
+				} else {
+					maps.Copy(metadata, m(in))
+				}
 				ctx = context.WithValue(ctx, metadataKey, metadata)
 				return next.Process(ctx, in)
 			},
 			func(in In, err error) {
-				metadata := m(in)
+				metadata := MetadataFromError(err)
+				if metadata == nil {
+					metadata = m(in)
+				} else {
+					maps.Copy(metadata, m(in))
+				}
 				err = newMetadataErrorWrapper(err, metadata)
 				next.Cancel(in, err)
 			})
