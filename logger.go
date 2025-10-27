@@ -3,7 +3,6 @@ package gopipe
 import (
 	"log/slog"
 	"strings"
-
 )
 
 // LogLevel represents the severity level for logging messages.
@@ -53,6 +52,29 @@ type LoggerConfig struct {
 	// MessageFailure is the message logged when processing fails.
 	// Defaults to "GOPIPE: Failure" if not set.
 	MessageFailure string
+
+	// Disabled disables all logging when set to true.
+	Disabled bool
+}
+
+var defaultLoggerConfig = LoggerConfig{
+	LevelSuccess:   LogLevelDebug,
+	LevelCancel:    LogLevelWarn,
+	LevelFailure:   LogLevelError,
+	MessageSuccess: "GOPIPE: Success",
+	MessageCancel:  "GOPIPE: Cancel",
+	MessageFailure: "GOPIPE: Failure",
+}
+
+func SetDefaultLoggerConfig(config *LoggerConfig) {
+	config.parse()
+	defaultLoggerConfig = *config
+}
+
+var logger Logger = slog.Default()
+
+func SetDefaultLogger(l Logger) {
+	logger = l
 }
 
 func parseLogLevel(level LogLevel) LogLevel {
@@ -60,28 +82,32 @@ func parseLogLevel(level LogLevel) LogLevel {
 	return level
 }
 
-func (c *LoggerConfig) parse() {
+func (c *LoggerConfig) parse() *LoggerConfig {
+	if c == nil {
+		c = &LoggerConfig{}
+	}
 	c.LevelSuccess = parseLogLevel(c.LevelSuccess)
 	if c.LevelSuccess == "" {
-		c.LevelSuccess = LogLevelDebug
+		c.LevelSuccess = defaultLoggerConfig.LevelSuccess
 	}
 	c.LevelCancel = parseLogLevel(c.LevelCancel)
 	if c.LevelCancel == "" {
-		c.LevelCancel = LogLevelWarn
+		c.LevelCancel = defaultLoggerConfig.LevelCancel
 	}
 	c.LevelFailure = parseLogLevel(c.LevelFailure)
 	if c.LevelFailure == "" {
-		c.LevelFailure = LogLevelError
+		c.LevelFailure = defaultLoggerConfig.LevelFailure
 	}
 	if c.MessageSuccess == "" {
-		c.MessageSuccess = "GOPIPE: Success"
+		c.MessageSuccess = defaultLoggerConfig.MessageSuccess
 	}
 	if c.MessageCancel == "" {
-		c.MessageCancel = "GOPIPE: Cancel"
+		c.MessageCancel = defaultLoggerConfig.MessageCancel
 	}
 	if c.MessageFailure == "" {
-		c.MessageFailure = "GOPIPE: Failure"
+		c.MessageFailure = defaultLoggerConfig.MessageFailure
 	}
+	return c
 }
 
 func (c *LoggerConfig) logFunc(level LogLevel, log Logger) func(msg string, args ...any) {
@@ -112,15 +138,18 @@ func appendArgs(args ...[]any) []any {
 // UseLogger creates a middleware that logs information about processing results.
 // It logs success, failure, or cancellation messages at configured levels,
 // and includes any Metadata from the processing context in the log message.
-func UseLogger[In, Out any](log Logger, config LoggerConfig) MiddlewareFunc[In, Out] {
-	return UseMetrics[In, Out](NewMetricsLogger(log, config))
+func UseLogger[In, Out any](config *LoggerConfig) MiddlewareFunc[In, Out] {
+	return UseMetrics[In, Out](NewMetricsLogger(config))
 }
 
-func NewMetricsLogger(log Logger, config LoggerConfig) MetricsFunc {
-	config.parse()
-	logCancel := config.logFunc(config.LevelCancel, log)
-	logFailure := config.logFunc(config.LevelFailure, log)
-	logSuccess := config.logFunc(config.LevelSuccess, log)
+func NewMetricsLogger(config *LoggerConfig) MetricsCollector {
+	config = config.parse()
+	if config.Disabled {
+		return nil
+	}
+	logCancel := config.logFunc(config.LevelCancel, logger)
+	logFailure := config.logFunc(config.LevelFailure, logger)
+	logSuccess := config.logFunc(config.LevelSuccess, logger)
 	return func(metrics *Metrics) {
 		if metrics.Error == nil {
 			logSuccess(config.MessageSuccess,
@@ -136,12 +165,4 @@ func NewMetricsLogger(log Logger, config LoggerConfig) MetricsFunc {
 			appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error})...)
 
 	}
-}
-
-// UseSlog creates a middleware that logs using the default slog logger.
-// Additional arguments can be included in all log messages.
-func UseSlog[In, Out any](args ...any) MiddlewareFunc[In, Out] {
-	return UseLogger[In, Out](slog.Default(), LoggerConfig{
-		Args: args,
-	})
 }
