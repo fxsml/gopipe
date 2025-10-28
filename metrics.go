@@ -2,6 +2,7 @@ package gopipe
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"time"
 )
@@ -30,7 +31,7 @@ func (m *Metrics) Success() int {
 
 // Failure returns a numeric indicator of failure (1 for failure, 0 otherwise).
 func (m *Metrics) Failure() int {
-	if IsFailure(m.Error) {
+	if errors.Is(m.Error, ErrFailure) {
 		return 1
 	}
 	return 0
@@ -38,7 +39,7 @@ func (m *Metrics) Failure() int {
 
 // Cancel returns a numeric indicator of cancellation (1 for cancel, 0 otherwise).
 func (m *Metrics) Cancel() int {
-	if IsCancel(m.Error) {
+	if errors.Is(m.Error, ErrCancel) {
 		return 1
 	}
 	return 0
@@ -80,7 +81,7 @@ func useMetrics[In, Out any](collect MetricsCollector) MiddlewareFunc[In, Out] {
 			},
 			func(in In, err error) {
 				next.Cancel(in, err)
-				if !IsFailure(err) {
+				if !errors.Is(err, ErrFailure) {
 					collect(&Metrics{
 						InputCount: 1,
 						InFlight:   int(inFlight.Load()),

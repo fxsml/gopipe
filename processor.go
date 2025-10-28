@@ -27,11 +27,7 @@ type processor[In, Out any] struct {
 }
 
 func (p *processor[In, Out]) Process(ctx context.Context, in In) ([]Out, error) {
-	out, err := p.process(ctx, in)
-	if err != nil {
-		return nil, newErrFailure(err)
-	}
-	return out, nil
+	return p.process(ctx, in)
 }
 
 func (p *processor[In, Out]) Cancel(in In, err error) {
@@ -132,7 +128,7 @@ func startProcessor[In, Out any](
 						return
 					}
 					if res, err := proc.Process(ctx, val); err != nil {
-						proc.Cancel(val, err)
+						proc.Cancel(val, newErrFailure(err))
 					} else {
 						for _, r := range res {
 							out <- r
@@ -148,7 +144,7 @@ func startProcessor[In, Out any](
 	go func() {
 		<-ctx.Done()
 		for val := range in {
-			proc.Cancel(val, ctx.Err())
+			proc.Cancel(val, newErrCancel(ctx.Err()))
 		}
 		wgCancel.Done()
 	}()

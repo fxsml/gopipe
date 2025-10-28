@@ -2,6 +2,7 @@ package gopipe
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -62,7 +63,7 @@ func TestCancel_Drains(t *testing.T) {
 		}
 	}
 	for _, e := range errs {
-		if !IsCancel(e) {
+		if !errors.Is(e, ErrCancel) {
 			t.Fatalf("expected ErrCancel, got %v", e)
 		}
 	}
@@ -128,7 +129,7 @@ func TestCancel_InFlight(t *testing.T) {
 	if len(vals) == 0 || vals[0] != 42 {
 		t.Fatalf("expected cancelled value 42, got %v", vals)
 	}
-	if !IsCancel(errs[0]) {
+	if !errors.Is(errs[0], ErrCancel) {
 		t.Fatalf("expected ErrCancel, got %v", errs[0])
 	}
 }

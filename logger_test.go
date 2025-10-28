@@ -119,6 +119,8 @@ func TestLogger_LogsFailure(t *testing.T) {
 		t.Fatal("Expected an error, got nil")
 	}
 
+	logger.reset()
+
 	// Manually invoke the Cancel function to trigger logging
 	// This is needed because the logger middleware logs errors in Cancel, not Process
 	processor.Cancel("test-input", testError)
@@ -248,13 +250,25 @@ func TestLogger_CustomMessages(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}
+	logger.mu.Lock()
+	errorCallsLen := len(logger.errorCalls)
+	var errorCallMsg string
+	if errorCallsLen > 0 {
+		errorCallMsg = logger.errorCalls[0].msg
+	}
+	logger.mu.Unlock()
+
+	if errorCallsLen != 1 || errorCallMsg != "Custom failure message" {
+		t.Errorf("Expected custom failure message, got len=%d msg=%q", errorCallsLen, errorCallMsg)
+	}
+
+	logger.reset()
 
 	// Manually invoke Cancel to trigger failure logging
 	processor.Cancel("fail", testError)
 
 	logger.mu.Lock()
-	errorCallsLen := len(logger.errorCalls)
-	var errorCallMsg string
+	errorCallsLen = len(logger.errorCalls)
 	if errorCallsLen > 0 {
 		errorCallMsg = logger.errorCalls[0].msg
 	}
