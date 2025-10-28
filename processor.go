@@ -58,6 +58,32 @@ func NewProcessor[In, Out any](
 	}
 }
 
+// WithConcurrency sets worker count for concurrent processing.
+func WithConcurrency[In, Out any](concurrency int) Option[In, Out] {
+	return func(cfg *config[In, Out]) {
+		if concurrency > 0 {
+			cfg.concurrency = concurrency
+		}
+	}
+}
+
+// WithBuffer sets output channel buffer size.
+func WithBuffer[In, Out any](buffer int) Option[In, Out] {
+	return func(cfg *config[In, Out]) {
+		if buffer > 0 {
+			cfg.buffer = buffer
+		}
+	}
+}
+
+// WithCancel provides a cancel function to the processor.
+// If set, this overrides any existing cancel function.
+func WithCancel[In, Out any](cancel func(In, error)) Option[In, Out] {
+	return func(cfg *config[In, Out]) {
+		cfg.cancel = cancel
+	}
+}
+
 // StartProcessor processes items from the input channel using the provided processor
 // and returns a channel that will receive the processed outputs.
 //
@@ -82,7 +108,7 @@ func startProcessor[In, Out any](
 	ctx, cancel := context.WithCancel(ctx)
 
 	c := parseConfig(opts)
-	proc = c.applyMiddleware(proc)
+	proc = c.apply(proc)
 
 	out := make(chan Out, c.buffer)
 

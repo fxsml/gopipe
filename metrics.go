@@ -20,6 +20,7 @@ type Metrics struct {
 	Error    error
 }
 
+// Success returns a numeric indicator of success (1 for success, 0 otherwise).
 func (m *Metrics) Success() int {
 	if m.Error == nil {
 		return 1
@@ -27,6 +28,7 @@ func (m *Metrics) Success() int {
 	return 0
 }
 
+// Failure returns a numeric indicator of failure (1 for failure, 0 otherwise).
 func (m *Metrics) Failure() int {
 	if IsFailure(m.Error) {
 		return 1
@@ -34,6 +36,7 @@ func (m *Metrics) Failure() int {
 	return 0
 }
 
+// Cancel returns a numeric indicator of cancellation (1 for cancel, 0 otherwise).
 func (m *Metrics) Cancel() int {
 	if IsCancel(m.Error) {
 		return 1
@@ -44,9 +47,15 @@ func (m *Metrics) Cancel() int {
 // MetricsCollector defines a function that collects single input metrics.
 type MetricsCollector func(metrics *Metrics)
 
-// UseMetrics creates a middleware that collects processing metrics for each input.
-// It records the start time, duration, and output count for each processing call.
-func UseMetrics[In, Out any](collect MetricsCollector) MiddlewareFunc[In, Out] {
+// WithMetrics adds a metrics collector to the processing pipeline.
+// Can be used multiple times to add multiple collectors.
+func WithMetrics[In, Out any](collector MetricsCollector) Option[In, Out] {
+	return func(cfg *config[In, Out]) {
+		cfg.metricsCollector = append(cfg.metricsCollector, collector)
+	}
+}
+
+func useMetrics[In, Out any](collect MetricsCollector) MiddlewareFunc[In, Out] {
 	inFlight := atomic.Int32{}
 	return func(next Processor[In, Out]) Processor[In, Out] {
 		return NewProcessor(
@@ -84,7 +93,7 @@ func UseMetrics[In, Out any](collect MetricsCollector) MiddlewareFunc[In, Out] {
 	}
 }
 
-func NewMetricsDistributor(collectors ...MetricsCollector) MetricsCollector {
+func newMetricsDistributor(collectors ...MetricsCollector) MetricsCollector {
 	return func(m *Metrics) {
 		for _, c := range collectors {
 			c(m)

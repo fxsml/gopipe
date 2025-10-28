@@ -17,7 +17,7 @@ func TestApplyMiddleware(t *testing.T) {
 
 	// Test applying no middleware
 	t.Run("NoMiddleware", func(t *testing.T) {
-		proc := ApplyMiddleware(baseProcessor)
+		proc := applyMiddleware(baseProcessor)
 
 		// Verify it's the same processor (functionality unchanged)
 		result, err := proc.Process(context.Background(), "test")
@@ -48,7 +48,7 @@ func TestApplyMiddleware(t *testing.T) {
 			)
 		}
 
-		proc := ApplyMiddleware(baseProcessor, middleware)
+		proc := applyMiddleware(baseProcessor, middleware)
 
 		// Process should go through our middleware
 		result, err := proc.Process(context.Background(), "test")
@@ -114,7 +114,7 @@ func TestApplyMiddleware(t *testing.T) {
 			},
 		)
 
-		proc := ApplyMiddleware(testProcessor, middleware1, middleware2, middleware3)
+		proc := applyMiddleware(testProcessor, middleware1, middleware2, middleware3)
 
 		// Process should go through our middleware in correct order
 		_, _ = proc.Process(context.Background(), "test")
@@ -173,7 +173,7 @@ func TestApplyMiddleware(t *testing.T) {
 			)
 		}
 
-		proc := ApplyMiddleware(errorProcessor, errorHandlingMiddleware)
+		proc := applyMiddleware(errorProcessor, errorHandlingMiddleware)
 
 		// Process should not return an error despite the base processor returning one
 		result, err := proc.Process(context.Background(), "test")
@@ -214,7 +214,7 @@ func TestApplyMiddleware(t *testing.T) {
 			)
 		}
 
-		proc := ApplyMiddleware(baseProcessor, outputModifyingMiddleware)
+		proc := applyMiddleware(baseProcessor, outputModifyingMiddleware)
 
 		// Process should modify the output
 		result, err := proc.Process(context.Background(), "test")

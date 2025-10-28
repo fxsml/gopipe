@@ -9,9 +9,6 @@ import (
 // Metadata is a key-value store for additional information about pipeline items.
 type Metadata map[string]any
 
-// MetadataProvider is a function that provides Metadata for a given input.
-type MetadataProvider[In any] func(in In) Metadata
-
 // Args converts the metadata map into a slice of alternating keys and values,
 // suitable for use with structured logging systems like slog.
 func (m Metadata) Args() []any {
@@ -20,6 +17,45 @@ func (m Metadata) Args() []any {
 		args = append(args, k, v)
 	}
 	return args
+}
+
+// MetadataProvider is a function that provides Metadata for a processing context.
+// It may extract information from the input value.
+type MetadataProvider[In any] func(in In) Metadata
+
+// MetadataFromContext extracts metadata from a context.
+// Returns nil if no metadata is present.
+func MetadataFromContext(ctx context.Context) Metadata {
+	if ctx == nil {
+		return nil
+	}
+	if metadata, ok := ctx.Value(metadataKey).(Metadata); ok {
+		return metadata
+	}
+	return nil
+}
+
+// MetadataFromError extracts metadata from an error.
+// Returns nil if no metadata is present.
+func MetadataFromError(err error) Metadata {
+	if err == nil {
+		return nil
+	}
+	var w *metadataErrorWrapper
+	if errors.As(err, &w) {
+		return w.metadata
+	}
+	return nil
+}
+
+// WithMetadata adds a metadata provider to enrich context with metadata
+// for each input. Can be used multiple times to add multiple providers.
+// Metadata is available via MetadataFromContext or MetadataFromError.
+// Metadata is used in logging and metrics collection.
+func WithMetadata[In, Out any](provider MetadataProvider[In]) Option[In, Out] {
+	return func(cfg *config[In, Out]) {
+		cfg.metadataProvider = append(cfg.metadataProvider, useMetadata[In, Out](provider))
+	}
 }
 
 type metadataKeyType struct{}
@@ -46,10 +82,7 @@ func newMetadataErrorWrapper(err error, metadata Metadata) error {
 	return &metadataErrorWrapper{cause: err, metadata: metadata}
 }
 
-// UseMetadata creates middleware that attaches metadata to the processing context.
-// The provided function produces metadata which may be extracted from the input value.
-// Metadata is then available via MetadataFromContext or MetadataFromError.
-func UseMetadata[In, Out any](m MetadataProvider[In]) MiddlewareFunc[In, Out] {
+func useMetadata[In, Out any](m MetadataProvider[In]) MiddlewareFunc[In, Out] {
 	return func(next Processor[In, Out]) Processor[In, Out] {
 		return NewProcessor(
 			func(ctx context.Context, in In) ([]Out, error) {
@@ -73,29 +106,4 @@ func UseMetadata[In, Out any](m MetadataProvider[In]) MiddlewareFunc[In, Out] {
 				next.Cancel(in, err)
 			})
 	}
-}
-
-// MetadataFromContext extracts metadata from a context.
-// Returns nil if no metadata is present.
-func MetadataFromContext(ctx context.Context) Metadata {
-	if ctx == nil {
-		return nil
-	}
-	if metadata, ok := ctx.Value(metadataKey).(Metadata); ok {
-		return metadata
-	}
-	return nil
-}
-
-// MetadataFromError extracts metadata from an error.
-// Returns nil if no metadata is present.
-func MetadataFromError(err error) Metadata {
-	if err == nil {
-		return nil
-	}
-	var w *metadataErrorWrapper
-	if errors.As(err, &w) {
-		return w.metadata
-	}
-	return nil
 }
