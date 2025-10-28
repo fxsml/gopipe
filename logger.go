@@ -1,6 +1,7 @@
 package gopipe
 
 import (
+	"errors"
 	"log/slog"
 	"strings"
 )
@@ -39,20 +40,23 @@ type LoggerConfig struct {
 	Args []any
 
 	// LevelSuccess is the log level used for successful processing.
+	// Defaults to LogLevelDebug.
 	LevelSuccess LogLevel
 	// LevelCancel is the log level used when processing is canceled.
+	// Defaults to LogLevelWarn.
 	LevelCancel LogLevel
 	// LevelFailure is the log level used when processing fails.
+	// Defaults to LogLevelError.
 	LevelFailure LogLevel
 
 	// MessageSuccess is the message logged on successful processing.
-	// Defaults to "GOPIPE: Success" if not set.
+	// Defaults to "GOPIPE: Success".
 	MessageSuccess string
 	// MessageCancel is the message logged when processing is canceled.
-	// Defaults to "GOPIPE: Cancel" if not set.
+	// Defaults to "GOPIPE: Cancel".
 	MessageCancel string
 	// MessageFailure is the message logged when processing fails.
-	// Defaults to "GOPIPE: Failure" if not set.
+	// Defaults to "GOPIPE: Failure".
 	MessageFailure string
 
 	// Disabled disables all logging when set to true.
@@ -162,13 +166,12 @@ func newMetricsLogger(config *LoggerConfig) MetricsCollector {
 				appendArgs(config.Args, metrics.Metadata.Args(), []any{"duration", metrics.Duration})...)
 			return
 		}
-		if IsFailure(metrics.Error) {
-			logFailure(config.MessageFailure,
-				appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error, "duration", metrics.Duration})...)
+		if errors.Is(metrics.Error, ErrCancel) {
+			logCancel(config.MessageCancel,
+				appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error})...)
 			return
 		}
-		logCancel(config.MessageCancel,
-			appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error})...)
-
+		logFailure(config.MessageFailure,
+			appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error, "duration", metrics.Duration})...)
 	}
 }

@@ -2,12 +2,15 @@ package gopipe
 
 import (
 	"errors"
+	"fmt"
 )
 
-// IsCancel checks if an error was caused by cancellation.
-func IsCancel(err error) bool {
-	return !IsFailure(err)
-}
+var (
+	// ErrFailure indicates a processing failure.
+	ErrFailure = errors.New("gopipe: processing failed")
+	// ErrCancel indicates that processing was canceled.
+	ErrCancel = errors.New("gopipe: processing canceled")
+)
 
 type errFailure struct {
 	cause error
@@ -17,19 +20,32 @@ func (e *errFailure) Error() string {
 	if e.cause != nil {
 		return e.cause.Error()
 	}
-	return "gopipe: cause is nil"
+	return ErrFailure.Error()
 }
 
 func (e *errFailure) Unwrap() error {
-	return e.cause
+	return fmt.Errorf("%w: %w", ErrFailure, e.cause)
 }
 
 func newErrFailure(err error) error {
 	return &errFailure{cause: err}
 }
 
-// IsFailure checks if an error was caused by a processing failure.
-func IsFailure(err error) bool {
-	var failureErr *errFailure
-	return errors.As(err, &failureErr)
+type errCancel struct {
+	cause error
+}
+
+func (e *errCancel) Error() string {
+	if e.cause != nil {
+		return e.cause.Error()
+	}
+	return ErrCancel.Error()
+}
+
+func (e *errCancel) Unwrap() error {
+	return fmt.Errorf("%w: %w", ErrCancel, e.cause)
+}
+
+func newErrCancel(err error) error {
+	return &errCancel{cause: err}
 }
