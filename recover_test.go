@@ -14,7 +14,7 @@ func TestRecoverSuccessfulProcessing(t *testing.T) {
 		},
 		nil,
 	)
-	processor = UseRecover[string, int]()(processor)
+	processor = useRecover[string, int]()(processor)
 
 	result, err := processor.Process(context.Background(), "hello")
 
@@ -36,7 +36,7 @@ func TestRecoverProcessingWithPanic(t *testing.T) {
 		},
 		nil,
 	)
-	processor = UseRecover[string, int]()(processor)
+	processor = useRecover[string, int]()(processor)
 
 	_, err := processor.Process(context.Background(), "hello")
 
@@ -72,7 +72,7 @@ func TestRecoverCancellation(t *testing.T) {
 			cancelCalled = true
 			cancelErr = err
 		})
-	processor = UseRecover[string, int]()(processor)
+	processor = useRecover[string, int]()(processor)
 
 	testErr := errors.New("test error")
 	processor.Cancel("test", testErr)
@@ -113,7 +113,7 @@ func TestRecoverIntegrationWithPipeline(t *testing.T) {
 			}
 		})
 
-	out := StartProcessor(ctx, in, processor, WithMiddleware(UseRecover[string, int]()))
+	out := StartProcessor(ctx, in, processor, WithMiddleware(useRecover[string, int]()))
 
 	// Drain the output channel
 	for range out {

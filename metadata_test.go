@@ -28,7 +28,7 @@ func TestMetadata_AttachesToContext(t *testing.T) {
 	)
 
 	// Apply the metadata middleware
-	processor := UseMetadata[string, string](metadataFn)(baseProcessor)
+	processor := useMetadata[string, string](metadataFn)(baseProcessor)
 
 	// Process an item
 	input := "test-input"
@@ -78,7 +78,7 @@ func TestMetadata_AttachesToError(t *testing.T) {
 	)
 
 	// Apply the metadata middleware
-	processor := UseMetadata[string, string](metadataFn)(baseProcessor)
+	processor := useMetadata[string, string](metadataFn)(baseProcessor)
 
 	// Call Cancel directly to test metadata attachment
 	input := "test-input"
@@ -136,7 +136,7 @@ func TestMetadata_ErrorPassthrough(t *testing.T) {
 	)
 
 	// Apply the metadata middleware
-	processor := UseMetadata[string, string](metadataFn)(baseProcessor)
+	processor := useMetadata[string, string](metadataFn)(baseProcessor)
 
 	// Create a simple error (not a cancel error)
 	testError := errors.New("test error")

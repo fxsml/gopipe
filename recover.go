@@ -21,11 +21,17 @@ func (e *RecoveryError) Error() string {
 	return fmt.Sprintf("panic recovered: %v", e.PanicValue)
 }
 
-// UseRecover creates middleware that recovers from panics in the processing function.
-// When a panic occurs, it converts the panic to an error. The stack trace is captured
-// and included in the RecoveryError. The stack trace is also printed to stderr in the
-// CancelFunc.
-func UseRecover[In, Out any]() MiddlewareFunc[In, Out] {
+// WithRecover enables panic recovery in process functions. When enabled, any panic
+// that occurs during processing is caught and converted into a RecoveryError.
+// The stack trace is captured and included in the RecoveryError. The stack trace
+// is also printed to stderr in the CancelFunc.
+func WithRecover[In, Out any]() Option[In, Out] {
+	return func(cfg *config[In, Out]) {
+		cfg.recover = true
+	}
+}
+
+func useRecover[In, Out any]() MiddlewareFunc[In, Out] {
 	return func(next Processor[In, Out]) Processor[In, Out] {
 		return NewProcessor(
 			func(ctx context.Context, in In) (out []Out, err error) {

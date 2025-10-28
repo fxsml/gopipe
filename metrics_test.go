@@ -19,7 +19,7 @@ func TestUseMetrics_Basic(t *testing.T) {
 		},
 		nil,
 	)
-	mw := UseMetrics[int, int](collector)
+	mw := useMetrics[int, int](collector)
 	procWithMetrics := mw(proc)
 
 	_, _ = procWithMetrics.Process(context.Background(), 5)
@@ -47,7 +47,7 @@ func TestUseMetrics_WithStartProcessor(t *testing.T) {
 		},
 		nil,
 	)
-	mw := UseMetrics[int, int](collector)
+	mw := useMetrics[int, int](collector)
 	procWithMetrics := mw(proc)
 
 	in := make(chan int, 3)
@@ -77,7 +77,7 @@ func TestNewMetricsDistributor(t *testing.T) {
 	collector1 := func(m *Metrics) { got1 = append(got1, m) }
 	collector2 := func(m *Metrics) { got2 = append(got2, m) }
 
-	distributor := NewMetricsDistributor(collector1, collector2)
+	distributor := newMetricsDistributor(collector1, collector2)
 
 	// Send some metrics
 	for i := range 3 {

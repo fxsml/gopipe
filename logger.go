@@ -32,6 +32,8 @@ type Logger interface {
 }
 
 // LoggerConfig holds configuration for the logger middleware.
+// All fields can be customized individually. Defaults from the
+// global defaultLoggerConfig are used for any fields not set.
 type LoggerConfig struct {
 	// Args are additional arguments to include in all log messages.
 	Args []any
@@ -57,6 +59,26 @@ type LoggerConfig struct {
 	Disabled bool
 }
 
+// WithLoggerConfig overrides the default logger configuration for the pipe.
+func WithLoggerConfig[In, Out any](loggerConfig *LoggerConfig) Option[In, Out] {
+	return func(cfg *config[In, Out]) {
+		cfg.loggerConfig = loggerConfig
+	}
+}
+
+// SetDefaultLoggerConfig sets the default logger configuration for all pipes.
+// May be overridden per-pipe using WithLoggerConfig.
+func SetDefaultLoggerConfig(config *LoggerConfig) {
+	config.parse()
+	defaultLoggerConfig = *config
+}
+
+// SetDefaultLogger sets the default logger for all pipes.
+// slog.Default() is used by default.
+func SetDefaultLogger(l Logger) {
+	logger = l
+}
+
 var defaultLoggerConfig = LoggerConfig{
 	LevelSuccess:   LogLevelDebug,
 	LevelCancel:    LogLevelWarn,
@@ -66,16 +88,7 @@ var defaultLoggerConfig = LoggerConfig{
 	MessageFailure: "GOPIPE: Failure",
 }
 
-func SetDefaultLoggerConfig(config *LoggerConfig) {
-	config.parse()
-	defaultLoggerConfig = *config
-}
-
 var logger Logger = slog.Default()
-
-func SetDefaultLogger(l Logger) {
-	logger = l
-}
 
 func parseLogLevel(level LogLevel) LogLevel {
 	level = LogLevel(strings.ToLower(string(level)))
@@ -135,14 +148,7 @@ func appendArgs(args ...[]any) []any {
 	return result
 }
 
-// UseLogger creates a middleware that logs information about processing results.
-// It logs success, failure, or cancellation messages at configured levels,
-// and includes any Metadata from the processing context in the log message.
-func UseLogger[In, Out any](config *LoggerConfig) MiddlewareFunc[In, Out] {
-	return UseMetrics[In, Out](NewMetricsLogger(config))
-}
-
-func NewMetricsLogger(config *LoggerConfig) MetricsCollector {
+func newMetricsLogger(config *LoggerConfig) MetricsCollector {
 	config = config.parse()
 	if config.Disabled {
 		return nil
