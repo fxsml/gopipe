@@ -1,4 +1,4 @@
-package gopipe
+package channel
 
 // Buffer returns a buffered channel with the specified size.
 // The returned channel is closed after in is closed.

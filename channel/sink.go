@@ -1,4 +1,4 @@
-package gopipe
+package channel
 
 // Sink applies handle to each value from in.
 // The returned channel is closed after in is closed and all values are processed.

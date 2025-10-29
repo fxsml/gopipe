@@ -1,4 +1,4 @@
-package gopipe
+package channel
 
 // Broadcast duplicates values from in to n output channels.
 // All receivers get each value. Blocks if any receiver is slow.

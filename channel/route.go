@@ -1,4 +1,4 @@
-package gopipe
+package channel
 
 // Route directs values from in to n output channels based on handle's index.
 // Values with an index outside [0,n) are ignored. All returned channels

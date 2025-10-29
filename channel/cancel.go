@@ -1,4 +1,4 @@
-package gopipe
+package channel
 
 import (
 	"context"
@@ -6,8 +6,7 @@ import (
 )
 
 // Cancel forwards values from in until ctx is done or in is closed.
-// If cancelled, remaining values trigger cancel callback with ErrCancel
-// wrapping ctx.Err().
+// If cancelled, remaining values trigger cancel callback with ctx.Err().
 func Cancel[T any](
 	ctx context.Context,
 	in <-chan T,
@@ -39,7 +38,7 @@ func Cancel[T any](
 				}
 				select {
 				case <-ctx.Done():
-					cancel(val, newErrCancel(ctx.Err()))
+					cancel(val, ctx.Err())
 					return
 				case out <- val:
 				}
@@ -50,7 +49,7 @@ func Cancel[T any](
 	go func() {
 		wg.Wait()
 		for val := range in {
-			cancel(val, newErrCancel(ctx.Err()))
+			cancel(val, ctx.Err())
 		}
 	}()
 

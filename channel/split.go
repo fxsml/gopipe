@@ -1,4 +1,4 @@
-package gopipe
+package channel
 
 // Split unpacks slices from in, sending each element individually.
 // The returned channel is closed after in is closed.
