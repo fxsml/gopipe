@@ -54,7 +54,7 @@ func (l *mockLogger) reset() {
 	l.mu.Unlock()
 }
 
-func useLogger[In, Out any](config *LoggerConfig) MiddlewareFunc[In, Out] {
+func useLogger[In, Out any](config *LogConfig) MiddlewareFunc[In, Out] {
 	return useMetrics[In, Out](newMetricsLogger(config))
 }
 
@@ -71,7 +71,7 @@ func TestLogger_LogsSuccessfulProcessing(t *testing.T) {
 	)
 
 	// Apply logger middleware with default config
-	processor := useLogger[string, string](&LoggerConfig{})(baseProcessor)
+	processor := useLogger[string, string](&LogConfig{})(baseProcessor)
 
 	// Process an item - should succeed and log
 	_, err := processor.Process(context.Background(), "test-input")
@@ -111,7 +111,7 @@ func TestLogger_LogsFailure(t *testing.T) {
 	)
 
 	// Apply logger middleware with default config
-	processor := useLogger[string, string](&LoggerConfig{})(baseProcessor)
+	processor := useLogger[string, string](&LogConfig{})(baseProcessor)
 
 	// Process an item - should fail and log
 	_, err := processor.Process(context.Background(), "test-input")
@@ -164,7 +164,7 @@ func TestLogger_CustomLogLevels(t *testing.T) {
 	SetDefaultLogger(logger)
 
 	// Create a config with custom log levels
-	config := LoggerConfig{
+	config := LogConfig{
 		LevelSuccess: LogLevelInfo,  // Change from default debug
 		LevelFailure: LogLevelError, // Same as default
 	}
@@ -206,7 +206,7 @@ func TestLogger_CustomMessages(t *testing.T) {
 	testError := errors.New("failure")
 
 	// Create a config with custom messages
-	config := LoggerConfig{
+	config := LogConfig{
 		MessageSuccess: "Custom success message",
 		MessageFailure: "Custom failure message",
 	}

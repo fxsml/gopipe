@@ -18,7 +18,7 @@ type config[In, Out any] struct {
 	metricsCollector []MetricsCollector
 	metadataProvider []MiddlewareFunc[In, Out]
 	recover          bool
-	loggerConfig     *LoggerConfig
+	logConfig        *LogConfig
 }
 
 func parseConfig[In, Out any](opts []Option[In, Out]) config[In, Out] {
@@ -43,7 +43,7 @@ func (c *config[In, Out]) apply(proc Processor[In, Out]) Processor[In, Out] {
 		proc = useContext[In, Out](c.timeout, c.contextPropagation)(proc)
 	}
 
-	if logger := newMetricsLogger(c.loggerConfig); logger != nil {
+	if logger := newMetricsLogger(c.logConfig); logger != nil {
 		c.metricsCollector = append(c.metricsCollector, logger)
 	}
 

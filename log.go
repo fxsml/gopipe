@@ -32,10 +32,10 @@ type Logger interface {
 	Error(msg string, args ...any)
 }
 
-// LoggerConfig holds configuration for the logger middleware.
+// LogConfig holds configuration for the logger middleware.
 // All fields can be customized individually. Defaults from the
 // global defaultLoggerConfig are used for any fields not set.
-type LoggerConfig struct {
+type LogConfig struct {
 	// Args are additional arguments to include in all log messages.
 	Args []any
 
@@ -63,18 +63,17 @@ type LoggerConfig struct {
 	Disabled bool
 }
 
-// WithLoggerConfig overrides the default logger configuration for the pipe.
-func WithLoggerConfig[In, Out any](loggerConfig *LoggerConfig) Option[In, Out] {
+// WithLogConfig overrides the default logger configuration for the pipe.
+func WithLogConfig[In, Out any](loggerConfig *LogConfig) Option[In, Out] {
 	return func(cfg *config[In, Out]) {
-		cfg.loggerConfig = loggerConfig
+		cfg.logConfig = loggerConfig
 	}
 }
 
-// SetDefaultLoggerConfig sets the default logger configuration for all pipes.
+// SetDefaultLogConfig sets the default logger configuration for all pipes.
 // May be overridden per-pipe using WithLoggerConfig.
-func SetDefaultLoggerConfig(config *LoggerConfig) {
-	config.parse()
-	defaultLoggerConfig = *config
+func SetDefaultLogConfig(config *LogConfig) {
+	defaultLogConfig = *config.parse()
 }
 
 // SetDefaultLogger sets the default logger for all pipes.
@@ -83,7 +82,7 @@ func SetDefaultLogger(l Logger) {
 	logger = l
 }
 
-var defaultLoggerConfig = LoggerConfig{
+var defaultLogConfig = LogConfig{
 	LevelSuccess:   LogLevelDebug,
 	LevelCancel:    LogLevelWarn,
 	LevelFailure:   LogLevelError,
@@ -99,35 +98,37 @@ func parseLogLevel(level LogLevel) LogLevel {
 	return level
 }
 
-func (c *LoggerConfig) parse() *LoggerConfig {
+func (c *LogConfig) parse() *LogConfig {
 	if c == nil {
-		c = &LoggerConfig{}
+		c = &LogConfig{
+			Disabled: defaultLogConfig.Disabled,
+		}
 	}
 	c.LevelSuccess = parseLogLevel(c.LevelSuccess)
 	if c.LevelSuccess == "" {
-		c.LevelSuccess = defaultLoggerConfig.LevelSuccess
+		c.LevelSuccess = defaultLogConfig.LevelSuccess
 	}
 	c.LevelCancel = parseLogLevel(c.LevelCancel)
 	if c.LevelCancel == "" {
-		c.LevelCancel = defaultLoggerConfig.LevelCancel
+		c.LevelCancel = defaultLogConfig.LevelCancel
 	}
 	c.LevelFailure = parseLogLevel(c.LevelFailure)
 	if c.LevelFailure == "" {
-		c.LevelFailure = defaultLoggerConfig.LevelFailure
+		c.LevelFailure = defaultLogConfig.LevelFailure
 	}
 	if c.MessageSuccess == "" {
-		c.MessageSuccess = defaultLoggerConfig.MessageSuccess
+		c.MessageSuccess = defaultLogConfig.MessageSuccess
 	}
 	if c.MessageCancel == "" {
-		c.MessageCancel = defaultLoggerConfig.MessageCancel
+		c.MessageCancel = defaultLogConfig.MessageCancel
 	}
 	if c.MessageFailure == "" {
-		c.MessageFailure = defaultLoggerConfig.MessageFailure
+		c.MessageFailure = defaultLogConfig.MessageFailure
 	}
 	return c
 }
 
-func (c *LoggerConfig) logFunc(level LogLevel, log Logger) func(msg string, args ...any) {
+func (c *LogConfig) logFunc(level LogLevel, log Logger) func(msg string, args ...any) {
 	switch level {
 	case LogLevelDebug:
 		return log.Debug
@@ -152,7 +153,7 @@ func appendArgs(args ...[]any) []any {
 	return result
 }
 
-func newMetricsLogger(config *LoggerConfig) MetricsCollector {
+func newMetricsLogger(config *LogConfig) MetricsCollector {
 	config = config.parse()
 	if config.Disabled {
 		return nil
