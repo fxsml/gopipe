@@ -1,4 +1,4 @@
-package gopipe
+package channel
 
 // Drain consumes and discards all values from in.
 // The returned channel is closed after in is closed and all values are consumed.

@@ -1,17 +1,15 @@
-package gopipe_test
+package channel
 
 import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/fxsml/gopipe"
 )
 
 func TestBroadcast_AllOutputsReceiveAllValues(t *testing.T) {
 	in := make(chan int)
 	n := 3
-	outs := gopipe.Broadcast(in, n)
+	outs := Broadcast(in, n)
 
 	go func() {
 		for i := 1; i <= 5; i++ {
@@ -44,7 +42,7 @@ func TestBroadcast_AllOutputsReceiveAllValues(t *testing.T) {
 
 func TestBroadcast_ChannelsClosedOnInputClose(t *testing.T) {
 	in := make(chan int)
-	outs := gopipe.Broadcast(in, 5)
+	outs := Broadcast(in, 5)
 	close(in)
 
 	time.Sleep(10 * time.Millisecond)
@@ -61,7 +59,7 @@ func TestBroadcast_ChannelsClosedOnInputClose(t *testing.T) {
 
 func TestBroadcast_GlobalBlocking(t *testing.T) {
 	in := make(chan int)
-	outs := gopipe.Broadcast(in, 3)
+	outs := Broadcast(in, 3)
 
 	// make one consumer slow (never read) to observe that broadcaster blocks
 	var wg sync.WaitGroup
@@ -123,5 +121,5 @@ func TestBroadcast_PanicsOnNegativeN(t *testing.T) {
 			t.Fatalf("expected panic for negative n")
 		}
 	}()
-	_ = gopipe.Broadcast[int](make(chan int), -1)
+	_ = Broadcast[int](make(chan int), -1)
 }
