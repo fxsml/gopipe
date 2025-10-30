@@ -1,8 +1,8 @@
 package channel
 
-// Split unpacks slices from in, sending each element individually.
+// Flatten unpacks slices from in, sending each element individually.
 // The returned channel is closed after in is closed.
-func Split[T any](
+func Flatten[T any](
 	in <-chan []T,
 ) <-chan T {
 	out := make(chan T)

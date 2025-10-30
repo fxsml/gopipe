@@ -16,5 +16,5 @@ func Batch[In, Out any](
 	maxSize int,
 	maxDuration time.Duration,
 ) <-chan Out {
-	return Split(Transform(Collect(in, maxSize, maxDuration), handle))
+	return Flatten(Transform(Collect(in, maxSize, maxDuration), handle))
 }

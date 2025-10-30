@@ -2,9 +2,9 @@ package channel
 
 import "testing"
 
-func TestSplit_Basic(t *testing.T) {
+func TestFlatten_Basic(t *testing.T) {
 	in := make(chan []int)
-	out := Split(in)
+	out := Flatten(in)
 
 	go func() {
 		in <- []int{1, 2}
@@ -28,9 +28,9 @@ func TestSplit_Basic(t *testing.T) {
 	}
 }
 
-func TestSplit_EmptyAndNil(t *testing.T) {
+func TestFlatten_EmptyAndNil(t *testing.T) {
 	in := make(chan []int)
-	out := Split(in)
+	out := Flatten(in)
 
 	go func() {
 		in <- nil
