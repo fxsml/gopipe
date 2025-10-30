@@ -34,7 +34,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/channel"
 )
 
 func main() {
@@ -42,17 +42,17 @@ func main() {
 	in := make(chan int)
 
 	// Filter even numbers only
-	filtered := gopipe.Filter(in, func(i int) bool {
+	filtered := channel.Filter(in, func(i int) bool {
 		return i%2 == 0
 	})
 
 	// Transform values (int -> string)
-	transformed := gopipe.Transform(filtered, func(i int) string {
+	transformed := channel.Transform(filtered, func(i int) string {
 		return fmt.Sprintf("Value: %d", i)
 	})
 
 	// Add buffering
-	buffered := gopipe.Buffer(transformed, 10)
+	buffered := channel.Buffer(transformed, 10)
 
 	// Start a goroutine to send values
 	go func() {
@@ -63,7 +63,7 @@ func main() {
 	}()
 
 	// Consume transformed values
-	done := gopipe.Sink(buffered, func(s string) {
+	done := channel.Sink(buffered, func(s string) {
 		fmt.Println(s)
 	})
 
@@ -80,7 +80,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/channel"
 )
 
 type Article struct {
@@ -109,13 +109,13 @@ func main() {
 	}()
 
 	// Merge article channels and flatten slices from ch2
-	articlesCh := gopipe.Merge(ch1, gopipe.Flatten(ch2))
+	articlesCh := channel.Merge(ch1, channel.Flatten(ch2))
 
 	// Create a list of shops
 	shops := []string{"ShopA", "ShopB"}
 
 	// Expand articles to multiple shops
-	articlesCh = gopipe.Process(articlesCh, func(a Article) []Article {
+	articlesCh = channel.Process(articlesCh, func(a Article) []Article {
 		articles := make([]Article, len(shops))
 		for i, shop := range shops {
 			articles[i] = Article{
@@ -128,7 +128,7 @@ func main() {
 	})
 
 	// Route shop articles based on shop name
-	routed := gopipe.Route(articlesCh, func(a Article) int {
+	routed := channel.Route(articlesCh, func(a Article) int {
 		switch a.Shop {
 		case "ShopA":
 			return 0
@@ -142,13 +142,13 @@ func main() {
 	// Create sinks for each shop
 	doneChans := make([]<-chan struct{}, len(shops))
 	for i, r := range routed {
-		doneChans[i] = gopipe.Sink(r, func(a Article) {
+		doneChans[i] = channel.Sink(r, func(a Article) {
 			fmt.Printf("%s: %s (%s)\n", a.Shop, a.Name, a.ID)
 		})
 	}
 
 	// Wait for all sinks to complete
-	<-gopipe.Merge(doneChans...)
+	<-channel.Merge(doneChans...)
 }
 ```
 
