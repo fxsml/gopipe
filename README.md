@@ -30,6 +30,7 @@ Manual channel wiring in Go is error-prone and hard to scale for complex workflo
 - `WithMetadata`: Optional metadata enrichment for log messages and metrics based on input values.
 - `WithMiddleware`: Optional support for custom middleware.
 - `WithRecover`: Optional recovery on panics.
+- `WithRetryConfig`: Optional retry on failure with custom configuration.
 
 ## Installation
 
