@@ -1,32 +1,55 @@
 # gopipe
 
-A lightweight, generic Go library for building composable data pipelines using channels.
+A lightweight, generic Go library for orchestrating complex data pipelines using composable pipes.
+`gopipe` provides powerful orchestration primitives for building robust, concurrent, and context-aware pipelines.
+The `channel` package offers low-level helpers for basic operations and wiring.
 
-## Features
+## Why gopipe?
 
+Manual channel wiring in Go is error-prone and hard to scale for complex workflows.  
+**gopipe** abstracts away the boilerplate, letting you focus on your business logic while providing:
+
+- **Orchestration**: Compose multi-stage pipelines with clear configuration.
+- **Context-awareness**: Native support for cancellation, timeouts, and context propagation.
+- **Concurrency & Batching**: Easily parallelize and batch processing.
+- **Middleware & Logging**: Integrate custom middleware, logging, and metrics.
+- **Error Handling**: Robust error and panic recovery.
+- **Basic Channel Operations**: The `channel` package provides basic channel operations without abstraction overhead.
 - **Generic API**: Works with any data type (Go 1.18+).
-- **Simple Core Functions**: Basic channel manipulation (`Transform`, `Filter`, `Broadcast`, `Merge`, etc.).
-- **Helper Functions**: Buffering and context cancellation support through `Buffer` and `Cancel`/`Break`.
-- **Advanced Processing**: Context-aware processing with `Process` and `Batch` functions.
-- **Processor Abstraction**: Composable processing units with middleware support.
+- **Zero Dependencies**: 100% Go, no external dependencies.
 
-## Philosophy
+## Full Feature List of Pipe Options
 
-gopipe provides minimalistic building blocks for channel-based pipelines. By design, the core functions are simple and focused. The two main processing functions (`Process` and `Batch`) are context-aware and highly configurable with options for concurrency, buffering, and context propagation.
-
-The helper functions `Buffer` and `Cancel` are provided when you need buffering or context-aware cancellation, keeping the core functions simple while still offering all needed functionality.
-
-For more complex pipelines, the `Processor` abstraction allows you to encapsulate processing logic with error handling and compose functionality using middleware.
+- `WithConcurrency`: Optional concurrency for parallel processing.
+- `WithCancel`: Optional cancellation logic.
+- `WithBuffer`: Optional buffered output channel.
+- `WithTimeout`: Optional processing timeout via context.
+- `WithoutContextPropagation`: Opt-out for propagating the parent context to the processing context to prevent cancellation.
+- `WithLogConfig`: Customizable logging - defaults to success (debug), cancel (warn) and failure (error) with `log/slog`.
+- `WithMetrics`: Optional processing metrics can be retrieved and evaluated individually.
+- `WithMetadata`: Optional metadata enrichment for log messages and metrics based on input values.
+- `WithMiddleware`: Optional support for custom middleware.
+- `WithRecover`: Optional recovery on panics.
 
 ## Installation
 
-```
+```bash
 go get github.com/fxsml/gopipe
 ```
 
+## Getting Started
+
+The main concepts are:
+
+- `Processor`: Implements the logic for processing and cancellation.
+- `Pipe`: Responsible for configuration and orchestration of a pipeline running a specific `Processor`.
+
+For simple channel operations, see the `channel` package.  
+For robust orchestration, use `gopipe`.
+
 ## Usage
 
-### Basic Operations: Filter, Transform, Buffer, Sink
+### Basic Channel Operations: Filter, Transform, Buffer, Sink
 
 ```go
 package main
@@ -39,7 +62,7 @@ import (
 
 func main() {
 	// Create an input channel
-	in := make(chan int)
+	in := channel.FromRange(10)
 
 	// Filter even numbers only
 	filtered := channel.Filter(in, func(i int) bool {
@@ -54,30 +77,20 @@ func main() {
 	// Add buffering
 	buffered := channel.Buffer(transformed, 10)
 
-	// Start a goroutine to send values
-	go func() {
-		defer close(in) // Always close input channels when done
-		for i := range 10 {
-			in <- i
-		}
-	}()
-
-	// Consume transformed values
-	done := channel.Sink(buffered, func(s string) {
+	// Consume values and wait for completion
+	<-channel.Sink(buffered, func(s string) {
 		fmt.Println(s)
 	})
-
-	// Wait for processing to complete
-	<-done
 }
 ```
 
-### Advanced Operations: Merge, Flatten, Process, Route
+### Advanced Channel Operations: Merge, Flatten, Process, Route
 
 ```go
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/fxsml/gopipe/channel"
@@ -90,29 +103,33 @@ type Article struct {
 }
 
 func main() {
-	// Create input channels
-	ch1 := make(chan Article)
-	ch2 := make(chan []Article)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Send sample articles
-	go func() {
-		ch1 <- Article{ID: "CH1.1", Name: "Laptop"}
-		ch1 <- Article{ID: "CH1.2", Name: "Phone"}
-		close(ch1)
+	// Create input with two single articles
+	ch1 := channel.FromSlice([]Article{
+		{ID: "CH1.1", Name: "Laptop"},
+		{ID: "CH1.2", Name: "Phone"},
+	})
 
-		ch2 <- []Article{
-			{ID: "CH3.1", Name: "Tablet"},
-			{ID: "CH3.2", Name: "Watch"},
-			{ID: "CH3.3", Name: "Sensor"},
-		}
-		close(ch2)
-	}()
+	// Create input with one slice of articles
+	ch2 := channel.FromValues([]Article{
+		{ID: "CH3.1", Name: "Tablet"},
+		{ID: "CH3.2", Name: "Watch"},
+		{ID: "CH3.3", Name: "Sensor"},
+	})
 
 	// Merge article channels and flatten slices from ch2
 	articlesCh := channel.Merge(ch1, channel.Flatten(ch2))
 
 	// Create a list of shops
 	shops := []string{"ShopA", "ShopB"}
+
+	// Add cancellation handling before further processing
+	// to stop processing on context cancellation
+	articlesCh = channel.Cancel(ctx, articlesCh, func(a Article, err error) {
+		fmt.Printf("Processing article %s canceled: %v\n", a.ID, err)
+	})
 
 	// Expand articles to multiple shops
 	articlesCh = channel.Process(articlesCh, func(a Article) []Article {
@@ -152,7 +169,7 @@ func main() {
 }
 ```
 
-### Context-Aware Processing
+### Transform with Pipe
 
 ```go
 package main
@@ -164,58 +181,40 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/channel"
 )
 
 func main() {
-	// Create a context with cancellation
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Create an input channel
-	in := make(chan string, 10)
+	// Create input channel with string representations of integers
+	in := channel.Transform(channel.FromRange(20), func(i int) string {
+		return strconv.Itoa(i)
+	})
 
-	// Create a pipe with context-awareness and concurrency
+	// Create a transform pipe that converts strings to integers
 	pipe := gopipe.NewTransformPipe(
 		func(ctx context.Context, val string) (int, error) {
-			// Simulate processing time
 			time.Sleep(100 * time.Millisecond)
-
-			// Convert string to int
 			return strconv.Atoi(val)
 		},
-		// gopipe.WithCancel is optional; a default error log will be printed if omitted
-		gopipe.WithConcurrency[string, int](5), // Use 5 workers
+		gopipe.WithConcurrency[string, int](5), // 5 workers
 		gopipe.WithBuffer[string, int](10),     // Buffer up to 10 results
+		gopipe.WithRecover[string, int](),      // Recover from panics
 	)
 
-	// Start processing
+	// Start the pipe
 	processed := pipe.Start(ctx, in)
 
-	// Start a goroutine to send values
-	go func() {
-		defer func() {
-			close(in)
-			// Cancel early, to demonstrate context cancellation
-			cancel()
-		}()
-		for i := range 20 {
-			if i%3 == 0 {
-				// Introduce some invalid input to demonstrate error handling
-				in <- fmt.Sprintf("%d - invalid", i)
-				continue
-			}
-			in <- fmt.Sprintf("%d", i)
-		}
-	}()
-
 	// Consume processed values
-	for val := range processed {
+	<-channel.Sink(processed, func(val int) {
 		fmt.Printf("Processed: %d\n", val)
-	}
+	})
 }
 ```
 
-### Batch Processing
+### Batch with Pipe
 
 ```go
 package main
@@ -227,6 +226,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/channel"
 )
 
 // User is a simple user struct for demonstration
@@ -294,12 +294,12 @@ func main() {
 	userResponses := pipe.Start(context.Background(), in)
 
 	// Consume responses
-	for userResponse := range userResponses {
+	<-channel.Sink(userResponses, func(userResponse UserResponse) {
 		if userResponse.Err != nil {
 			fmt.Printf("Failed to create new user: %v\n", userResponse.Err)
-			continue
+			return
 		}
 		fmt.Printf("Created new user: %v\n", userResponse.User)
-	}
+	})
 }
 ```
