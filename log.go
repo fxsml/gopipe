@@ -48,6 +48,9 @@ type LogConfig struct {
 	// LevelFailure is the log level used when processing fails.
 	// Defaults to LogLevelError.
 	LevelFailure LogLevel
+	// LevelRetry is the log level used when a retry is attempted.
+	// Defaults to LogLevelWarn.
+	LevelRetry LogLevel
 
 	// MessageSuccess is the message logged on successful processing.
 	// Defaults to "GOPIPE: Success".
@@ -58,15 +61,18 @@ type LogConfig struct {
 	// MessageFailure is the message logged when processing fails.
 	// Defaults to "GOPIPE: Failure".
 	MessageFailure string
+	// MessageRetry is the message logged when a retry is attempted.
+	// Defaults to "GOPIPE: Retry".
+	MessageRetry string
 
 	// Disabled disables all logging when set to true.
 	Disabled bool
 }
 
 // WithLogConfig overrides the default logger configuration for the pipe.
-func WithLogConfig[In, Out any](loggerConfig *LogConfig) Option[In, Out] {
+func WithLogConfig[In, Out any](logConfig *LogConfig) Option[In, Out] {
 	return func(cfg *config[In, Out]) {
-		cfg.logConfig = loggerConfig
+		cfg.logConfig = logConfig
 	}
 }
 
@@ -86,9 +92,11 @@ var defaultLogConfig = LogConfig{
 	LevelSuccess:   LogLevelDebug,
 	LevelCancel:    LogLevelWarn,
 	LevelFailure:   LogLevelError,
+	LevelRetry:     LogLevelWarn,
 	MessageSuccess: "GOPIPE: Success",
 	MessageCancel:  "GOPIPE: Cancel",
 	MessageFailure: "GOPIPE: Failure",
+	MessageRetry:   "GOPIPE: Retry",
 }
 
 var logger Logger = slog.Default()
@@ -116,6 +124,10 @@ func (c *LogConfig) parse() *LogConfig {
 	if c.LevelFailure == "" {
 		c.LevelFailure = defaultLogConfig.LevelFailure
 	}
+	c.LevelRetry = parseLogLevel(c.LevelRetry)
+	if c.LevelRetry == "" {
+		c.LevelRetry = defaultLogConfig.LevelRetry
+	}
 	if c.MessageSuccess == "" {
 		c.MessageSuccess = defaultLogConfig.MessageSuccess
 	}
@@ -124,6 +136,9 @@ func (c *LogConfig) parse() *LogConfig {
 	}
 	if c.MessageFailure == "" {
 		c.MessageFailure = defaultLogConfig.MessageFailure
+	}
+	if c.MessageRetry == "" {
+		c.MessageRetry = defaultLogConfig.MessageRetry
 	}
 	return c
 }
@@ -161,10 +176,18 @@ func newMetricsLogger(config *LogConfig) MetricsCollector {
 	logCancel := config.logFunc(config.LevelCancel, logger)
 	logFailure := config.logFunc(config.LevelFailure, logger)
 	logSuccess := config.logFunc(config.LevelSuccess, logger)
+	logRetry := config.logFunc(config.LevelRetry, logger)
 	return func(metrics *Metrics) {
+		retryArgs := []any{}
+		if metrics.RetryState != nil {
+			retryArgs = append(retryArgs,
+				"retry_attempts", metrics.RetryState.Attempts,
+				"retry_duration", metrics.RetryState.Duration,
+			)
+		}
 		if metrics.Error == nil {
 			logSuccess(config.MessageSuccess,
-				appendArgs(config.Args, metrics.Metadata.Args(), []any{"duration", metrics.Duration})...)
+				appendArgs(config.Args, metrics.Metadata.Args(), []any{"duration", metrics.Duration}, retryArgs)...)
 			return
 		}
 		if errors.Is(metrics.Error, ErrCancel) {
@@ -172,7 +195,17 @@ func newMetricsLogger(config *LogConfig) MetricsCollector {
 				appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error})...)
 			return
 		}
+		if metrics.RetryState != nil && metrics.RetryState.Err != nil {
+			logFailure(config.MessageFailure,
+				appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error}, retryArgs)...)
+			return
+		}
+		if metrics.RetryState != nil {
+			logRetry(config.MessageRetry,
+				appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error, "duration", metrics.Duration}, retryArgs)...)
+			return
+		}
 		logFailure(config.MessageFailure,
-			appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error, "duration", metrics.Duration})...)
+			appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error, "duration", metrics.Duration}, retryArgs)...)
 	}
 }

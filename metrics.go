@@ -14,8 +14,11 @@ type Metrics struct {
 	Input    int
 	Output   int
 	InFlight int
-	Metadata Metadata
-	Error    error
+
+	Metadata   Metadata
+	RetryState *RetryState
+
+	Error error
 }
 
 // Success returns a numeric indicator of success (1 for success, 0 otherwise).
@@ -42,6 +45,14 @@ func (m *Metrics) Cancel() int {
 	return 0
 }
 
+// Retry returns a numeric indicator of retry (1 for retry, 0 otherwise).
+func (m *Metrics) Retry() int {
+	if errors.Is(m.Error, ErrRetry) {
+		return 1
+	}
+	return 0
+}
+
 // MetricsCollector defines a function that collects single input metrics.
 type MetricsCollector func(metrics *Metrics)
 
@@ -59,10 +70,11 @@ func useMetrics[In, Out any](collect MetricsCollector) MiddlewareFunc[In, Out] {
 		return NewProcessor(
 			func(ctx context.Context, in In) ([]Out, error) {
 				m := &Metrics{
-					Start:    time.Now(),
-					Input:    1,
-					InFlight: int(inFlight.Add(1)),
-					Metadata: MetadataFromContext(ctx),
+					Start:      time.Now(),
+					Input:      1,
+					InFlight:   int(inFlight.Add(1)),
+					Metadata:   MetadataFromContext(ctx),
+					RetryState: RetryStateFromContext(ctx),
 				}
 
 				out, err := next.Process(ctx, in)
@@ -72,18 +84,23 @@ func useMetrics[In, Out any](collect MetricsCollector) MiddlewareFunc[In, Out] {
 				m.Output = len(out)
 				m.Error = err
 
+				if m.RetryState != nil {
+					m.RetryState.Duration = time.Since(m.RetryState.Start)
+				}
+
 				collect(m)
 
 				return out, err
 			},
 			func(in In, err error) {
 				next.Cancel(in, err)
-				if !errors.Is(err, ErrFailure) {
+				if !errors.Is(err, ErrFailure) || errors.Is(err, ErrRetry) {
 					collect(&Metrics{
-						Input:    1,
-						InFlight: int(inFlight.Load()),
-						Metadata: MetadataFromError(err),
-						Error:    err,
+						Input:      1,
+						InFlight:   int(inFlight.Load()),
+						Metadata:   MetadataFromError(err),
+						RetryState: RetryStateFromError(err),
+						Error:      err,
 					})
 				}
 			},

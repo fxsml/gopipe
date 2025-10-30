@@ -17,6 +17,7 @@ type config[In, Out any] struct {
 	middleware       []MiddlewareFunc[In, Out]
 	metricsCollector []MetricsCollector
 	metadataProvider []MiddlewareFunc[In, Out]
+	retry            MiddlewareFunc[In, Out]
 	recover          bool
 	logConfig        *LogConfig
 }
@@ -52,6 +53,10 @@ func (c *config[In, Out]) apply(proc Processor[In, Out]) Processor[In, Out] {
 	}
 	if len(c.metricsCollector) == 1 {
 		proc = useMetrics[In, Out](c.metricsCollector[0])(proc)
+	}
+
+	if c.retry != nil {
+		proc = c.retry(proc)
 	}
 
 	proc = applyMiddleware(proc, c.middleware...)

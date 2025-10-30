@@ -2,6 +2,7 @@ package gopipe
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -92,5 +93,150 @@ func TestNewMetricsDistributor(t *testing.T) {
 		if got1[i].Output != i || got2[i].Output != i {
 			t.Errorf("unexpected OutputCount at index %d: got1=%d, got2=%d", i, got1[i].Output, got2[i].Output)
 		}
+	}
+}
+
+func TestUseMetrics_WithRetry(t *testing.T) {
+	var got []*Metrics
+	collector := func(m *Metrics) {
+		got = append(got, m)
+	}
+
+	attempts := 0
+	processFunc := func(ctx context.Context, in int) ([]int, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, errors.New("temporary error")
+		}
+		return []int{in * 2}, nil
+	}
+
+	// Create a pipe with retry and metrics
+	pipe := NewProcessPipe(
+		processFunc,
+		WithRetryConfig[int, int](&RetryConfig{
+			ShouldRetry: ShouldRetry(),
+			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
+			MaxAttempts: 5,
+		}),
+		WithMetrics[int, int](collector),
+	)
+
+	// Create input channel
+	in := make(chan int, 1)
+	in <- 5
+	close(in)
+
+	// Start the pipe
+	out := pipe.Start(context.Background(), in)
+
+	// Collect results
+	var results []int
+	for val := range out {
+		results = append(results, val)
+	}
+
+	// Should succeed after retries
+	if len(results) != 1 || results[0] != 10 {
+		t.Errorf("expected result [10], got %v", results)
+	}
+
+	// Should have collected metrics for each retry attempt (3 total: 2 failures + 1 success)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 metrics collections (one per attempt), got %d", len(got))
+	}
+
+	// Check the final successful attempt
+	finalMetrics := got[2]
+	if finalMetrics.Error != nil {
+		t.Errorf("expected no error in final metrics, got %v", finalMetrics.Error)
+	}
+	if finalMetrics.Input != 1 || finalMetrics.Output != 1 {
+		t.Errorf("unexpected counts: input=%d, output=%d", finalMetrics.Input, finalMetrics.Output)
+	}
+
+	// Verify RetryState is captured in final attempt
+	if finalMetrics.RetryState == nil {
+		t.Fatal("expected RetryState in final metrics, got nil")
+	}
+	if finalMetrics.RetryState.Attempts != 3 {
+		t.Errorf("expected 3 retry attempts (including initial), got %d", finalMetrics.RetryState.Attempts)
+	}
+	if finalMetrics.RetryState.MaxAttempts != 5 {
+		t.Errorf("expected MaxAttempts=5, got %d", finalMetrics.RetryState.MaxAttempts)
+	}
+	if len(finalMetrics.RetryState.Causes) != 2 {
+		t.Errorf("expected 2 retry causes, got %d", len(finalMetrics.RetryState.Causes))
+	}
+
+	// Verify that earlier attempts also have RetryState
+	for i, metrics := range got[:2] {
+		if metrics.RetryState == nil {
+			t.Errorf("expected RetryState in attempt %d metrics, got nil", i+1)
+		}
+		if metrics.Error == nil {
+			t.Errorf("expected error in attempt %d metrics, got nil", i+1)
+		}
+	}
+
+	// Test failure case - max attempts reached
+	got = nil // Reset metrics collection
+	attempts = 0
+
+	failingProcessFunc := func(ctx context.Context, in int) ([]int, error) {
+		attempts++
+		return nil, errors.New("persistent error")
+	}
+
+	// Create a pipe that will fail after max attempts
+	failPipe := NewProcessPipe(
+		failingProcessFunc,
+		WithRetryConfig[int, int](&RetryConfig{
+			ShouldRetry: ShouldRetry(),
+			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
+			MaxAttempts: 2,
+		}),
+		WithMetrics[int, int](collector),
+	)
+
+	// Create input channel
+	failIn := make(chan int, 1)
+	failIn <- 5
+	close(failIn)
+
+	// Start the pipe
+	failOut := failPipe.Start(context.Background(), failIn)
+
+	// Collect results (should be empty since all attempts fail)
+	var failResults []int
+	for val := range failOut {
+		failResults = append(failResults, val)
+	}
+
+	// Should have no results due to failure
+	if len(failResults) != 0 {
+		t.Errorf("expected no results due to failure, got %v", failResults)
+	}
+
+	// Should have collected metrics for each failed attempt plus final failure (3 total: 2 retries + 1 final)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 metrics collections for failure case, got %d", len(got))
+	}
+
+	// Check the final failed attempt
+	finalFailMetrics := got[2]
+	if finalFailMetrics.Error == nil {
+		t.Error("expected error in final failure metrics, got nil")
+	}
+
+	// Verify RetryState is captured for failure
+	if finalFailMetrics.RetryState == nil {
+		t.Fatal("expected RetryState in failure metrics, got nil")
+	}
+	if finalFailMetrics.RetryState.Attempts != 2 {
+		t.Errorf("expected 2 retry attempts in failure, got %d", finalFailMetrics.RetryState.Attempts)
+	}
+	if finalFailMetrics.RetryState.Err == nil {
+		t.Error("expected RetryState.Err in failure metrics, got nil")
 	}
 }
