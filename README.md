@@ -72,7 +72,7 @@ func main() {
 }
 ```
 
-### Advanced Operations: Merge, Split, Process, Route
+### Advanced Operations: Merge, Flatten, Process, Route
 
 ```go
 package main
@@ -108,8 +108,8 @@ func main() {
 		close(ch2)
 	}()
 
-	// Merge article channels and split slices from ch2
-	articlesCh := gopipe.Merge(ch1, gopipe.Split(ch2))
+	// Merge article channels and flatten slices from ch2
+	articlesCh := gopipe.Merge(ch1, gopipe.Flatten(ch2))
 
 	// Create a list of shops
 	shops := []string{"ShopA", "ShopB"}

@@ -64,4 +64,4 @@ type Processor[In, Out any] interface {
 - Migration requires updating existing processor implementations to return slices
 - NewPipe constructor establishes a standard pattern for building all advanced pipeline components
 - The configuration/runtime split allows for more sophisticated testing and reuse scenarios
-- PreProcessorFunc adds complexity but enables critical use cases like batch collection (Collect → BatchPipe) and batch splitting (Split → ProcessPipe)
+- PreProcessorFunc adds complexity but enables critical use cases like batch collection (Collect → BatchPipe) and batch flattening (Flatten → ProcessPipe)
