@@ -27,7 +27,7 @@ func TestUseMetrics_Basic(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("expected 1 metrics, got %d", len(got))
 	}
-	if got[0].OutputCount != 1 || got[0].InputCount != 1 {
+	if got[0].Output != 1 || got[0].Input != 1 {
 		t.Errorf("unexpected metrics: %+v", got[0])
 	}
 	if got[0].Duration < 10*time.Millisecond {
@@ -65,7 +65,7 @@ func TestUseMetrics_WithStartProcessor(t *testing.T) {
 		t.Fatalf("expected 3 metrics, got %d", len(got))
 	}
 	for i, m := range got {
-		if m.OutputCount != 1 || m.InputCount != 1 {
+		if m.Output != 1 || m.Input != 1 {
 			t.Errorf("metrics[%d] unexpected: %+v", i, m)
 		}
 	}
@@ -81,7 +81,7 @@ func TestNewMetricsDistributor(t *testing.T) {
 
 	// Send some metrics
 	for i := range 3 {
-		distributor(&Metrics{InputCount: 1, OutputCount: i})
+		distributor(&Metrics{Input: 1, Output: i})
 	}
 
 	// Both collectors should have received all metrics
@@ -89,8 +89,8 @@ func TestNewMetricsDistributor(t *testing.T) {
 		t.Errorf("expected 3 metrics in each collector, got %d and %d", len(got1), len(got2))
 	}
 	for i := range 3 {
-		if got1[i].OutputCount != i || got2[i].OutputCount != i {
-			t.Errorf("unexpected OutputCount at index %d: got1=%d, got2=%d", i, got1[i].OutputCount, got2[i].OutputCount)
+		if got1[i].Output != i || got2[i].Output != i {
+			t.Errorf("unexpected OutputCount at index %d: got1=%d, got2=%d", i, got1[i].Output, got2[i].Output)
 		}
 	}
 }
