@@ -1,4 +1,4 @@
-package retry
+package gopipe
 
 import (
 	"context"
@@ -9,14 +9,17 @@ import (
 	"time"
 )
 
-// Option represents a functional option for configuring retry behavior
-type Option func(*options)
+// RetryOption represents a functional option for configuring retry behavior
+type RetryOption func(*RetryConfig)
 
-// options holds all the configurable retry options
-type options struct {
-	maxAttempts int // if <= 0, will retry until context is cancelled
-	delay       func() time.Duration
-	timeout     time.Duration
+// DelayFunc defines a function that returns a time.Duration for delays between retries
+type DelayFunc func() time.Duration
+
+// RetryConfig holds all the configurable retry options
+type RetryConfig struct {
+	MaxAttempts int // if <= 0, will retry until context is cancelled
+	Delay       DelayFunc
+	Timeout     time.Duration
 }
 
 var (
@@ -27,33 +30,24 @@ var (
 	ErrTimeoutReached = errors.New("retry")
 )
 
-// WithMaxAttempts sets the maximum number of retry attempts.
-// If maxAttempts is set to 0 or negative, the operation will retry indefinitely
-// until the context is cancelled.
-func WithMaxAttempts(maxAttempts int) Option {
-	return func(o *options) {
-		o.maxAttempts = maxAttempts
-	}
-}
-
 // WithDelay sets a custom delay function
-func WithDelay(delay func() time.Duration) Option {
-	return func(o *options) {
+func WithDelay(delay func() time.Duration) RetryOption {
+	return func(o *RetryConfig) {
 		if delay != nil {
-			o.delay = delay
+			o.Delay = delay
 		}
 	}
 }
 
-// WithConstantDelay sets a constant delay between retries
-func WithConstantDelay(delay time.Duration) Option {
-	return WithDelay(func() time.Duration {
+// ConstantDelay returns a DelayFunc that always returns the same delay duration
+func ConstantDelay(delay time.Duration) DelayFunc {
+	return func() time.Duration {
 		return delay
-	})
+	}
 }
 
 // WithExponentialBackoff sets an exponential backoff delay strategy
-func WithExponentialBackoff(baseDelay time.Duration, factor float64, jitter bool, maxDelay time.Duration) Option {
+func WithExponentialBackoff(baseDelay time.Duration, factor float64, jitter bool, maxDelay time.Duration) RetryOption {
 	attempt := 0
 	return WithDelay(func() time.Duration {
 		attempt++
@@ -83,7 +77,7 @@ func WithExponentialBackoff(baseDelay time.Duration, factor float64, jitter bool
 // - Doubles with each attempt (factor of 2.0)
 // - Includes jitter to prevent synchronized retries
 // - Maximum delay of 30 seconds
-func WithDefaultBackoff() Option {
+func WithDefaultBackoff() RetryOption {
 	return WithExponentialBackoff(
 		100*time.Millisecond,
 		2.0,
@@ -92,42 +86,53 @@ func WithDefaultBackoff() Option {
 	)
 }
 
-// WithTimeout sets an overall timeout for the entire retry operation
-func WithTimeout(timeout time.Duration) Option {
-	return func(o *options) {
+// WithRetryTimeout sets an overall timeout for the entire retry operation
+func WithRetryTimeout(timeout time.Duration) RetryOption {
+	return func(o *RetryConfig) {
 		if timeout > 0 {
-			o.timeout = timeout
+			o.Timeout = timeout
 		}
 	}
 }
 
-// RetryFunc represents a function that can be retried
-type RetryFunc func(ctx context.Context) error
+func UseRetry[In, Out any](config RetryConfig) MiddlewareFunc[In, Out] {
+	return func(next Processor[In, Out]) Processor[In, Out] {
+		return NewProcessor(
+			func(ctx context.Context, in In) ([]Out, error) {
+				var out []Out
+				handle := func(ctx context.Context) error {
+					var err error
+					out, err = next.Process(ctx, in)
+					return err
+				}
+				return out, Retry(ctx, handle, config)
+			},
+			func(in In, err error) {
+				next.Cancel(in, err)
+			},
+		)
+	}
+}
 
 // Retry attempts to execute the function fn using the specified options.
 // If no options are provided, default values will be used.
 // By default, it will retry indefinitely until the context is cancelled.
-func Retry(ctx context.Context, fn RetryFunc, opts ...Option) error {
+func Retry(
+	ctx context.Context,
+	handle func(ctx context.Context) error,
+	config RetryConfig,
+) error {
 	// Try executing the function
-	err := fn(ctx)
+	err := handle(ctx)
 	if err == nil {
 		return nil
-	}
-
-	// Default options - retry indefinitely until context is cancelled
-	config := &options{}
-	WithDefaultBackoff()(config)
-
-	// Apply provided options
-	for _, opt := range opts {
-		opt(config)
 	}
 
 	// Apply timeout if specified
 	var cancel context.CancelFunc
 	var timeoutCtx context.Context
-	if config.timeout > 0 {
-		timeoutCtx, cancel = context.WithTimeout(ctx, config.timeout)
+	if config.Timeout > 0 {
+		timeoutCtx, cancel = context.WithTimeout(ctx, config.Timeout)
 		defer cancel()
 	} else {
 		timeoutCtx = context.Background()
@@ -136,11 +141,11 @@ func Retry(ctx context.Context, fn RetryFunc, opts ...Option) error {
 	attempt := 1
 
 	// Determine if we're using a fixed number of attempts or retrying until context cancelled
-	infiniteRetry := config.maxAttempts <= 0
+	infiniteRetry := config.MaxAttempts <= 0
 
 	for {
 		// Exit condition for fixed attempts
-		if !infiniteRetry && attempt >= config.maxAttempts {
+		if !infiniteRetry && attempt >= config.MaxAttempts {
 			return fmt.Errorf("%w: failed after %d attempts: %w",
 				ErrMaxAttemptsReached, attempt, err)
 		}
@@ -150,22 +155,14 @@ func Retry(ctx context.Context, fn RetryFunc, opts ...Option) error {
 			return fmt.Errorf("%w: %w", ctx.Err(), err)
 		case <-timeoutCtx.Done():
 			return fmt.Errorf("%w: %v", ErrTimeoutReached, err)
-		case <-time.After(config.delay()):
+		case <-time.After(config.Delay()):
 		}
 
 		// Try executing the function
-		if err = fn(ctx); err == nil {
+		if err = handle(ctx); err == nil {
 			return nil // Success
 		}
 
 		attempt++
-	}
-}
-
-// MustRetry is similar to Retry but panics if the retry operation fails.
-// This is useful for operations that must succeed and where error handling is not desired.
-func MustRetry(ctx context.Context, fn RetryFunc, opts ...Option) {
-	if err := Retry(ctx, fn, opts...); err != nil {
-		panic(err)
 	}
 }
