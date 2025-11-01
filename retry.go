@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-type DelayFunc func() func() time.Duration
+type RetryDelayFunc func() func() time.Duration
 
-func ConstantDelay(d time.Duration) DelayFunc {
+func ConstantRetryDelay(d time.Duration) RetryDelayFunc {
 	return func() func() time.Duration {
 		return func() time.Duration {
 			jitter := 1.0 + (rand.Float64()*0.4 - 0.2) // between 0.8 and 1.2
@@ -20,11 +20,11 @@ func ConstantDelay(d time.Duration) DelayFunc {
 	}
 }
 
-func ExponentialDelay(
+func ExponentialRetryDelay(
 	baseDelay time.Duration,
 	factor float64,
 	maxDelay time.Duration,
-) DelayFunc {
+) RetryDelayFunc {
 	return func() func() time.Duration {
 		attempt := 0
 		return func() time.Duration {
@@ -96,13 +96,13 @@ func WithRetryConfig[In, Out any](retryConfig *RetryConfig) Option[In, Out] {
 
 var defaultRetryConfig = RetryConfig{
 	IsRetryable: AlwaysRetry(),
-	Delay:       ConstantDelay(1 * time.Second),
+	Delay:       ConstantRetryDelay(1 * time.Second),
 	MaxAttempts: 2,
 }
 
 type RetryConfig struct {
 	IsRetryable IsRetryableFunc
-	Delay       DelayFunc
+	Delay       RetryDelayFunc
 	MaxAttempts int
 	Timeout     time.Duration
 }
