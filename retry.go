@@ -14,7 +14,8 @@ type DelayFunc func() func() time.Duration
 func ConstantDelay(d time.Duration) DelayFunc {
 	return func() func() time.Duration {
 		return func() time.Duration {
-			return d
+			jitter := 1.0 + (rand.Float64()*0.4 - 0.2) // between 0.8 and 1.2
+			return time.Duration(float64(d) * jitter)
 		}
 	}
 }
@@ -43,44 +44,120 @@ func ExponentialDelay(
 				delay = maxDelay
 			}
 
-			fmt.Println("attempt", attempt, "delay", delay)
 			return delay
 		}
 	}
 }
 
-// WithRetry adds retry middleware to the processing pipeline.
+type IsRetryableFunc func(error) bool
+
+func AlwaysRetry(errs ...error) IsRetryableFunc {
+	if len(errs) == 0 {
+		return func(err error) bool {
+			return true
+		}
+	}
+	return func(err error) bool {
+		for _, e := range errs {
+			if errors.Is(err, e) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+func NeverRetry(errs ...error) IsRetryableFunc {
+	if len(errs) == 0 {
+		return func(err error) bool {
+			return false
+		}
+	}
+	return func(err error) bool {
+		for _, e := range errs {
+			if errors.Is(err, e) {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+// WithRetryConfig adds retry middleware to the processing pipeline.
 // maxAttempts specifies the maximum number of attempts (including the initial attempt).
 // If maxAttempts is set to 0 or negative, the operation will retry indefinitely until the context is cancelled.
 // delay specifies the delay function between retries.
 // timeout specifies the overall timeout for all retry attempts combined. If zero, no timeout is applied.
-func WithRetry[In, Out any](
-	maxAttempts int,
-	delay DelayFunc,
-	timeout time.Duration,
-) Option[In, Out] {
+func WithRetryConfig[In, Out any](retryConfig *RetryConfig) Option[In, Out] {
 	return func(cfg *config[In, Out]) {
-		cfg.retry = useRetry[In, Out](
-			retryConfig{
-				maxAttempts: maxAttempts,
-				delay:       delay,
-				timeout:     timeout,
-			},
-		)
+		cfg.retry = useRetry[In, Out](retryConfig)
 	}
 }
 
-type retryConfig struct {
-	maxAttempts int
-	delay       DelayFunc
-	timeout     time.Duration
+var defaultRetryConfig = RetryConfig{
+	IsRetryable: AlwaysRetry(),
+	Delay:       ConstantDelay(1 * time.Second),
+	MaxAttempts: 2,
 }
 
-func useRetry[In, Out any](config retryConfig) MiddlewareFunc[In, Out] {
+type RetryConfig struct {
+	IsRetryable IsRetryableFunc
+	Delay       DelayFunc
+	MaxAttempts int
+	Timeout     time.Duration
+}
+
+func (c *RetryConfig) parse() *RetryConfig {
+	if c == nil {
+		return nil
+	}
+	if c.IsRetryable == nil {
+		c.IsRetryable = defaultRetryConfig.IsRetryable
+	}
+	if c.Delay == nil {
+		c.Delay = defaultRetryConfig.Delay
+	}
+	if c.MaxAttempts <= 0 {
+		c.MaxAttempts = defaultRetryConfig.MaxAttempts
+	}
+	if c.Timeout <= 0 {
+		c.Timeout = defaultRetryConfig.Timeout
+	}
+	return c
+}
+
+func useRetry[In, Out any](config *RetryConfig) MiddlewareFunc[In, Out] {
+	if config = config.parse(); config == nil {
+		return nil
+	}
 	return func(next Processor[In, Out]) Processor[In, Out] {
 		return NewProcessor(
 			func(ctx context.Context, in In) ([]Out, error) {
-				return retry(ctx, next.Process, in, config)
+				state := newRetryState(config.Timeout, config.MaxAttempts)
+				delay := config.Delay()
+
+				for {
+					out, err := next.Process(state.Context(ctx), in)
+					if err == nil {
+						return out, nil
+					}
+					state.appendCause(err)
+					if !config.IsRetryable(err) {
+						return nil, state.error(ErrNotRetryable)
+					}
+
+					if config.MaxAttempts > 0 && state.Attempts >= config.MaxAttempts {
+						return nil, state.error(ErrRetryMaxAttempts)
+					}
+
+					select {
+					case <-ctx.Done():
+						return nil, state.error(ctx.Err())
+					case <-time.After(config.Timeout - time.Since(state.Start)):
+						return nil, state.error(ErrRetryTimeout)
+					case <-time.After(delay()):
+					}
+				}
 			},
 			func(in In, err error) {
 				next.Cancel(in, err)
@@ -90,60 +167,105 @@ func useRetry[In, Out any](config retryConfig) MiddlewareFunc[In, Out] {
 }
 
 var (
-	// ErrMaxAttemptsReached is returned when all retry attempts fail
-	ErrMaxAttemptsReached = errors.New("retry")
+	ErrRetry = errors.New("retry")
 
-	// ErrTimeoutReached is returned when the overall retry operation times out
-	ErrTimeoutReached = errors.New("retry")
+	// ErrRetryMaxAttempts is returned when all retry attempts fail
+	ErrRetryMaxAttempts = fmt.Errorf("max %w attempts reached", ErrRetry)
+
+	// ErrRetryTimeout is returned when the overall retry operation times out
+	ErrRetryTimeout = fmt.Errorf("%w timeout reached", ErrRetry)
+
+	// ErrNotRetryable is returned when an error is not retryable
+	ErrNotRetryable = fmt.Errorf("not %wable", ErrRetry)
 )
 
-func retry[In, Out any](
-	ctx context.Context,
-	handle func(context.Context, In) ([]Out, error),
-	in In,
-	config retryConfig,
-) ([]Out, error) {
-	out, err := handle(ctx, in)
+type RetryState struct {
+	Timeout     time.Duration
+	MaxAttempts int
+
+	Start    time.Time
+	Attempts int
+	Duration time.Duration
+	Causes   []error
+	Err      error
+}
+
+func newRetryState(
+	timeout time.Duration,
+	maxAttempts int,
+) *RetryState {
+	return &RetryState{
+		Timeout:     timeout,
+		MaxAttempts: maxAttempts,
+		Start:       time.Now(),
+		Attempts:    0,
+	}
+}
+
+func (s *RetryState) appendCause(err error) {
+	s.Attempts++
+	s.Duration = time.Since(s.Start)
+	s.Causes = append(s.Causes, err)
+}
+
+func (s *RetryState) error(err error) error {
+	s.Duration = time.Since(s.Start)
+	s.Err = err
+	return &retryStateErrorWrapper{state: s}
+}
+
+func (s *RetryState) Cause() error {
+	if s == nil || len(s.Causes) == 0 {
+		return nil
+	}
+	return s.Causes[len(s.Causes)-1]
+}
+
+type retryStateKeyType struct{}
+
+var retryStateKey = retryStateKeyType{}
+
+// RetryStateFromContext extracts the RetryState from a context.
+// Returns nil if no RetryState is present.
+func RetryStateFromContext(ctx context.Context) *RetryState {
+	if ctx == nil {
+		return nil
+	}
+	if state, ok := ctx.Value(retryStateKey).(*RetryState); ok {
+		return state
+	}
+	return nil
+}
+
+// RetryStateFromError extracts the RetryState from an error.
+// Returns nil if no RetryState is present.
+func RetryStateFromError(err error) *RetryState {
 	if err == nil {
-		return out, nil
+		return nil
 	}
-
-	delay := config.delay()
-	var cancel context.CancelFunc
-	var timeoutCtx context.Context
-	if config.timeout > 0 {
-		timeoutCtx, cancel = context.WithTimeout(ctx, config.timeout)
-		defer cancel()
-	} else {
-		timeoutCtx = context.Background()
+	var w *retryStateErrorWrapper
+	if errors.As(err, &w) {
+		return w.state
 	}
+	return nil
+}
 
-	attempt := 1
+func (s *RetryState) Context(ctx context.Context) context.Context {
+	return context.WithValue(ctx, retryStateKey, s)
+}
 
-	// Determine if we're using a fixed number of attempts or retrying until context cancelled
-	infiniteRetry := config.maxAttempts <= 0
+type retryStateErrorWrapper struct {
+	state *RetryState
+}
 
-	for {
-		// Exit condition for fixed attempts
-		if !infiniteRetry && attempt >= config.maxAttempts {
-			return nil, fmt.Errorf("%w: failed after %d attempts: %w",
-				ErrMaxAttemptsReached, attempt, err)
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("%w: %w", ctx.Err(), err)
-		case <-timeoutCtx.Done():
-			return nil, fmt.Errorf("%w: %v", ErrTimeoutReached, err)
-		case <-time.After(delay()):
-		}
-
-		// Try executing the function
-		out, err = handle(ctx, in)
-		if err == nil {
-			return out, nil
-		}
-
-		attempt++
+func (w *retryStateErrorWrapper) Error() string {
+	if w.state == nil || len(w.state.Causes) == 0 {
+		return fmt.Sprintf("gopipe: %s", ErrRetry.Error())
 	}
+	return fmt.Sprintf("gopipe: %s: %s", w.state.Err, w.state.Causes[len(w.state.Causes)-1])
+}
+
+func (w *retryStateErrorWrapper) Unwrap() []error {
+	// TODO: should w.state.Err be the first element?
+	return append(w.state.Causes, w.state.Err)
 }
