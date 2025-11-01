@@ -49,9 +49,9 @@ func ExponentialRetryDelay(
 	}
 }
 
-type IsRetryableFunc func(error) bool
+type ShouldRetryFunc func(error) bool
 
-func AlwaysRetry(errs ...error) IsRetryableFunc {
+func ShouldRetry(errs ...error) ShouldRetryFunc {
 	if len(errs) == 0 {
 		return func(err error) bool {
 			return true
@@ -67,7 +67,7 @@ func AlwaysRetry(errs ...error) IsRetryableFunc {
 	}
 }
 
-func NeverRetry(errs ...error) IsRetryableFunc {
+func ShouldNotRetry(errs ...error) ShouldRetryFunc {
 	if len(errs) == 0 {
 		return func(err error) bool {
 			return false
@@ -95,13 +95,13 @@ func WithRetryConfig[In, Out any](retryConfig *RetryConfig) Option[In, Out] {
 }
 
 var defaultRetryConfig = RetryConfig{
-	IsRetryable: AlwaysRetry(),
+	ShouldRetry: ShouldRetry(),
 	Delay:       ConstantRetryDelay(1 * time.Second),
 	MaxAttempts: 2,
 }
 
 type RetryConfig struct {
-	IsRetryable IsRetryableFunc
+	ShouldRetry ShouldRetryFunc
 	Delay       RetryDelayFunc
 	MaxAttempts int
 	Timeout     time.Duration
@@ -111,8 +111,8 @@ func (c *RetryConfig) parse() *RetryConfig {
 	if c == nil {
 		return nil
 	}
-	if c.IsRetryable == nil {
-		c.IsRetryable = defaultRetryConfig.IsRetryable
+	if c.ShouldRetry == nil {
+		c.ShouldRetry = defaultRetryConfig.ShouldRetry
 	}
 	if c.Delay == nil {
 		c.Delay = defaultRetryConfig.Delay
@@ -142,7 +142,7 @@ func useRetry[In, Out any](config *RetryConfig) MiddlewareFunc[In, Out] {
 						return out, nil
 					}
 					state.appendCause(err)
-					if !config.IsRetryable(err) {
+					if !config.ShouldRetry(err) {
 						return nil, state.error(ErrNotRetryable)
 					}
 
