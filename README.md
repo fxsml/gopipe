@@ -26,8 +26,8 @@ Manual channel wiring in Go is error-prone and hard to scale for complex workflo
 - `WithTimeout`: Optional processing timeout via context.
 - `WithoutContextPropagation`: Opt-out for propagating the parent context to the processing context to prevent cancellation.
 - `WithLogConfig`: Customizable logging - defaults to success (debug), cancel (warn) and failure (error) with `log/slog`.
-- `WithMetrics`: Optional processing metrics can be retrieved and evaluated individually.
-- `WithMetadata`: Optional metadata enrichment for log messages and metrics based on input values.
+- `WithMetricsCollector`: Optional processing metrics can be retrieved and evaluated individually.
+- `WithMetadataProvider`: Optional metadata enrichment for log messages and metrics based on input values.
 - `WithMiddleware`: Optional support for custom middleware.
 - `WithRecover`: Optional recovery on panics.
 - `WithRetryConfig`: Optional retry on failure with custom configuration.

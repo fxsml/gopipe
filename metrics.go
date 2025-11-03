@@ -56,9 +56,9 @@ func (m *Metrics) Retry() int {
 // MetricsCollector defines a function that collects single input metrics.
 type MetricsCollector func(metrics *Metrics)
 
-// WithMetrics adds a metrics collector to the processing pipeline.
+// WithMetricsCollector adds a metrics collector to the processing pipeline.
 // Can be used multiple times to add multiple collectors.
-func WithMetrics[In, Out any](collector MetricsCollector) Option[In, Out] {
+func WithMetricsCollector[In, Out any](collector MetricsCollector) Option[In, Out] {
 	return func(cfg *config[In, Out]) {
 		cfg.metricsCollector = append(cfg.metricsCollector, collector)
 	}

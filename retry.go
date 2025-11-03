@@ -19,8 +19,8 @@ var (
 	// ErrRetryTimeout is returned when the overall retry operation times out
 	ErrRetryTimeout = fmt.Errorf("%w: timeout reached", ErrRetry)
 
-	// ErrNotRetryable is returned when an error is not retryable
-	ErrNotRetryable = fmt.Errorf("%w: not retryable", ErrRetry)
+	// ErrRetryNotRetryable is returned when an error is not retryable
+	ErrRetryNotRetryable = fmt.Errorf("%w: not retryable", ErrRetry)
 )
 
 // BackoffFunc returns the wait duration for a retry attempt.
@@ -288,7 +288,7 @@ func useRetry[In, Out any](config *RetryConfig) MiddlewareFunc[In, Out] {
 					}
 					state.appendCause(err)
 					if !config.ShouldRetry(err) {
-						return nil, state.error(ErrNotRetryable)
+						return nil, state.error(ErrRetryNotRetryable)
 					}
 
 					if config.MaxAttempts > 0 && state.Attempts >= config.MaxAttempts {

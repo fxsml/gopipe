@@ -48,11 +48,11 @@ func MetadataFromError(err error) Metadata {
 	return nil
 }
 
-// WithMetadata adds a metadata provider to enrich context with metadata
+// WithMetadataProvider adds a metadata provider to enrich context with metadata
 // for each input. Can be used multiple times to add multiple providers.
 // Metadata is available via MetadataFromContext or MetadataFromError.
 // Metadata is used in logging and metrics collection.
-func WithMetadata[In, Out any](provider MetadataProvider[In]) Option[In, Out] {
+func WithMetadataProvider[In, Out any](provider MetadataProvider[In]) Option[In, Out] {
 	return func(cfg *config[In, Out]) {
 		cfg.metadataProvider = append(cfg.metadataProvider, useMetadata[In, Out](provider))
 	}

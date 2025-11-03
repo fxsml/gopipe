@@ -387,7 +387,7 @@ func TestUseRetry_ShouldRetryLogic(t *testing.T) {
 				if attempts != 1 {
 					t.Errorf("expected no retries (1 attempt), got %d attempts", attempts)
 				}
-				if !errors.Is(err, ErrNotRetryable) {
+				if !errors.Is(err, ErrRetryNotRetryable) {
 					t.Errorf("expected ErrNotRetryable for non-retryable error, got %v", err)
 				}
 			}

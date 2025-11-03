@@ -119,7 +119,7 @@ func TestUseMetrics_WithRetry(t *testing.T) {
 			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 			MaxAttempts: 5,
 		}),
-		WithMetrics[int, int](collector),
+		WithMetricsCollector[int, int](collector),
 	)
 
 	// Create input channel
@@ -196,7 +196,7 @@ func TestUseMetrics_WithRetry(t *testing.T) {
 			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 			MaxAttempts: 2,
 		}),
-		WithMetrics[int, int](collector),
+		WithMetricsCollector[int, int](collector),
 	)
 
 	// Create input channel
