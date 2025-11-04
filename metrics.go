@@ -3,8 +3,11 @@ package gopipe
 import (
 	"context"
 	"errors"
+	"math"
 	"sync/atomic"
 	"time"
+
+	"github.com/fxsml/gopipe/channel"
 )
 
 // Metrics holds processing metrics for a single input.
@@ -62,6 +65,109 @@ func WithMetricsCollector[In, Out any](collector MetricsCollector) Option[In, Ou
 	return func(cfg *config[In, Out]) {
 		cfg.metricsCollector = append(cfg.metricsCollector, collector)
 	}
+}
+
+// Stats holds statistical data.
+type Stats struct {
+	Min int
+	Max int
+	Avg float64
+}
+
+// DurationStats holds duration-based statistical data.
+type DurationStats struct {
+	Min time.Duration
+	Max time.Duration
+	Avg time.Duration
+}
+
+// SnapshotMetrics holds aggregated metrics over a period.
+type SnapshotMetrics struct {
+	StartTime time.Time
+	Duration  time.Duration
+
+	Total int
+
+	DurationStats DurationStats
+
+	InputTotal  int
+	OutputTotal int
+
+	InFlightStats Stats
+
+	SuccessTotal int
+	FailureTotal int
+	CancelTotal  int
+	RetryTotal   int
+}
+
+// SnapshotMetricsCollector defines a function that collects snapshot metrics.
+type SnapshotMetricsCollector func(metrics *SnapshotMetrics)
+
+// NewSnapshotMetricsCollector creates a MetricsCollector that aggregates metrics into snapshot metrics.
+func NewSnapshotMetricsCollector(
+	ctx context.Context,
+	collect SnapshotMetricsCollector,
+	maxSize int,
+	maxDuration time.Duration,
+) (MetricsCollector, <-chan struct{}) {
+	ch := make(chan *Metrics)
+
+	startTime := time.Now()
+
+	batchCh := channel.Collect(
+		channel.Cancel(ctx, ch, func(_ *Metrics, _ error) {}),
+		maxSize,
+		maxDuration,
+	)
+
+	out := channel.Sink(batchCh, func(batch []*Metrics) {
+		now := time.Now()
+		batchSize := len(batch)
+		dm := &SnapshotMetrics{
+			StartTime: startTime,
+			Duration:  startTime.Sub(now),
+			Total:     batchSize,
+			InFlightStats: Stats{
+				Min: math.MaxInt64,
+			},
+			DurationStats: DurationStats{
+				Min: math.MaxInt64,
+			},
+		}
+		inFlightTotal := 0
+		durationTotal := time.Duration(0)
+		for _, m := range batch {
+			inFlightTotal += m.InFlight
+			dm.InFlightStats.Max = max(dm.InFlightStats.Max, m.InFlight)
+			dm.InFlightStats.Min = min(dm.InFlightStats.Min, m.InFlight)
+
+			durationTotal += m.Duration
+			dm.DurationStats.Max = max(dm.DurationStats.Max, m.Duration)
+			dm.DurationStats.Min = min(dm.DurationStats.Min, m.Duration)
+
+			dm.InputTotal += m.Input
+			dm.OutputTotal += m.Output
+
+			dm.SuccessTotal += m.Success()
+			dm.FailureTotal += m.Failure()
+			dm.CancelTotal += m.Cancel()
+			dm.RetryTotal += m.Retry()
+		}
+
+		dm.InFlightStats.Avg = float64(inFlightTotal) / float64(batchSize)
+		dm.DurationStats.Avg = durationTotal / time.Duration(batchSize)
+
+		startTime = now
+		collect(dm)
+	})
+
+	return func(m *Metrics) {
+		select {
+		case <-ctx.Done():
+		case ch <- m:
+		}
+	}, out
 }
 
 func useMetrics[In, Out any](collect MetricsCollector) MiddlewareFunc[In, Out] {
