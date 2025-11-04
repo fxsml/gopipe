@@ -1,5 +1,7 @@
 package channel
 
+import "context"
+
 // FromSlice sends each element of slice into the returned channel.
 // The returned channel is closed after all values have been sent.
 func FromSlice[T any](
@@ -82,23 +84,28 @@ func FromRange(
 	return out
 }
 
-// FromFunc generates values by repeatedly calling handle.
-// When handle returns false, the generation stops. The value
-// returned along with false is ignored.
-// The returned channel is closed when handle returns false.
+// FromFunc generates values by repeatedly calling the handle function
+// until context cancellation.
 func FromFunc[T any](
-	handle func() (T, bool),
+	ctx context.Context,
+	handle func() T,
 ) <-chan T {
 	out := make(chan T)
 
 	go func() {
 		defer close(out)
 		for {
-			val, ok := handle()
-			if !ok {
-				break
+			select {
+			case <-ctx.Done():
+				return
+			default:
 			}
-			out <- val
+
+			select {
+			case <-ctx.Done():
+				return
+			case out <- handle():
+			}
 		}
 	}()
 

@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"context"
 	"reflect"
 	"testing"
 )
@@ -74,16 +75,20 @@ func TestFromRange(t *testing.T) {
 
 func TestFromFunc(t *testing.T) {
 	// Example: generate 0, 1, 2 then stop
+	ctx, cancel := context.WithCancel(context.Background())
+
 	i := 0
-	handle := func() (int, bool) {
+	handle := func() int {
 		if i >= 3 {
-			return 0, false
+			cancel()
+			return 0
 		}
 		val := i
 		i++
-		return val, true
+		return val
 	}
-	ch := FromFunc(handle)
+
+	ch := FromFunc(ctx, handle)
 	var result []int
 	for v := range ch {
 		result = append(result, v)
@@ -94,8 +99,10 @@ func TestFromFunc(t *testing.T) {
 	}
 
 	// Test: handle returns false immediately
-	handle2 := func() (int, bool) { return 0, false }
-	ch2 := FromFunc(handle2)
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel()
+	handle2 := func() int { return 0 }
+	ch2 := FromFunc(ctx, handle2)
 	var result2 []int
 	for v := range ch2 {
 		result2 = append(result2, v)
