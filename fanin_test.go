@@ -2,6 +2,7 @@ package gopipe
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -11,17 +12,23 @@ func TestFanIn_BasicMerge(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	fanin := NewFanIn[int](FanInConfig{
-		Buffer:           10,
-		ShutdownDuration: 0,
+		Buffer:          10,
+		ShutdownTimeout: 0,
 	})
 
 	ch1 := make(chan int)
 	ch2 := make(chan int)
 	ch3 := make(chan int)
 
-	fanin.Add(ch1)
-	fanin.Add(ch2)
-	fanin.Add(ch3)
+	if err := fanin.Add(ch1); err != nil {
+		t.Fatalf("unexpected error adding ch1: %v", err)
+	}
+	if err := fanin.Add(ch2); err != nil {
+		t.Fatalf("unexpected error adding ch2: %v", err)
+	}
+	if err := fanin.Add(ch3); err != nil {
+		t.Fatalf("unexpected error adding ch3: %v", err)
+	}
 
 	out := fanin.Start(ctx)
 	cancel()
@@ -64,13 +71,15 @@ func TestFanIn_AddAfterClosed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	fanin := NewFanIn[int](FanInConfig{
-		Buffer:           10,
-		ShutdownDuration: 1,
+		Buffer:          10,
+		ShutdownTimeout: 1,
 	})
 	out := fanin.Start(ctx)
 
 	ch1 := make(chan int)
-	fanin.Add(ch1)
+	if err := fanin.Add(ch1); err != nil {
+		t.Fatalf("unexpected error adding channel: %v", err)
+	}
 
 	// Close context to trigger shutdown
 	cancel()
@@ -78,12 +87,15 @@ func TestFanIn_AddAfterClosed(t *testing.T) {
 	// Wait a bit for shutdown to complete
 	time.Sleep(50 * time.Millisecond)
 
-	// Try adding after closed
+	// Try adding after closed - should return error
 	ch2 := make(chan int, 1)
 	ch2 <- 99
 	close(ch2)
 
-	fanin.Add(ch2) // Should be ignored
+	err := fanin.Add(ch2)
+	if err == nil {
+		t.Error("expected error when adding channel after close")
+	}
 
 	// Drain output
 	for o := range out {
@@ -97,12 +109,14 @@ func TestFanIn_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	fanin := NewFanIn[int](FanInConfig{
-		Buffer:           10,
-		ShutdownDuration: 1,
+		Buffer:          10,
+		ShutdownTimeout: 1,
 	})
 
 	ch := make(chan int, 5)
-	fanin.Add(ch)
+	if err := fanin.Add(ch); err != nil {
+		t.Fatalf("unexpected error adding channel: %v", err)
+	}
 	out := fanin.Start(ctx)
 
 	// Send some values
@@ -131,8 +145,8 @@ func TestFanIn_ShutdownDuration(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	fanin := NewFanIn[int](FanInConfig{
-		Buffer:           10,
-		ShutdownDuration: 100 * time.Millisecond,
+		Buffer:          10,
+		ShutdownTimeout: 100 * time.Millisecond,
 	})
 
 	// Channel that won't close naturally
@@ -141,7 +155,9 @@ func TestFanIn_ShutdownDuration(t *testing.T) {
 		ch <- i
 	}
 
-	fanin.Add(ch)
+	if err := fanin.Add(ch); err != nil {
+		t.Fatalf("unexpected error adding channel: %v", err)
+	}
 	out := fanin.Start(ctx)
 
 	// Read a few values
@@ -174,12 +190,14 @@ func TestFanIn_NoShutdownDuration(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	fanin := NewFanIn[int](FanInConfig{
-		Buffer:           10,
-		ShutdownDuration: 0, // No timeout
+		Buffer:          10,
+		ShutdownTimeout: 0, // No timeout
 	})
 
 	ch := make(chan int)
-	fanin.Add(ch)
+	if err := fanin.Add(ch); err != nil {
+		t.Fatalf("unexpected error adding channel: %v", err)
+	}
 	out := fanin.Start(ctx)
 
 	go func() {
@@ -207,8 +225,8 @@ func TestFanIn_ConcurrentAdds(t *testing.T) {
 	defer cancel()
 
 	fanin := NewFanIn[int](FanInConfig{
-		Buffer:           100,
-		ShutdownDuration: 0,
+		Buffer:          100,
+		ShutdownTimeout: 0,
 	})
 	out := fanin.Start(ctx)
 
@@ -221,7 +239,10 @@ func TestFanIn_ConcurrentAdds(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			ch := make(chan int, 5)
-			fanin.Add(ch)
+			if err := fanin.Add(ch); err != nil {
+				t.Errorf("unexpected error adding channel: %v", err)
+				return
+			}
 			for j := range 5 {
 				ch <- id*10 + j
 			}
@@ -255,12 +276,14 @@ func TestFanIn_EmptyChannel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	fanin := NewFanIn[int](FanInConfig{
-		Buffer:           10,
-		ShutdownDuration: 0,
+		Buffer:          10,
+		ShutdownTimeout: 0,
 	})
 
 	ch := make(chan int)
-	fanin.Add(ch)
+	if err := fanin.Add(ch); err != nil {
+		t.Fatalf("unexpected error adding channel: %v", err)
+	}
 	out := fanin.Start(ctx)
 
 	// Close empty channel
@@ -282,17 +305,23 @@ func TestFanIn_MultipleInputsOneCloses(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	fanin := NewFanIn[int](FanInConfig{
-		Buffer:           10,
-		ShutdownDuration: 0,
+		Buffer:          10,
+		ShutdownTimeout: 0,
 	})
 
 	ch1 := make(chan int)
 	ch2 := make(chan int)
 	ch3 := make(chan int)
 
-	fanin.Add(ch1)
-	fanin.Add(ch2)
-	fanin.Add(ch3)
+	if err := fanin.Add(ch1); err != nil {
+		t.Fatalf("unexpected error adding ch1: %v", err)
+	}
+	if err := fanin.Add(ch2); err != nil {
+		t.Fatalf("unexpected error adding ch2: %v", err)
+	}
+	if err := fanin.Add(ch3); err != nil {
+		t.Fatalf("unexpected error adding ch3: %v", err)
+	}
 
 	out := fanin.Start(ctx)
 
@@ -343,12 +372,14 @@ func TestFanIn_BufferFull(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	fanin := NewFanIn[int](FanInConfig{
-		Buffer:           2, // Small buffer
-		ShutdownDuration: 100 * time.Millisecond,
+		Buffer:          2, // Small buffer
+		ShutdownTimeout: 100 * time.Millisecond,
 	})
 
 	ch := make(chan int, 5)
-	fanin.Add(ch)
+	if err := fanin.Add(ch); err != nil {
+		t.Fatalf("unexpected error adding channel: %v", err)
+	}
 	out := fanin.Start(ctx)
 
 	// Fill buffer and channel
@@ -395,4 +426,91 @@ func TestFanIn_MultipleStartPanic(t *testing.T) {
 	}()
 
 	_ = fanin.Start(ctx)
+}
+
+func TestFanIn_NoGoroutineLeakWhenStartedAndStopped(t *testing.T) {
+	// Get initial goroutine count
+	initialGoroutines := runtime.NumGoroutine()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fanin := NewFanIn[int](FanInConfig{
+		Buffer:          10,
+		ShutdownTimeout: 100 * time.Millisecond,
+	})
+
+	// Add several channels
+	for range 5 {
+		ch := make(chan int, 10)
+		if err := fanin.Add(ch); err != nil {
+			t.Fatalf("unexpected error adding channel: %v", err)
+		}
+		// Send some data and close
+		go func() {
+			for j := 0; j < 5; j++ {
+				ch <- j
+			}
+			close(ch)
+		}()
+	}
+
+	out := fanin.Start(ctx)
+
+	// Consume some values
+	count := 0
+	for range out {
+		count++
+		if count >= 10 {
+			// Cancel early
+			cancel()
+			break
+		}
+	}
+
+	// Drain remaining
+	for range out {
+	}
+
+	// Give goroutines time to clean up
+	time.Sleep(200 * time.Millisecond)
+
+	// Check for goroutine leaks
+	finalGoroutines := runtime.NumGoroutine()
+	leaked := finalGoroutines - initialGoroutines
+
+	if leaked > 0 {
+		t.Errorf("goroutine leak detected: initial=%d, final=%d, leaked=%d",
+			initialGoroutines, finalGoroutines, leaked)
+	}
+}
+
+func TestFanIn_NoGoroutineLeakWhenNeverStarted(t *testing.T) {
+	// Get initial goroutine count
+	initialGoroutines := runtime.NumGoroutine()
+
+	fanin := NewFanIn[int](FanInConfig{
+		Buffer:          10,
+		ShutdownTimeout: 100 * time.Millisecond,
+	})
+
+	// Add several channels without starting
+	for range 5 {
+		ch := make(chan int, 10)
+		if err := fanin.Add(ch); err != nil {
+			t.Fatalf("unexpected error adding channel: %v", err)
+		}
+	}
+
+	// Give goroutines time to potentially leak
+	time.Sleep(100 * time.Millisecond)
+
+	// Check for goroutine leaks
+	finalGoroutines := runtime.NumGoroutine()
+	leaked := finalGoroutines - initialGoroutines
+
+	if leaked > 0 {
+		t.Errorf("goroutine leak detected: initial=%d, final=%d, leaked=%d",
+			initialGoroutines, finalGoroutines, leaked)
+	}
 }
