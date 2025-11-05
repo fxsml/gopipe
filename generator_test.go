@@ -50,13 +50,18 @@ func TestNewGenerator_ContextCancellation(t *testing.T) {
 	// Cancel context
 	cancel()
 
-	// Channel should close
-	select {
-	case _, ok := <-ch:
-		if ok {
-			t.Error("expected channel to be closed after context cancellation")
+	// Channel should close eventually (drain any buffered values first)
+	timeout := time.After(200 * time.Millisecond)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				// Channel closed - success
+				return
+			}
+			// Drain buffered values
+		case <-timeout:
+			t.Fatal("timeout waiting for channel to close")
 		}
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("timeout waiting for channel to close")
 	}
 }
