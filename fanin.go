@@ -2,6 +2,7 @@ package gopipe
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -9,22 +10,22 @@ import (
 // FanIn merges multiple input channels into a single output channel.
 // It safely handles concurrent Add() calls and provides graceful shutdown.
 type FanIn[T any] struct {
-	out     chan T
-	mu      sync.Mutex
-	wg      sync.WaitGroup
-	done    chan struct{}
-	config  FanInConfig
-	closed  bool
-	started bool
+	out    chan T
+	mu     sync.Mutex
+	wg     sync.WaitGroup
+	done   chan struct{}
+	config FanInConfig
+	closed bool
+	inputs []<-chan T
 }
 
 // FanInConfig configures FanIn behavior.
 type FanInConfig struct {
 	// Buffer size for the output channel
 	Buffer int
-	// ShutdownDuration is the max time to wait for input channels to drain.
+	// ShutdownTimeout is the max time to wait for input channels to drain.
 	// If 0, waits indefinitely for clean shutdown.
-	ShutdownDuration time.Duration
+	ShutdownTimeout time.Duration
 }
 
 // NewFanIn creates a new FanIn instance.
@@ -34,18 +35,72 @@ func NewFanIn[T any](config FanInConfig) *FanIn[T] {
 		out:    make(chan T, config.Buffer),
 		done:   make(chan struct{}),
 		config: config,
+		inputs: make([]<-chan T, 0),
 	}
 }
 
 // Add registers an input channel to be merged into the output.
-// Safe to call concurrently. Ignored if called after shutdown begins.
-func (f *FanIn[T]) Add(ch <-chan T) {
+// Safe to call concurrently. Returns an error if FanIn is already closed.
+func (f *FanIn[T]) Add(ch <-chan T) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.closed {
-		return
+		return errors.New("gopipe fanin: closed")
 	}
 
+	if f.isStarted() {
+		f.startInput(ch)
+	} else {
+		f.inputs = append(f.inputs, ch)
+	}
+
+	return nil
+}
+
+// Start begins merging input channels and returns the output channel.
+// The output channel closes when the context is cancelled and all input
+// channels have been drained (up to ShutdownDuration).
+// Must be called exactly once. Panics if called multiple times.
+func (f *FanIn[T]) Start(ctx context.Context) <-chan T {
+	f.mu.Lock()
+	if f.isStarted() {
+		f.mu.Unlock()
+		panic("gopipe fanin: start called multiple times")
+	}
+	for _, ch := range f.inputs {
+		f.startInput(ch)
+	}
+	f.setStarted()
+	f.mu.Unlock()
+
+	go func() {
+		<-ctx.Done()
+
+		f.mu.Lock()
+		f.closed = true
+		f.mu.Unlock()
+
+		wgDone := make(chan struct{})
+		go func() {
+			f.wg.Wait()
+			close(wgDone)
+		}()
+
+		if f.config.ShutdownTimeout > 0 {
+			select {
+			case <-wgDone:
+			case <-time.After(f.config.ShutdownTimeout):
+				close(f.done)
+			}
+		}
+		<-wgDone
+		close(f.out)
+	}()
+
+	return f.out
+}
+
+func (f *FanIn[T]) startInput(ch <-chan T) {
 	f.wg.Add(1)
 	go func() {
 		defer f.wg.Done()
@@ -67,42 +122,10 @@ func (f *FanIn[T]) Add(ch <-chan T) {
 	}()
 }
 
-// Start begins merging input channels and returns the output channel.
-// The output channel closes when the context is cancelled and all input
-// channels have been drained (up to ShutdownDuration).
-// Must be called exactly once. Panics if called multiple times.
-func (f *FanIn[T]) Start(ctx context.Context) <-chan T {
-	f.mu.Lock()
-	if f.started {
-		f.mu.Unlock()
-		panic("FanIn.Start() called multiple times")
-	}
-	f.started = true
-	f.mu.Unlock()
+func (f *FanIn[T]) isStarted() bool {
+	return f.inputs == nil
+}
 
-	go func() {
-		<-ctx.Done()
-
-		f.mu.Lock()
-		f.closed = true
-		f.mu.Unlock()
-
-		wgDone := make(chan struct{})
-		go func() {
-			f.wg.Wait()
-			close(wgDone)
-		}()
-
-		if f.config.ShutdownDuration > 0 {
-			select {
-			case <-wgDone:
-			case <-time.After(f.config.ShutdownDuration):
-				close(f.done)
-			}
-		}
-		<-wgDone
-		close(f.out)
-	}()
-
-	return f.out
+func (f *FanIn[T]) setStarted() {
+	f.inputs = nil
 }
