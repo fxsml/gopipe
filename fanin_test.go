@@ -1,0 +1,398 @@
+package gopipe
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+)
+
+func TestFanIn_BasicMerge(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	fanin := NewFanIn[int](FanInConfig{
+		Buffer:           10,
+		ShutdownDuration: 0,
+	})
+
+	ch1 := make(chan int)
+	ch2 := make(chan int)
+	ch3 := make(chan int)
+
+	fanin.Add(ch1)
+	fanin.Add(ch2)
+	fanin.Add(ch3)
+
+	out := fanin.Start(ctx)
+	cancel()
+
+	// Send values from different channels
+	go func() {
+		ch1 <- 1
+		ch1 <- 2
+		close(ch1)
+	}()
+	go func() {
+		ch2 <- 10
+		ch2 <- 20
+		close(ch2)
+	}()
+	go func() {
+		ch3 <- 100
+		close(ch3)
+	}()
+
+	// Collect results
+	results := make(map[int]bool)
+	for v := range out {
+		results[v] = true
+	}
+
+	expected := []int{1, 2, 10, 20, 100}
+	if len(results) != len(expected) {
+		t.Fatalf("expected %d values, got %d", len(expected), len(results))
+	}
+
+	for _, v := range expected {
+		if !results[v] {
+			t.Errorf("missing value %d", v)
+		}
+	}
+}
+
+func TestFanIn_AddAfterClosed(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	fanin := NewFanIn[int](FanInConfig{
+		Buffer:           10,
+		ShutdownDuration: 1,
+	})
+	out := fanin.Start(ctx)
+
+	ch1 := make(chan int)
+	fanin.Add(ch1)
+
+	// Close context to trigger shutdown
+	cancel()
+
+	// Wait a bit for shutdown to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Try adding after closed
+	ch2 := make(chan int, 1)
+	ch2 <- 99
+	close(ch2)
+
+	fanin.Add(ch2) // Should be ignored
+
+	// Drain output
+	for o := range out {
+		if o == 99 {
+			t.Errorf("received value from channel added after close: %d", o)
+		}
+	}
+}
+
+func TestFanIn_ContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	fanin := NewFanIn[int](FanInConfig{
+		Buffer:           10,
+		ShutdownDuration: 1,
+	})
+
+	ch := make(chan int, 5)
+	fanin.Add(ch)
+	out := fanin.Start(ctx)
+
+	// Send some values
+	ch <- 1
+	ch <- 2
+	ch <- 3
+
+	// Cancel context
+	cancel()
+
+	// Output should close eventually
+	timeout := time.After(1 * time.Second)
+	select {
+	case _, ok := <-out:
+		if ok {
+			// Drain remaining
+			for range out {
+			}
+		}
+	case <-timeout:
+		t.Fatal("output channel didn't close after context cancellation")
+	}
+}
+
+func TestFanIn_ShutdownDuration(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	fanin := NewFanIn[int](FanInConfig{
+		Buffer:           10,
+		ShutdownDuration: 100 * time.Millisecond,
+	})
+
+	// Channel that won't close naturally
+	ch := make(chan int, 100)
+	for i := 0; i < 50; i++ {
+		ch <- i
+	}
+
+	fanin.Add(ch)
+	out := fanin.Start(ctx)
+
+	// Read a few values
+	<-out
+	<-out
+
+	start := time.Now()
+	cancel()
+
+	// Drain output
+	count := 0
+	for range out {
+		count++
+	}
+
+	elapsed := time.Since(start)
+
+	// Should shutdown within ShutdownDuration
+	if elapsed > 200*time.Millisecond {
+		t.Errorf("shutdown took too long: %v", elapsed)
+	}
+
+	// Should have received some values during shutdown
+	if count == 0 {
+		t.Error("expected to receive some values during shutdown")
+	}
+}
+
+func TestFanIn_NoShutdownDuration(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	fanin := NewFanIn[int](FanInConfig{
+		Buffer:           10,
+		ShutdownDuration: 0, // No timeout
+	})
+
+	ch := make(chan int)
+	fanin.Add(ch)
+	out := fanin.Start(ctx)
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		ch <- 1
+		ch <- 2
+		close(ch)
+	}()
+
+	cancel()
+
+	// Should wait for channel to close naturally
+	results := []int{}
+	for v := range out {
+		results = append(results, v)
+	}
+
+	if len(results) != 2 {
+		t.Errorf("expected 2 values, got %d", len(results))
+	}
+}
+
+func TestFanIn_ConcurrentAdds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fanin := NewFanIn[int](FanInConfig{
+		Buffer:           100,
+		ShutdownDuration: 0,
+	})
+	out := fanin.Start(ctx)
+
+	var wg sync.WaitGroup
+	numChannels := 10
+
+	// Add channels concurrently
+	for i := range numChannels {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			ch := make(chan int, 5)
+			fanin.Add(ch)
+			for j := range 5 {
+				ch <- id*10 + j
+			}
+			close(ch)
+		}(i)
+	}
+
+	// Collect results
+	done := make(chan struct{})
+	results := make(map[int]bool)
+	go func() {
+		for v := range out {
+			results[v] = true
+		}
+		close(done)
+	}()
+
+	// Wait for all adds to complete
+	wg.Wait()
+	cancel()
+	<-done
+
+	// Should have numChannels * 5 unique values
+	expected := numChannels * 5
+	if len(results) != expected {
+		t.Errorf("expected %d unique values, got %d", expected, len(results))
+	}
+}
+
+func TestFanIn_EmptyChannel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	fanin := NewFanIn[int](FanInConfig{
+		Buffer:           10,
+		ShutdownDuration: 0,
+	})
+
+	ch := make(chan int)
+	fanin.Add(ch)
+	out := fanin.Start(ctx)
+
+	// Close empty channel
+	close(ch)
+	cancel()
+
+	// Output should close with no values
+	count := 0
+	for range out {
+		count++
+	}
+
+	if count != 0 {
+		t.Errorf("expected no values from empty channel, got %d", count)
+	}
+}
+
+func TestFanIn_MultipleInputsOneCloses(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	fanin := NewFanIn[int](FanInConfig{
+		Buffer:           10,
+		ShutdownDuration: 0,
+	})
+
+	ch1 := make(chan int)
+	ch2 := make(chan int)
+	ch3 := make(chan int)
+
+	fanin.Add(ch1)
+	fanin.Add(ch2)
+	fanin.Add(ch3)
+
+	out := fanin.Start(ctx)
+
+	// ch1 sends and closes immediately
+	go func() {
+		ch1 <- 1
+		close(ch1)
+	}()
+
+	// ch2 sends continuously
+	go func() {
+		for i := 10; i < 15; i++ {
+			ch2 <- i
+			time.Sleep(10 * time.Millisecond)
+		}
+		close(ch2)
+	}()
+
+	// ch3 sends and closes
+	go func() {
+		ch3 <- 100
+		ch3 <- 101
+		close(ch3)
+	}()
+
+	// Collect all results in background
+	done := make(chan struct{})
+	results := []int{}
+	go func() {
+		for v := range out {
+			results = append(results, v)
+		}
+		close(done)
+	}()
+
+	// Wait a bit for all channels to be processed
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-done
+
+	// Should receive all values from all channels
+	if len(results) < 8 { // 1 + 5 + 2
+		t.Errorf("expected at least 8 values, got %d", len(results))
+	}
+}
+
+func TestFanIn_BufferFull(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	fanin := NewFanIn[int](FanInConfig{
+		Buffer:           2, // Small buffer
+		ShutdownDuration: 100 * time.Millisecond,
+	})
+
+	ch := make(chan int, 5)
+	fanin.Add(ch)
+	out := fanin.Start(ctx)
+
+	// Fill buffer and channel
+	ch <- 1
+	ch <- 2
+	ch <- 3
+	ch <- 4
+	ch <- 5
+
+	// Read one value to unblock
+	v := <-out
+	if v < 1 || v > 5 {
+		t.Errorf("unexpected value: %d", v)
+	}
+
+	close(ch)
+	cancel()
+
+	// Should be able to drain remaining
+	count := 0
+	for range out {
+		count++
+	}
+
+	if count < 4 {
+		t.Errorf("expected at least 4 more values, got %d", count)
+	}
+}
+
+func TestFanIn_MultipleStartPanic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fanin := NewFanIn[int](FanInConfig{Buffer: 10})
+
+	// First Start() should work
+	_ = fanin.Start(ctx)
+
+	// Second Start() should panic
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when calling Start() twice")
+		}
+	}()
+
+	_ = fanin.Start(ctx)
+}
