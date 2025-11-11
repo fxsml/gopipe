@@ -114,7 +114,7 @@ func TestUseMetrics_WithRetry(t *testing.T) {
 	// Create a pipe with retry and metrics
 	pipe := NewProcessPipe(
 		processFunc,
-		WithRetryConfig[int, int](&RetryConfig{
+		WithRetryConfig[int, int](RetryConfig{
 			ShouldRetry: ShouldRetry(),
 			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 			MaxAttempts: 5,
@@ -191,7 +191,7 @@ func TestUseMetrics_WithRetry(t *testing.T) {
 	// Create a pipe that will fail after max attempts
 	failPipe := NewProcessPipe(
 		failingProcessFunc,
-		WithRetryConfig[int, int](&RetryConfig{
+		WithRetryConfig[int, int](RetryConfig{
 			ShouldRetry: ShouldRetry(),
 			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 			MaxAttempts: 2,

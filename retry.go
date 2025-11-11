@@ -128,8 +128,7 @@ type RetryConfig struct {
 // WithRetryConfig adds retry middleware to the processing pipeline.
 // Failed operations are retried based on ShouldRetry logic, with Backoff between attempts,
 // until MaxAttempts is reached or Timeout expires. Nil fields use default values.
-// If retryConfig is nil, no retry middleware is added.
-func WithRetryConfig[In, Out any](retryConfig *RetryConfig) Option[In, Out] {
+func WithRetryConfig[In, Out any](retryConfig RetryConfig) Option[In, Out] {
 	return func(cfg *config[In, Out]) {
 		cfg.retry = useRetry[In, Out](retryConfig)
 	}
@@ -192,10 +191,7 @@ var defaultRetryConfig = RetryConfig{
 	Timeout:     1 * time.Minute,
 }
 
-func (c *RetryConfig) parse() *RetryConfig {
-	if c == nil {
-		return nil
-	}
+func (c RetryConfig) parse() RetryConfig {
 	if c.ShouldRetry == nil {
 		c.ShouldRetry = defaultRetryConfig.ShouldRetry
 	}
@@ -272,10 +268,8 @@ func newApplyJitterFunc(jitter float64) func(d time.Duration) time.Duration {
 	}
 }
 
-func useRetry[In, Out any](config *RetryConfig) MiddlewareFunc[In, Out] {
-	if config = config.parse(); config == nil {
-		return nil
-	}
+func useRetry[In, Out any](config RetryConfig) MiddlewareFunc[In, Out] {
+	config = config.parse()
 	return func(next Processor[In, Out]) Processor[In, Out] {
 		return NewProcessor(
 			func(ctx context.Context, in In) ([]Out, error) {

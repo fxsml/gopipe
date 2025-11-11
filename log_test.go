@@ -303,7 +303,7 @@ func TestLogger_WithRetry(t *testing.T) {
 	// Create a pipe with retry and logging
 	pipe := NewProcessPipe(
 		processFunc,
-		WithRetryConfig[string, string](&RetryConfig{
+		WithRetryConfig[string, string](RetryConfig{
 			ShouldRetry: ShouldRetry(),
 			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 			MaxAttempts: 5,
@@ -393,7 +393,7 @@ func TestLogger_WithRetry(t *testing.T) {
 	// Create a pipe that will fail after max attempts
 	failPipe := NewProcessPipe(
 		failingProcessFunc,
-		WithRetryConfig[string, string](&RetryConfig{
+		WithRetryConfig[string, string](RetryConfig{
 			ShouldRetry: ShouldRetry(),
 			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 			MaxAttempts: 2,

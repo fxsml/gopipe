@@ -128,7 +128,7 @@ func TestUseRetry_SuccessFirstAttempt(t *testing.T) {
 		return []int{in * 2}, nil
 	})
 
-	retryConfig := &RetryConfig{
+	retryConfig := RetryConfig{
 		ShouldRetry: ShouldRetry(),
 		Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 		MaxAttempts: 3,
@@ -165,7 +165,7 @@ func TestUseRetry_SuccessAfterRetries(t *testing.T) {
 		return []int{in * 2}, nil
 	})
 
-	retryConfig := &RetryConfig{
+	retryConfig := RetryConfig{
 		ShouldRetry: ShouldRetry(),
 		Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 		MaxAttempts: 5,
@@ -199,7 +199,7 @@ func TestUseRetry_FailsAfterMaxAttempts(t *testing.T) {
 		return nil, errors.New("persistent error")
 	})
 
-	retryConfig := &RetryConfig{
+	retryConfig := RetryConfig{
 		ShouldRetry: ShouldRetry(),
 		Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 		MaxAttempts: maxAttempts,
@@ -238,7 +238,7 @@ func TestUseRetry_RespectsContextCancellation(t *testing.T) {
 		return nil, errors.New("error that would normally cause retry")
 	})
 
-	retryConfig := &RetryConfig{
+	retryConfig := RetryConfig{
 		ShouldRetry: ShouldRetry(),
 		Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 		MaxAttempts: 10,
@@ -279,7 +279,7 @@ func TestUseRetry_RespectsTimeout(t *testing.T) {
 		return nil, errors.New("persistent error")
 	})
 
-	retryConfig := &RetryConfig{
+	retryConfig := RetryConfig{
 		ShouldRetry: ShouldRetry(),
 		Backoff:     ConstantBackoff(10*time.Millisecond, 0.0),
 		MaxAttempts: 10,
@@ -357,7 +357,7 @@ func TestUseRetry_ShouldRetryLogic(t *testing.T) {
 				return nil, tt.err
 			})
 
-			retryConfig := &RetryConfig{
+			retryConfig := RetryConfig{
 				ShouldRetry: tt.shouldRetry,
 				Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 				MaxAttempts: 3,
@@ -409,7 +409,7 @@ func TestUseRetry_UsesExponentialBackoff(t *testing.T) {
 		return nil, errors.New("persistent error")
 	})
 
-	retryConfig := &RetryConfig{
+	retryConfig := RetryConfig{
 		ShouldRetry: ShouldRetry(),
 		Backoff:     ExponentialBackoff(baseBackoff, 2.0, 0, 0.0),
 		MaxAttempts: maxAttempts,
@@ -450,7 +450,7 @@ func TestRetryStateFromContext(t *testing.T) {
 		return nil, errors.New("test error")
 	})
 
-	retryConfig := &RetryConfig{
+	retryConfig := RetryConfig{
 		ShouldRetry: ShouldRetry(),
 		Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 		MaxAttempts: 2,
@@ -483,7 +483,7 @@ func TestRetryStateFromError(t *testing.T) {
 		return nil, errors.New("persistent error")
 	})
 
-	retryConfig := &RetryConfig{
+	retryConfig := RetryConfig{
 		ShouldRetry: ShouldRetry(),
 		Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 		MaxAttempts: 3,
@@ -511,26 +511,11 @@ func TestRetryStateFromError(t *testing.T) {
 	}
 }
 
-// TestUseRetry_NilConfig verifies nil config returns nil middleware
-func TestUseRetry_NilConfig(t *testing.T) {
-	middleware := useRetry[int, int](nil)
-	if middleware != nil {
-		t.Error("expected nil middleware for nil config")
-	}
-}
-
 // TestRetryConfig_Parse verifies config parsing with defaults
 func TestRetryConfig_Parse(t *testing.T) {
-	// Test nil config
-	var nilConfig *RetryConfig
-	parsed := nilConfig.parse()
-	if parsed != nil {
-		t.Error("expected nil for nil config")
-	}
-
 	// Test empty config gets defaults
-	emptyConfig := &RetryConfig{}
-	parsed = emptyConfig.parse()
+	emptyConfig := RetryConfig{}
+	parsed := emptyConfig.parse()
 
 	if parsed.ShouldRetry == nil {
 		t.Error("expected default ShouldRetry")
@@ -543,7 +528,7 @@ func TestRetryConfig_Parse(t *testing.T) {
 	}
 
 	// Test partial config keeps existing values
-	partialConfig := &RetryConfig{
+	partialConfig := RetryConfig{
 		MaxAttempts: 5,
 	}
 	parsed = partialConfig.parse()
@@ -570,7 +555,7 @@ func TestUseRetry_NoTimeoutConfigured(t *testing.T) {
 	})
 
 	// Test with no timeout configured (should use default of 0)
-	retryConfig := &RetryConfig{
+	retryConfig := RetryConfig{
 		ShouldRetry: ShouldRetry(),
 		Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 		MaxAttempts: 5,
@@ -647,7 +632,7 @@ func TestWithRetryConfig_ProcessPipe(t *testing.T) {
 			return []int{val * 2, val + 10}, nil
 		}
 
-		retryConfig := &RetryConfig{
+		retryConfig := RetryConfig{
 			ShouldRetry: ShouldRetry(),
 			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 			MaxAttempts: 5,
@@ -696,7 +681,7 @@ func TestWithRetryConfig_ProcessPipe(t *testing.T) {
 			return nil, errors.New("persistent process error")
 		}
 
-		retryConfig := &RetryConfig{
+		retryConfig := RetryConfig{
 			ShouldRetry: ShouldRetry(),
 			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 			MaxAttempts: 3,
@@ -744,7 +729,7 @@ func TestWithRetryConfig_ProcessPipe(t *testing.T) {
 			return nil, nonRetryableErr // This should not be retried
 		}
 
-		retryConfig := &RetryConfig{
+		retryConfig := RetryConfig{
 			ShouldRetry: ShouldRetry(retryableErr), // Only retry specific error
 			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 			MaxAttempts: 3,
@@ -807,7 +792,7 @@ func TestWithRetryConfig_ProcessPipe(t *testing.T) {
 			return nil, errors.New("always fails")
 		}
 
-		retryConfig := &RetryConfig{
+		retryConfig := RetryConfig{
 			ShouldRetry: ShouldRetry(),
 			Backoff:     ConstantBackoff(5*time.Millisecond, 0.0),
 			MaxAttempts: 10,
@@ -865,7 +850,7 @@ func TestWithRetryConfig_ProcessPipe(t *testing.T) {
 			return nil, errors.New("always fails")
 		}
 
-		retryConfig := &RetryConfig{
+		retryConfig := RetryConfig{
 			ShouldRetry: ShouldRetry(),
 			Backoff:     ExponentialBackoff(5*time.Millisecond, 2.0, 50*time.Millisecond, 0.0),
 			MaxAttempts: 4,
@@ -924,7 +909,7 @@ func TestWithRetryConfig_ProcessPipe(t *testing.T) {
 			return []int{val * 2}, nil
 		}
 
-		retryConfig := &RetryConfig{
+		retryConfig := RetryConfig{
 			ShouldRetry: ShouldRetry(),
 			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 			MaxAttempts: 3,
