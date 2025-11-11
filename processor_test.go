@@ -181,7 +181,7 @@ func TestStartProcessor_NoGoroutineLeakOnChannelClose(t *testing.T) {
 	proc := NewProcessor(process, cancel)
 
 	ctx := context.Background()
-	out := StartProcessor(ctx, in, proc, WithLogConfig[int, int](&LogConfig{
+	out := StartProcessor(ctx, in, proc, WithLogConfig[int, int](LogConfig{
 		Disabled: false,
 	}))
 

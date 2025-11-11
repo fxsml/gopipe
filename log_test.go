@@ -55,8 +55,15 @@ func (l *mockLogger) reset() {
 	l.mu.Unlock()
 }
 
-func useLogger[In, Out any](config *LogConfig) MiddlewareFunc[In, Out] {
-	return useMetrics[In, Out](newMetricsLogger(config))
+func useLogger[In, Out any](config LogConfig) MiddlewareFunc[In, Out] {
+	collector := newMetricsLogger(config)
+	if collector == nil {
+		// Return a no-op middleware when logging is disabled
+		return func(next Processor[In, Out]) Processor[In, Out] {
+			return next
+		}
+	}
+	return useMetrics[In, Out](collector)
 }
 
 func TestLogger_LogsSuccessfulProcessing(t *testing.T) {
@@ -72,7 +79,7 @@ func TestLogger_LogsSuccessfulProcessing(t *testing.T) {
 	)
 
 	// Apply logger middleware with default config
-	processor := useLogger[string, string](&LogConfig{})(baseProcessor)
+	processor := useLogger[string, string](LogConfig{})(baseProcessor)
 
 	// Process an item - should succeed and log
 	_, err := processor.Process(context.Background(), "test-input")
@@ -112,7 +119,7 @@ func TestLogger_LogsFailure(t *testing.T) {
 	)
 
 	// Apply logger middleware with default config
-	processor := useLogger[string, string](&LogConfig{})(baseProcessor)
+	processor := useLogger[string, string](LogConfig{})(baseProcessor)
 
 	// Process an item - should fail and log
 	_, err := processor.Process(context.Background(), "test-input")
@@ -179,7 +186,7 @@ func TestLogger_CustomLogLevels(t *testing.T) {
 	)
 
 	// Apply logger middleware with custom config
-	processor := useLogger[string, string](&config)(baseProcessor)
+	processor := useLogger[string, string](config)(baseProcessor)
 
 	// Process an item successfully
 	_, err := processor.Process(context.Background(), "test-input")
@@ -224,7 +231,7 @@ func TestLogger_CustomMessages(t *testing.T) {
 	)
 
 	// Apply logger middleware with custom config
-	processor := useLogger[string, string](&config)(baseProcessor)
+	processor := useLogger[string, string](config)(baseProcessor)
 
 	// Test success
 	_, err := processor.Process(context.Background(), "success")
@@ -301,7 +308,7 @@ func TestLogger_WithRetry(t *testing.T) {
 			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 			MaxAttempts: 5,
 		}),
-		WithLogConfig[string, string](&LogConfig{}),
+		WithLogConfig[string, string](LogConfig{}),
 	)
 
 	// Create input channel
@@ -391,7 +398,7 @@ func TestLogger_WithRetry(t *testing.T) {
 			Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
 			MaxAttempts: 2,
 		}),
-		WithLogConfig[string, string](&LogConfig{}),
+		WithLogConfig[string, string](LogConfig{}),
 	)
 
 	// Create input channel
@@ -452,5 +459,249 @@ func TestLogger_WithRetry(t *testing.T) {
 	}
 	if !foundFailRetryAttempts {
 		t.Error("expected retry_attempts in failure log")
+	}
+}
+
+func TestLogger_DisabledPerPipeInstance(t *testing.T) {
+	logger := &mockLogger{}
+	SetDefaultLogger(logger)
+
+	// Create a pipe with Disabled explicitly set to true
+	pipe := NewProcessPipe(
+		func(ctx context.Context, in string) ([]string, error) {
+			return []string{in + "-processed"}, nil
+		},
+		WithLogConfig[string, string](LogConfig{Disabled: true}),
+	)
+
+	// Create input channel
+	in := make(chan string, 1)
+	in <- "test-input"
+	close(in)
+
+	// Start the pipe
+	out := pipe.Start(context.Background(), in)
+
+	// Collect results
+	var results []string
+	for val := range out {
+		results = append(results, val)
+	}
+
+	// Should succeed
+	if len(results) != 1 || results[0] != "test-input-processed" {
+		t.Errorf("Expected result [test-input-processed], got %v", results)
+	}
+
+	// Check that no logs were generated
+	logger.mu.Lock()
+	debugCallsLen := len(logger.debugCalls)
+	infoCallsLen := len(logger.infoCalls)
+	warnCallsLen := len(logger.warnCalls)
+	errorCallsLen := len(logger.errorCalls)
+	logger.mu.Unlock()
+
+	if debugCallsLen != 0 {
+		t.Errorf("Expected 0 debug logs when disabled, got %d", debugCallsLen)
+	}
+	if infoCallsLen != 0 {
+		t.Errorf("Expected 0 info logs when disabled, got %d", infoCallsLen)
+	}
+	if warnCallsLen != 0 {
+		t.Errorf("Expected 0 warn logs when disabled, got %d", warnCallsLen)
+	}
+	if errorCallsLen != 0 {
+		t.Errorf("Expected 0 error logs when disabled, got %d", errorCallsLen)
+	}
+
+	// Test with failure too
+	logger.reset()
+	testError := errors.New("processing failed")
+
+	failPipe := NewProcessPipe(
+		func(ctx context.Context, in string) ([]string, error) {
+			return nil, testError
+		},
+		WithLogConfig[string, string](LogConfig{Disabled: true}),
+	)
+
+	// Create input channel
+	failIn := make(chan string, 1)
+	failIn <- "test-input"
+	close(failIn)
+
+	// Start the pipe
+	failOut := failPipe.Start(context.Background(), failIn)
+
+	// Collect results (should be empty due to failure)
+	var failResults []string
+	for val := range failOut {
+		failResults = append(failResults, val)
+	}
+
+	// Should have no results due to failure
+	if len(failResults) != 0 {
+		t.Errorf("Expected no results due to failure, got %v", failResults)
+	}
+
+	// Check that no logs were generated even for failure
+	logger.mu.Lock()
+	errorCallsLen = len(logger.errorCalls)
+	logger.mu.Unlock()
+
+	if errorCallsLen != 0 {
+		t.Errorf("Expected 0 error logs when disabled, got %d", errorCallsLen)
+	}
+}
+
+func TestLogger_DisabledByDefault(t *testing.T) {
+	logger := &mockLogger{}
+	SetDefaultLogger(logger)
+
+	// Store original default config to restore later
+	originalConfig := defaultLogConfig
+	defer func() {
+		SetDefaultLogConfig(originalConfig)
+	}()
+
+	// Set default config with Disabled = true
+	SetDefaultLogConfig(LogConfig{Disabled: true})
+
+	// Create a pipe without explicit log config (should use disabled default)
+	pipe := NewProcessPipe(
+		func(ctx context.Context, in string) ([]string, error) {
+			return []string{in + "-processed"}, nil
+		},
+		// No WithLogConfig option, so it should use the default
+	)
+
+	// Create input channel
+	in := make(chan string, 1)
+	in <- "test-input"
+	close(in)
+
+	// Start the pipe
+	out := pipe.Start(context.Background(), in)
+
+	// Collect results
+	var results []string
+	for val := range out {
+		results = append(results, val)
+	}
+
+	// Should succeed
+	if len(results) != 1 || results[0] != "test-input-processed" {
+		t.Errorf("Expected result [test-input-processed], got %v", results)
+	}
+
+	// Check that no logs were generated
+	logger.mu.Lock()
+	debugCallsLen := len(logger.debugCalls)
+	infoCallsLen := len(logger.infoCalls)
+	warnCallsLen := len(logger.warnCalls)
+	errorCallsLen := len(logger.errorCalls)
+	logger.mu.Unlock()
+
+	if debugCallsLen != 0 {
+		t.Errorf("Expected 0 debug logs when disabled by default, got %d", debugCallsLen)
+	}
+	if infoCallsLen != 0 {
+		t.Errorf("Expected 0 info logs when disabled by default, got %d", infoCallsLen)
+	}
+	if warnCallsLen != 0 {
+		t.Errorf("Expected 0 warn logs when disabled by default, got %d", warnCallsLen)
+	}
+	if errorCallsLen != 0 {
+		t.Errorf("Expected 0 error logs when disabled by default, got %d", errorCallsLen)
+	}
+
+	// Test with failure too
+	logger.reset()
+	testError := errors.New("processing failed")
+
+	failPipe := NewProcessPipe(
+		func(ctx context.Context, in string) ([]string, error) {
+			return nil, testError
+		},
+		// No WithLogConfig option, so it should use the disabled default
+	)
+
+	// Create input channel
+	failIn := make(chan string, 1)
+	failIn <- "test-input"
+	close(failIn)
+
+	// Start the pipe
+	failOut := failPipe.Start(context.Background(), failIn)
+
+	// Collect results (should be empty due to failure)
+	var failResults []string
+	for val := range failOut {
+		failResults = append(failResults, val)
+	}
+
+	// Should have no results due to failure
+	if len(failResults) != 0 {
+		t.Errorf("Expected no results due to failure, got %v", failResults)
+	}
+
+	// Check that no logs were generated even for failure
+	logger.mu.Lock()
+	errorCallsLen = len(logger.errorCalls)
+	logger.mu.Unlock()
+
+	if errorCallsLen != 0 {
+		t.Errorf("Expected 0 error logs when disabled by default, got %d", errorCallsLen)
+	}
+}
+
+func TestLogger_DisabledByDefaultButEnabledPerPipe(t *testing.T) {
+	logger := &mockLogger{}
+	SetDefaultLogger(logger)
+
+	// Store original default config to restore later
+	originalConfig := defaultLogConfig
+	defer func() {
+		SetDefaultLogConfig(originalConfig)
+	}()
+
+	// Set default config with Disabled = true
+	SetDefaultLogConfig(LogConfig{Disabled: true})
+
+	// Create a pipe with Disabled explicitly set to false
+	// This should override the default disabled setting
+	pipe := NewProcessPipe(
+		func(ctx context.Context, in string) ([]string, error) {
+			return []string{in + "-processed"}, nil
+		},
+		WithLogConfig[string, string](LogConfig{Disabled: false}),
+	)
+
+	// Create input channel
+	in := make(chan string, 1)
+	in <- "test-input"
+	close(in)
+
+	// Start the pipe
+	out := pipe.Start(context.Background(), in)
+
+	// Collect results
+	var results []string
+	for val := range out {
+		results = append(results, val)
+	}
+
+	// Should succeed
+	if len(results) != 1 || results[0] != "test-input-processed" {
+		t.Errorf("Expected result [test-input-processed], got %v", results)
+	}
+
+	// Check that logs were generated (because we explicitly enabled logging for this pipe)
+	logger.mu.Lock()
+	debugCallsLen := len(logger.debugCalls)
+	logger.mu.Unlock()
+
+	if debugCallsLen != 1 {
+		t.Errorf("Expected 1 debug log when explicitly enabled, got %d", debugCallsLen)
 	}
 }

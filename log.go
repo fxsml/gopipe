@@ -70,16 +70,16 @@ type LogConfig struct {
 }
 
 // WithLogConfig overrides the default logger configuration for the pipe.
-func WithLogConfig[In, Out any](logConfig *LogConfig) Option[In, Out] {
+func WithLogConfig[In, Out any](logConfig LogConfig) Option[In, Out] {
 	return func(cfg *config[In, Out]) {
-		cfg.logConfig = logConfig
+		cfg.logConfig = &logConfig
 	}
 }
 
 // SetDefaultLogConfig sets the default logger configuration for all pipes.
 // May be overridden per-pipe using WithLoggerConfig.
-func SetDefaultLogConfig(config *LogConfig) {
-	defaultLogConfig = *config.parse()
+func SetDefaultLogConfig(config LogConfig) {
+	defaultLogConfig = config.parse()
 }
 
 // SetDefaultLogger sets the default logger for all pipes.
@@ -106,12 +106,7 @@ func parseLogLevel(level LogLevel) LogLevel {
 	return level
 }
 
-func (c *LogConfig) parse() *LogConfig {
-	if c == nil {
-		c = &LogConfig{
-			Disabled: defaultLogConfig.Disabled,
-		}
-	}
+func (c LogConfig) parse() LogConfig {
 	c.LevelSuccess = parseLogLevel(c.LevelSuccess)
 	if c.LevelSuccess == "" {
 		c.LevelSuccess = defaultLogConfig.LevelSuccess
@@ -168,7 +163,7 @@ func appendArgs(args ...[]any) []any {
 	return result
 }
 
-func newMetricsLogger(config *LogConfig) MetricsCollector {
+func newMetricsLogger(config LogConfig) MetricsCollector {
 	config = config.parse()
 	if config.Disabled {
 		return nil

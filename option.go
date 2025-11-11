@@ -44,7 +44,10 @@ func (c *config[In, Out]) apply(proc Processor[In, Out]) Processor[In, Out] {
 		proc = useContext[In, Out](c.timeout, c.contextPropagation)(proc)
 	}
 
-	if logger := newMetricsLogger(c.logConfig); logger != nil {
+	if c.logConfig == nil {
+		c.logConfig = &defaultLogConfig
+	}
+	if logger := newMetricsLogger(*c.logConfig); logger != nil {
 		c.metricsCollector = append(c.metricsCollector, logger)
 	}
 
