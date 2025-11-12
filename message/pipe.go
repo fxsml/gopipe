@@ -47,7 +47,7 @@ func NewProcessPipe[In, Out any](
 			// Create output messages from results
 			var messages []*Message[Out]
 			for _, result := range results {
-				messages = append(messages, NewMessage("", result))
+				messages = append(messages, NewMessage(generateID(), result))
 			}
 			return messages, nil
 		},

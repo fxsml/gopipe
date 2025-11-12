@@ -7,6 +7,14 @@ import (
 	"github.com/fxsml/gopipe"
 )
 
+var generateID = func() string {
+	return ""
+}
+
+func SetIDGenerator(gen func() string) {
+	generateID = gen
+}
+
 type ackType byte
 
 const (
@@ -81,4 +89,12 @@ func (m *Message[T]) Nack(err error) bool {
 	m.nack(err)
 	m.ackType = ackTypeNack
 	return true
+}
+
+func CopyMessage[In, Out any](msg *Message[In], payload Out) *Message[Out] {
+	msgOut := NewMessageWithAck(msg.ID, payload, msg.ack, msg.nack)
+	msgOut.Metadata = msg.Metadata
+	msgOut.deadline = msg.deadline
+	msgOut.ackType = msg.ackType
+	return msgOut
 }
