@@ -187,25 +187,25 @@ func newMetricsLogger(config *LogConfig) MetricsCollector {
 		}
 		if metrics.Error == nil {
 			logSuccess(config.MessageSuccess,
-				appendArgs(config.Args, metrics.Metadata.Args(), []any{"duration", metrics.Duration}, retryArgs)...)
+				appendArgs(config.Args, metrics.Metadata.args(), []any{"duration", metrics.Duration}, retryArgs)...)
 			return
 		}
 		if errors.Is(metrics.Error, ErrCancel) {
 			logCancel(config.MessageCancel,
-				appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error})...)
+				appendArgs(config.Args, metrics.Metadata.args(), []any{"error", metrics.Error})...)
 			return
 		}
 		if metrics.RetryState != nil && metrics.RetryState.Err != nil {
 			logFailure(config.MessageFailure,
-				appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error}, retryArgs)...)
+				appendArgs(config.Args, metrics.Metadata.args(), []any{"error", metrics.Error}, retryArgs)...)
 			return
 		}
 		if metrics.RetryState != nil {
 			logRetry(config.MessageRetry,
-				appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error, "duration", metrics.Duration}, retryArgs)...)
+				appendArgs(config.Args, metrics.Metadata.args(), []any{"error", metrics.Error, "duration", metrics.Duration}, retryArgs)...)
 			return
 		}
 		logFailure(config.MessageFailure,
-			appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error, "duration", metrics.Duration}, retryArgs)...)
+			appendArgs(config.Args, metrics.Metadata.args(), []any{"error", metrics.Error, "duration", metrics.Duration}, retryArgs)...)
 	}
 }

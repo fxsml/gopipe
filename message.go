@@ -2,6 +2,7 @@ package gopipe
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"time"
 )
@@ -120,8 +121,8 @@ func NewMessagePipe[In, Out any](
 			msg.Nack(err)
 		}),
 		WithMetadataProvider[*Message[In], *Message[Out]](
-			func(msg *Message[In]) Metadata {
-				return msg.Metadata
+			func(msg *Message[In], metadata Metadata) {
+				maps.Copy(metadata, msg.Metadata)
 			},
 		),
 	}, opts...)

@@ -3,25 +3,14 @@ package gopipe
 import (
 	"context"
 	"errors"
-	"maps"
 )
 
 // Metadata is a key-value store for additional information about pipeline items.
 type Metadata map[string]any
 
-// Args converts the metadata map into a slice of alternating keys and values,
-// suitable for use with structured logging systems like slog.
-func (m Metadata) Args() []any {
-	args := make([]any, 0, len(m)*2)
-	for k, v := range m {
-		args = append(args, k, v)
-	}
-	return args
-}
-
 // MetadataProvider is a function that provides Metadata for a processing context.
 // It may extract information from the input value.
-type MetadataProvider[In any] func(in In) Metadata
+type MetadataProvider[In any] func(in In, metadata Metadata)
 
 // MetadataFromContext extracts metadata from a context.
 // Returns nil if no metadata is present.
@@ -58,6 +47,14 @@ func WithMetadataProvider[In, Out any](provider MetadataProvider[In]) Option[In,
 	}
 }
 
+func (m Metadata) args() []any {
+	args := make([]any, 0, len(m)*2)
+	for k, v := range m {
+		args = append(args, k, v)
+	}
+	return args
+}
+
 type metadataKeyType struct{}
 
 var metadataKey = metadataKeyType{}
@@ -88,20 +85,18 @@ func useMetadata[In, Out any](m MetadataProvider[In]) MiddlewareFunc[In, Out] {
 			func(ctx context.Context, in In) ([]Out, error) {
 				metadata := MetadataFromContext(ctx)
 				if metadata == nil {
-					metadata = m(in)
-				} else {
-					maps.Copy(metadata, m(in))
+					metadata = make(Metadata)
 				}
+				m(in, metadata)
 				ctx = context.WithValue(ctx, metadataKey, metadata)
 				return next.Process(ctx, in)
 			},
 			func(in In, err error) {
 				metadata := MetadataFromError(err)
 				if metadata == nil {
-					metadata = m(in)
-				} else {
-					maps.Copy(metadata, m(in))
+					metadata = make(Metadata)
 				}
+				m(in, metadata)
 				err = newMetadataErrorWrapper(err, metadata)
 				next.Cancel(in, err)
 			})
