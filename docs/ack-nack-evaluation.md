@@ -6,7 +6,7 @@ This document evaluates the ack/nack pattern introduced in the `message` package
 
 ## Current Implementation
 
-### Message Structure (message/message.go)
+### Message Structure (message/gopipe.go)
 
 The `Message[T]` type wraps a payload with acknowledgment capabilities:
 
@@ -96,7 +96,7 @@ handle := func(ctx context.Context, data Data) (Result, error) {
 
 ### Option 1: Integrate with Cancel Method (RECOMMENDED)
 
-Update `message.NewProcessPipe` to use `WithCancel` option:
+Update `gopipe.NewProcessPipe` to use `WithCancel` option:
 
 ```go
 func NewProcessPipe[In, Out any](

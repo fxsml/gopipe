@@ -8,7 +8,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe"
 )
 
 // simulateMessageBroker demonstrates how a message broker would use ack/nack
@@ -33,12 +33,12 @@ func simulateMessageBroker() {
 	nacked := make(map[string]error)
 
 	// Create input channel
-	in := make(chan *message.Message[int], len(messages))
+	in := make(chan *gopipe.Message[int], len(messages))
 
 	// Enqueue messages with ack/nack handlers
 	for _, msg := range messages {
 		id := msg.id
-		in <- message.NewMessageWithAck(
+		in <- gopipe.NewMessageWithAck(
 			id,
 			msg.payload,
 			func() {
@@ -54,7 +54,7 @@ func simulateMessageBroker() {
 	close(in)
 
 	// Create processing pipe with business logic
-	pipe := message.NewProcessPipe(
+	pipe := gopipe.NewProcessPipe(
 		func(ctx context.Context, value int) ([]int, error) {
 			// Simulate processing
 			time.Sleep(10 * time.Millisecond)
@@ -105,7 +105,7 @@ func demonstrateDeadline() {
 	var status string
 
 	// Create a message with a short deadline
-	msg := message.NewMessageWithAck(
+	msg := gopipe.NewMessageWithAck(
 		"timeout-msg",
 		42,
 		func() {
@@ -118,12 +118,12 @@ func demonstrateDeadline() {
 	msg.SetTimeout(50 * time.Millisecond)
 
 	// Create input channel
-	in := make(chan *message.Message[int], 1)
+	in := make(chan *gopipe.Message[int], 1)
 	in <- msg
 	close(in)
 
 	// Create pipe with slow processing
-	pipe := message.NewProcessPipe(
+	pipe := gopipe.NewProcessPipe(
 		func(ctx context.Context, value int) ([]int, error) {
 			fmt.Println("Starting slow processing...")
 
@@ -164,13 +164,13 @@ func demonstrateNoAckNack() {
 	fmt.Println()
 
 	// Create message without ack/nack
-	in := make(chan *message.Message[string], 2)
-	in <- message.NewMessage("1", "hello")
-	in <- message.NewMessage("2", "world")
+	in := make(chan *gopipe.Message[string], 2)
+	in <- gopipe.NewMessage("1", "hello")
+	in <- gopipe.NewMessage("2", "world")
 	close(in)
 
 	// Create pipe
-	pipe := message.NewProcessPipe(
+	pipe := gopipe.NewProcessPipe(
 		func(ctx context.Context, value string) ([]string, error) {
 			return []string{value + "!"}, nil
 		},

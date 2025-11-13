@@ -1,4 +1,4 @@
-package message_test
+package gopipe
 
 import (
 	"context"
@@ -6,12 +6,9 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/fxsml/gopipe"
-	"github.com/fxsml/gopipe/message"
 )
 
-func TestNewProcessPipe_AutomaticAck(t *testing.T) {
+func TestNewMessagePipe_AutomaticAck(t *testing.T) {
 	t.Parallel()
 
 	// Track ack/nack calls
@@ -34,10 +31,10 @@ func TestNewProcessPipe_AutomaticAck(t *testing.T) {
 	}
 
 	// Create a message with ack/nack handlers
-	msg := message.NewMessageWithAck("test-1", 42, ackFunc, nackFunc)
+	msg := NewMessageWithAck("test-1", 42, ackFunc, nackFunc)
 
 	// Create a pipe that processes successfully
-	pipe := message.NewProcessPipe(
+	pipe := NewMessagePipe(
 		func(ctx context.Context, value int) ([]int, error) {
 			return []int{value * 2}, nil
 		},
@@ -47,14 +44,14 @@ func TestNewProcessPipe_AutomaticAck(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	in := make(chan *message.Message[int], 1)
+	in := make(chan *Message[int], 1)
 	in <- msg
 	close(in)
 
 	out := pipe.Start(ctx, in)
 
 	// Collect results
-	var results []*message.Message[int]
+	var results []*Message[int]
 	for result := range out {
 		results = append(results, result)
 	}
@@ -80,7 +77,7 @@ func TestNewProcessPipe_AutomaticAck(t *testing.T) {
 	}
 }
 
-func TestNewProcessPipe_AutomaticNack(t *testing.T) {
+func TestNewMessagePipe_AutomaticNack(t *testing.T) {
 	t.Parallel()
 
 	// Track ack/nack calls
@@ -105,13 +102,13 @@ func TestNewProcessPipe_AutomaticNack(t *testing.T) {
 	}
 
 	// Create a message with ack/nack handlers
-	msg := message.NewMessageWithAck("test-2", 42, ackFunc, nackFunc)
+	msg := NewMessageWithAck("test-2", 42, ackFunc, nackFunc)
 
 	// Error to return
 	testErr := errors.New("processing failed")
 
 	// Create a pipe that fails
-	pipe := message.NewProcessPipe(
+	pipe := NewMessagePipe(
 		func(ctx context.Context, value int) ([]int, error) {
 			return nil, testErr
 		},
@@ -121,14 +118,14 @@ func TestNewProcessPipe_AutomaticNack(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	in := make(chan *message.Message[int], 1)
+	in := make(chan *Message[int], 1)
 	in <- msg
 	close(in)
 
 	out := pipe.Start(ctx, in)
 
 	// Drain results (should be empty)
-	var results []*message.Message[int]
+	var results []*Message[int]
 	for result := range out {
 		results = append(results, result)
 	}
@@ -156,9 +153,9 @@ func TestNewProcessPipe_AutomaticNack(t *testing.T) {
 		t.Error("Expected nack to receive an error")
 	}
 
-	// The error should be wrapped in a gopipe.ErrFailure
-	if !errors.Is(nackErr, gopipe.ErrFailure) {
-		t.Errorf("Expected error to wrap gopipe.ErrFailure, got: %v", nackErr)
+	// The error should be wrapped in a ErrFailure
+	if !errors.Is(nackErr, ErrFailure) {
+		t.Errorf("Expected error to wrap ErrFailure, got: %v", nackErr)
 	}
 
 	// The underlying cause should be our test error
@@ -167,7 +164,7 @@ func TestNewProcessPipe_AutomaticNack(t *testing.T) {
 	}
 }
 
-func TestNewProcessPipe_NackOnContextCancellation(t *testing.T) {
+func TestNewMessagePipe_NackOnContextCancellation(t *testing.T) {
 	t.Parallel()
 
 	// Track ack/nack calls
@@ -192,10 +189,10 @@ func TestNewProcessPipe_NackOnContextCancellation(t *testing.T) {
 	}
 
 	// Create a message with ack/nack handlers
-	msg := message.NewMessageWithAck("test-3", 42, ackFunc, nackFunc)
+	msg := NewMessageWithAck("test-3", 42, ackFunc, nackFunc)
 
 	// Create a pipe with a slow handler
-	pipe := message.NewProcessPipe(
+	pipe := NewMessagePipe(
 		func(ctx context.Context, value int) ([]int, error) {
 			// Simulate slow processing
 			select {
@@ -210,7 +207,7 @@ func TestNewProcessPipe_NackOnContextCancellation(t *testing.T) {
 	// Process the message with immediate cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 
-	in := make(chan *message.Message[int], 1)
+	in := make(chan *Message[int], 1)
 	in <- msg
 	close(in)
 
@@ -220,7 +217,7 @@ func TestNewProcessPipe_NackOnContextCancellation(t *testing.T) {
 	cancel()
 
 	// Drain results
-	var results []*message.Message[int]
+	var results []*Message[int]
 	for result := range out {
 		results = append(results, result)
 	}
@@ -245,19 +242,19 @@ func TestNewProcessPipe_NackOnContextCancellation(t *testing.T) {
 	}
 
 	// The error should be related to context cancellation
-	if !errors.Is(nackErr, context.Canceled) && !errors.Is(nackErr, gopipe.ErrCancel) {
-		t.Errorf("Expected error to be context.Canceled or gopipe.ErrCancel, got: %v", nackErr)
+	if !errors.Is(nackErr, context.Canceled) && !errors.Is(nackErr, ErrCancel) {
+		t.Errorf("Expected error to be context.Canceled or ErrCancel, got: %v", nackErr)
 	}
 }
 
-func TestNewProcessPipe_NoAckNackWhenNotProvided(t *testing.T) {
+func TestNewMessagePipe_NoAckNackWhenNotProvided(t *testing.T) {
 	t.Parallel()
 
 	// Create a message WITHOUT ack/nack handlers
-	msg := message.NewMessage("test-4", 42)
+	msg := NewMessage("test-4", 42)
 
 	// Create a pipe that processes successfully
-	pipe := message.NewProcessPipe(
+	pipe := NewMessagePipe(
 		func(ctx context.Context, value int) ([]int, error) {
 			return []int{value * 2}, nil
 		},
@@ -267,14 +264,14 @@ func TestNewProcessPipe_NoAckNackWhenNotProvided(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	in := make(chan *message.Message[int], 1)
+	in := make(chan *Message[int], 1)
 	in <- msg
 	close(in)
 
 	out := pipe.Start(ctx, in)
 
 	// Collect results - should work fine even without ack/nack
-	var results []*message.Message[int]
+	var results []*Message[int]
 	for result := range out {
 		results = append(results, result)
 	}
@@ -288,7 +285,7 @@ func TestNewProcessPipe_NoAckNackWhenNotProvided(t *testing.T) {
 	}
 }
 
-func TestNewProcessPipe_MessageDeadline(t *testing.T) {
+func TestNewMessagePipe_MessageDeadline(t *testing.T) {
 	t.Parallel()
 
 	// Track ack/nack calls
@@ -306,11 +303,11 @@ func TestNewProcessPipe_MessageDeadline(t *testing.T) {
 	}
 
 	// Create a message with a very short deadline
-	msg := message.NewMessageWithAck("test-5", 42, func() {}, nackFunc)
+	msg := NewMessageWithAck("test-5", 42, func() {}, nackFunc)
 	msg.SetTimeout(10 * time.Millisecond)
 
 	// Create a pipe with a slow handler
-	pipe := message.NewProcessPipe(
+	pipe := NewMessagePipe(
 		func(ctx context.Context, value int) ([]int, error) {
 			// Wait for context to be done
 			<-ctx.Done()
@@ -322,7 +319,7 @@ func TestNewProcessPipe_MessageDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	in := make(chan *message.Message[int], 1)
+	in := make(chan *Message[int], 1)
 	in <- msg
 	close(in)
 
