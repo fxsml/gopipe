@@ -689,3 +689,259 @@ func TestNewMessagePipe_MessageDeadline(t *testing.T) {
 		t.Errorf("Expected error to be context.DeadlineExceeded, got: %v", nackErr)
 	}
 }
+
+func TestNewMessagePipe_WithAdditionalCancel(t *testing.T) {
+	t.Parallel()
+
+	// Track both cancel functions
+	var (
+		msgNackCalled      bool
+		additionalCanceled bool
+		msgNackErr         error
+		additionalErr      error
+		mu                 sync.Mutex
+	)
+
+	msg := gopipe.NewMessage(
+		nil,
+		42,
+		time.Time{},
+		func() {},
+		func(err error) {
+			mu.Lock()
+			msgNackCalled = true
+			msgNackErr = err
+			mu.Unlock()
+		},
+	)
+
+	testErr := errors.New("processing failed")
+
+	// Create a pipe that fails with an additional cancel function
+	pipe := gopipe.NewMessagePipe(
+		func(ctx context.Context, value int) ([]int, error) {
+			return nil, testErr
+		},
+		gopipe.WithCancel[*gopipe.Message[int], *gopipe.Message[int]](
+			func(msg *gopipe.Message[int], err error) {
+				mu.Lock()
+				additionalCanceled = true
+				additionalErr = err
+				mu.Unlock()
+			},
+		),
+	)
+
+	// Process the message
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	in := make(chan *gopipe.Message[int], 1)
+	in <- msg
+	close(in)
+
+	out := pipe.Start(ctx, in)
+
+	// Drain results
+	for range out {
+	}
+
+	// Give time for cancel goroutines to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify both cancel functions were called
+	mu.Lock()
+	defer mu.Unlock()
+
+	if !msgNackCalled {
+		t.Error("Expected message nack to be called")
+	}
+
+	if !additionalCanceled {
+		t.Error("Expected additional cancel to be called")
+	}
+
+	if msgNackErr == nil {
+		t.Error("Expected message nack to receive an error")
+	}
+
+	if additionalErr == nil {
+		t.Error("Expected additional cancel to receive an error")
+	}
+
+	// Both should receive the same error
+	if !errors.Is(msgNackErr, testErr) {
+		t.Errorf("Expected message nack error to wrap test error, got: %v", msgNackErr)
+	}
+
+	if !errors.Is(additionalErr, testErr) {
+		t.Errorf("Expected additional cancel error to wrap test error, got: %v", additionalErr)
+	}
+}
+
+func TestNewMessagePipe_MultipleCancelsExecutionOrder(t *testing.T) {
+	t.Parallel()
+
+	// Track execution order
+	var (
+		callOrder []string
+		mu        sync.Mutex
+	)
+
+	msg := gopipe.NewMessage(
+		nil,
+		42,
+		time.Time{},
+		func() {},
+		func(err error) {
+			mu.Lock()
+			callOrder = append(callOrder, "message-nack")
+			mu.Unlock()
+		},
+	)
+
+	testErr := errors.New("processing failed")
+
+	// Create a pipe with multiple cancel functions
+	// The message nack is prepended first by NewMessagePipe
+	pipe := gopipe.NewMessagePipe(
+		func(ctx context.Context, value int) ([]int, error) {
+			return nil, testErr
+		},
+		gopipe.WithCancel[*gopipe.Message[int], *gopipe.Message[int]](
+			func(msg *gopipe.Message[int], err error) {
+				mu.Lock()
+				callOrder = append(callOrder, "cancel1")
+				mu.Unlock()
+			},
+		),
+		gopipe.WithCancel[*gopipe.Message[int], *gopipe.Message[int]](
+			func(msg *gopipe.Message[int], err error) {
+				mu.Lock()
+				callOrder = append(callOrder, "cancel2")
+				mu.Unlock()
+			},
+		),
+	)
+
+	// Process the message
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	in := make(chan *gopipe.Message[int], 1)
+	in <- msg
+	close(in)
+
+	out := pipe.Start(ctx, in)
+
+	// Drain results
+	for range out {
+	}
+
+	// Give time for cancel goroutines to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify execution order
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Expected order: cancel2, cancel1, message-nack (LIFO)
+	// NewMessagePipe prepends message-nack first, then user adds cancel1, cancel2
+	// Execution is reverse: cancel2, cancel1, message-nack
+	expectedOrder := []string{"cancel2", "cancel1", "message-nack"}
+
+	if len(callOrder) != len(expectedOrder) {
+		t.Errorf("Expected %d cancel calls, got %d: %v", len(expectedOrder), len(callOrder), callOrder)
+	}
+
+	for i, expected := range expectedOrder {
+		if i >= len(callOrder) {
+			t.Errorf("Missing call at position %d, expected %s", i, expected)
+			continue
+		}
+		if callOrder[i] != expected {
+			t.Errorf("Call order at position %d: expected %s, got %s", i, expected, callOrder[i])
+		}
+	}
+}
+
+func TestNewMessagePipe_MessageNackNotOverridden(t *testing.T) {
+	t.Parallel()
+
+	// Verify that adding WithCancel doesn't prevent message nack from being called
+	var (
+		msgNackCalled bool
+		msgNackErr    error
+		mu            sync.Mutex
+	)
+
+	msg := gopipe.NewMessage(
+		nil,
+		42,
+		time.Time{},
+		func() {},
+		func(err error) {
+			mu.Lock()
+			msgNackCalled = true
+			msgNackErr = err
+			mu.Unlock()
+		},
+	)
+
+	testErr := errors.New("test error")
+
+	// Create pipe with multiple cancel handlers
+	pipe := gopipe.NewMessagePipe(
+		func(ctx context.Context, value int) ([]int, error) {
+			return nil, testErr
+		},
+		gopipe.WithCancel[*gopipe.Message[int], *gopipe.Message[int]](
+			func(msg *gopipe.Message[int], err error) {
+				// Additional cancel handler
+			},
+		),
+		gopipe.WithCancel[*gopipe.Message[int], *gopipe.Message[int]](
+			func(msg *gopipe.Message[int], err error) {
+				// Another cancel handler
+			},
+		),
+		gopipe.WithCancel[*gopipe.Message[int], *gopipe.Message[int]](
+			func(msg *gopipe.Message[int], err error) {
+				// Yet another cancel handler
+			},
+		),
+	)
+
+	// Process the message
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	in := make(chan *gopipe.Message[int], 1)
+	in <- msg
+	close(in)
+
+	out := pipe.Start(ctx, in)
+
+	// Drain results
+	for range out {
+	}
+
+	// Give time for cancel goroutines to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify message nack was called despite multiple WithCancel options
+	mu.Lock()
+	defer mu.Unlock()
+
+	if !msgNackCalled {
+		t.Error("Expected message nack to be called even with multiple WithCancel options")
+	}
+
+	if msgNackErr == nil {
+		t.Error("Expected message nack to receive an error")
+	}
+
+	if !errors.Is(msgNackErr, testErr) {
+		t.Errorf("Expected message nack error to wrap test error, got: %v", msgNackErr)
+	}
+}
