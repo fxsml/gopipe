@@ -72,11 +72,10 @@ func WithBuffer[In, Out any](buffer int) Option[In, Out] {
 	}
 }
 
-// WithCancel provides a cancel function to the processor.
-// If set, this overrides any existing cancel function.
+// WithCancel provides an additional cancel function to the processor.
 func WithCancel[In, Out any](cancel func(In, error)) Option[In, Out] {
 	return func(cfg *config[In, Out]) {
-		cfg.cancel = cancel
+		cfg.cancel = append(cfg.cancel, cancel)
 	}
 }
 
