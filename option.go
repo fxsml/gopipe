@@ -12,7 +12,7 @@ type config[In, Out any] struct {
 	buffer             int
 	timeout            time.Duration
 	contextPropagation bool
-	cancel             CancelFunc[In]
+	cancel             []CancelFunc[In]
 
 	middleware       []MiddlewareFunc[In, Out]
 	metricsCollector []MetricsCollector
@@ -37,7 +37,13 @@ func parseConfig[In, Out any](opts []Option[In, Out]) config[In, Out] {
 
 func (c *config[In, Out]) apply(proc Processor[In, Out]) Processor[In, Out] {
 	if c.cancel != nil {
-		proc = NewProcessor(proc.Process, c.cancel)
+		originalCancel := proc.Cancel
+		proc = NewProcessor(proc.Process, func(in In, err error) {
+			for i := len(c.cancel) - 1; i >= 0; i-- {
+				c.cancel[i](in, err)
+			}
+			originalCancel(in, err)
+		})
 	}
 
 	if c.timeout > 0 || !c.contextPropagation {
