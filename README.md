@@ -14,6 +14,7 @@ Manual channel wiring in Go is error-prone and hard to scale for complex workflo
 - **Concurrency & Batching**: Easily parallelize and batch processing.
 - **Middleware & Logging**: Integrate custom middleware, logging, and metrics.
 - **Error Handling**: Robust error and panic recovery.
+- **Message Acknowledgment**: Automatic ack/nack for reliable message broker integration.
 - **Basic Channel Operations**: The `channel` package provides basic channel operations without abstraction overhead.
 - **Generic API**: Works with any data type (Go 1.18+).
 - **Zero Dependencies**: 100% Go, no external dependencies.
@@ -304,3 +305,51 @@ func main() {
 	})
 }
 ```
+
+### Message Acknowledgment for Reliable Processing
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/channel"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// Simulate message broker integration with ack/nack callbacks
+	msg := gopipe.NewMessage(
+		gopipe.Metadata{"source": "queue"},
+		42,
+		time.Now().Add(5*time.Second), // Process within 5 seconds
+		func() { fmt.Println("✓ Message acknowledged") },
+		func(err error) { fmt.Printf("✗ Message rejected: %v\n", err) },
+	)
+
+	// Create pipe with automatic acknowledgment
+	// On success: msg.Ack() called automatically
+	// On error: msg.Nack(err) called automatically
+	pipe := gopipe.NewMessagePipe(
+		func(ctx context.Context, value int) ([]int, error) {
+			return []int{value * 2}, nil
+		},
+		gopipe.WithBuffer[*gopipe.Message[int], *gopipe.Message[int]](10),
+	)
+
+	// Process message
+	in := channel.FromValues(msg)
+	results := pipe.Start(ctx, in)
+
+	// Consume results
+	<-channel.Sink(results, func(result *gopipe.Message[int]) {
+		fmt.Printf("Result: %d\n", result.Payload)
+	})
+}
+```
+
