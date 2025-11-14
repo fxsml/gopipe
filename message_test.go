@@ -13,20 +13,21 @@ import (
 func TestMessage_NewMessage(t *testing.T) {
 	t.Parallel()
 
-	metadata := gopipe.Metadata{"key": "value"}
+	properties := &gopipe.MessageProperties{}
+	properties.Set("key", "value")
 	deadline := time.Now().Add(1 * time.Hour)
 	var ackCalled, nackCalled bool
 
 	msg := gopipe.NewMessage(
-		metadata,
+		properties,
 		"payload",
 		deadline,
 		func() { ackCalled = true },
 		func(error) { nackCalled = true },
 	)
 
-	if msg.Metadata["key"] != "value" {
-		t.Errorf("Expected Metadata key='value', got %v", msg.Metadata["key"])
+	if val, ok := msg.Properties().Get("key"); !ok || val != "value" {
+		t.Errorf("Expected Metadata key='value', got %v", val)
 	}
 
 	if msg.Payload != "payload" {
@@ -334,12 +335,13 @@ func TestMessage_ConcurrentAckNack(t *testing.T) {
 func TestMessage_CopyMessage(t *testing.T) {
 	t.Parallel()
 
-	metadata := gopipe.Metadata{"key": "value"}
+	properties := &gopipe.MessageProperties{}
+	properties.Set("key", "value")
 	deadline := time.Now().Add(1 * time.Hour)
 	var ackCalled bool
 
 	original := gopipe.NewMessage(
-		metadata,
+		properties,
 		"original",
 		deadline,
 		func() { ackCalled = true },
@@ -353,8 +355,8 @@ func TestMessage_CopyMessage(t *testing.T) {
 		t.Errorf("Expected Payload 'copied', got %q", copy.Payload)
 	}
 
-	if copy.Metadata["key"] != "value" {
-		t.Errorf("Expected Metadata key='value', got %v", copy.Metadata["key"])
+	if val, ok := copy.Properties().Get("key"); !ok || val != "value" {
+		t.Errorf("Expected Metadata key='value', got %v", val)
 	}
 
 	if copy.Deadline() != deadline {
@@ -379,26 +381,25 @@ func TestMessage_CopyMessage(t *testing.T) {
 func TestMessage_Metadata(t *testing.T) {
 	t.Parallel()
 
-	metadata := gopipe.Metadata{
-		"key1": "value1",
-		"key2": 123,
+	properties := &gopipe.MessageProperties{}
+	properties.Set("key1", "value1")
+	properties.Set("key2", 123)
+
+	msg := gopipe.NewMessage(properties, 42, time.Time{}, nil, nil)
+
+	if val, ok := msg.Properties().Get("key1"); !ok || val != "value1" {
+		t.Errorf("Expected metadata key1='value1', got %v", val)
 	}
 
-	msg := gopipe.NewMessage(metadata, 42, time.Time{}, nil, nil)
-
-	if msg.Metadata["key1"] != "value1" {
-		t.Errorf("Expected metadata key1='value1', got %v", msg.Metadata["key1"])
-	}
-
-	if msg.Metadata["key2"] != 123 {
-		t.Errorf("Expected metadata key2=123, got %v", msg.Metadata["key2"])
+	if val, ok := msg.Properties().Get("key2"); !ok || val != 123 {
+		t.Errorf("Expected metadata key2=123, got %v", val)
 	}
 
 	// Modify metadata
-	msg.Metadata["key3"] = "value3"
+	msg.Properties().Set("key3", "value3")
 
-	if msg.Metadata["key3"] != "value3" {
-		t.Errorf("Expected metadata key3='value3', got %v", msg.Metadata["key3"])
+	if val, ok := msg.Properties().Get("key3"); !ok || val != "value3" {
+		t.Errorf("Expected metadata key3='value3', got %v", val)
 	}
 }
 
@@ -1231,8 +1232,10 @@ func TestMessage_MultiStageAcking_BroadcastScenario(t *testing.T) {
 	var ackCalled bool
 	var mu sync.Mutex
 
+	properties := &gopipe.MessageProperties{}
+	properties.Set("source", "broadcast")
 	msg := gopipe.NewMessage(
-		gopipe.Metadata{"source": "broadcast"},
+		properties,
 		"message",
 		time.Time{},
 		func() {
@@ -1299,8 +1302,10 @@ func TestMessage_MultiStageAcking_BroadcastWithOneFailure(t *testing.T) {
 	var ackCalled, nackCalled bool
 	var mu sync.Mutex
 
+	properties := &gopipe.MessageProperties{}
+	properties.Set("source", "broadcast")
 	msg := gopipe.NewMessage(
-		gopipe.Metadata{"source": "broadcast"},
+		properties,
 		"message",
 		time.Time{},
 		func() {
@@ -1359,5 +1364,59 @@ func TestMessage_MultiStageAcking_BroadcastWithOneFailure(t *testing.T) {
 
 	if ackCalled {
 		t.Error("Expected ack callback NOT to be called when one processor failed")
+	}
+}
+
+func TestMessageProperties_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
+
+	properties := &gopipe.MessageProperties{}
+	properties.Set("initial", "value")
+	msg := gopipe.NewMessage(
+		properties,
+		"payload",
+		time.Time{},
+		nil,
+		nil,
+	)
+
+	const numGoroutines = 100
+	const numOperations = 1000
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// Launch multiple goroutines performing concurrent reads and writes
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < numOperations; j++ {
+				// Concurrent writes
+				key := "key" + string(rune(id))
+				msg.Properties().Set(key, id*numOperations+j)
+
+				// Concurrent reads
+				msg.Properties().Get(key)
+
+				// Concurrent iteration
+				count := 0
+				msg.Properties().Range(func(k string, v any) bool {
+					count++
+					return true
+				})
+
+				// Concurrent deletes (occasionally)
+				if j%10 == 0 {
+					msg.Properties().Delete(key)
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify the message is still functional
+	if val, ok := msg.Properties().Get("initial"); !ok || val != "value" {
+		t.Errorf("Expected initial value to be preserved, got %v", val)
 	}
 }

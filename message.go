@@ -2,10 +2,49 @@ package gopipe
 
 import (
 	"context"
-	"maps"
 	"sync"
 	"time"
 )
+
+// MessageProperties provides thread-safe access to message properties using sync.Map.
+type MessageProperties struct {
+	m sync.Map
+}
+
+// Get retrieves a value from the properties.
+func (mp *MessageProperties) Get(key string) (any, bool) {
+	if mp == nil {
+		return nil, false
+	}
+	return mp.m.Load(key)
+}
+
+// Set stores a key-value pair in the properties.
+func (mp *MessageProperties) Set(key string, value any) {
+	if mp == nil {
+		return
+	}
+	mp.m.Store(key, value)
+}
+
+// Delete removes a key from the properties.
+func (mp *MessageProperties) Delete(key string) {
+	if mp == nil {
+		return
+	}
+	mp.m.Delete(key)
+}
+
+// Range iterates over all key-value pairs in the properties.
+// The iteration stops if f returns false.
+func (mp *MessageProperties) Range(f func(key string, value any) bool) {
+	if mp == nil {
+		return
+	}
+	mp.m.Range(func(k, v any) bool {
+		return f(k.(string), v)
+	})
+}
 
 type ackType byte
 
@@ -24,24 +63,28 @@ type acking struct {
 	expectedAckCount int
 }
 
-// Message wraps a payload with metadata, deadline, and acknowledgment callbacks.
+// Message wraps a payload with properties, deadline, and acknowledgment callbacks.
 // It provides thread-safe, mutually exclusive ack/nack operations for reliable message processing.
 // Once acknowledged (ack or nack), subsequent calls return the existing state without re-executing callbacks.
 type Message[T any] struct {
-	// Metadata contains additional contextual information about the message.
-	Metadata Metadata
 	// Payload is the actual message data.
 	Payload T
 
-	deadline time.Time
-	a        *acking
+	properties *MessageProperties
+	deadline   time.Time
+	a          *acking
 }
 
-// NewMessage creates a new message with the specified metadata, payload, deadline, and acknowledgment callbacks.
+// Properties returns the message properties for thread-safe access to properties.
+func (m *Message[T]) Properties() *MessageProperties {
+	return m.properties
+}
+
+// NewMessage creates a new message with the specified properties, payload, deadline, and acknowledgment callbacks.
 // The ack and nack callbacks are optional (can be nil) and will be called at most once when the message is acknowledged.
 // If deadline is non-zero, it will be enforced when processing the message through NewMessagePipe.
 func NewMessage[T any](
-	metadata Metadata,
+	properties *MessageProperties,
 	payload T,
 	deadline time.Time,
 	ack func(),
@@ -57,10 +100,10 @@ func NewMessage[T any](
 	}
 
 	return &Message[T]{
-		Metadata: metadata,
-		Payload:  payload,
-		deadline: deadline,
-		a:        a,
+		properties: properties,
+		Payload:    payload,
+		deadline:   deadline,
+		a:          a,
 	}
 }
 
@@ -141,14 +184,23 @@ func (m *Message[T]) Nack(err error) bool {
 }
 
 // CopyMessage creates a new message with a different payload type while preserving the original message's
-// metadata, deadline, and acknowledgment callbacks. This allows output messages to share the same
+// properties, deadline, and acknowledgment callbacks. This allows output messages to share the same
 // acknowledgment state as their input message. Thread-safe.
 func CopyMessage[In, Out any](msg *Message[In], payload Out) *Message[Out] {
+	// Create a new MessageProperties and copy all entries from the original
+	newProps := &MessageProperties{}
+	if msg.properties != nil {
+		msg.properties.Range(func(key string, value any) bool {
+			newProps.Set(key, value)
+			return true
+		})
+	}
+
 	return &Message[Out]{
-		Metadata: msg.Metadata,
-		Payload:  payload,
-		deadline: msg.deadline,
-		a:        msg.a,
+		properties: newProps,
+		Payload:    payload,
+		deadline:   msg.deadline,
+		a:          msg.a,
 	}
 }
 
@@ -165,14 +217,9 @@ func NewMessagePipe[In, Out any](
 		WithCancel[*Message[In], *Message[Out]](func(msg *Message[In], err error) {
 			msg.Nack(err)
 		}),
-		WithMetadataProvider[*Message[In], *Message[Out]](
-			func(msg *Message[In], metadata Metadata) {
-				maps.Copy(metadata, msg.Metadata)
-			},
-		),
 	}, opts...)
 
-	return NewProcessPipe(
+	proc := NewProcessor(
 		func(ctx context.Context, msg *Message[In]) ([]*Message[Out], error) {
 			if !msg.deadline.IsZero() {
 				var cancel context.CancelFunc
@@ -192,7 +239,7 @@ func NewMessagePipe[In, Out any](
 				messages = append(messages, CopyMessage(msg, result))
 			}
 			return messages, nil
-		},
-		opts...,
-	)
+		}, nil)
+
+	return newPipe(noopPreProcessorFunc[*Message[In]], proc, opts...)
 }
