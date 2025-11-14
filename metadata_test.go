@@ -9,11 +9,9 @@ import (
 
 func TestMetadata_AttachesToContext(t *testing.T) {
 	// Create metadata provider function
-	metadataFn := func(in string) Metadata {
-		return Metadata{
-			"request_id": "12345",
-			"input_len":  len(in),
-		}
+	metadataFn := func(in string, metadata Metadata) {
+		metadata["request_id"] = "12345"
+		metadata["input_len"] = len(in)
 	}
 
 	// Create a processor that checks for metadata in its context
@@ -57,11 +55,9 @@ func TestMetadata_AttachesToError(t *testing.T) {
 	testError := errors.New("processing error")
 
 	// Create metadata provider function
-	metadataFn := func(in string) Metadata {
-		return Metadata{
-			"request_id": "12345",
-			"input_len":  len(in),
-		}
+	metadataFn := func(in string, metadata Metadata) {
+		metadata["request_id"] = "12345"
+		metadata["input_len"] = len(in)
 	}
 
 	// Create a processor that captures the cancel call
@@ -114,12 +110,10 @@ func TestMetadata_AttachesToError(t *testing.T) {
 func TestMetadata_ErrorPassthrough(t *testing.T) {
 	// Create metadata provider function with tracking
 	metadataCalls := 0
-	metadataFn := func(in string) Metadata {
+	metadataFn := func(in string, metadata Metadata) {
 		metadataCalls++
-		return Metadata{
-			"request_id": "12345",
-			"input_len":  len(in),
-		}
+		metadata["request_id"] = "12345"
+		metadata["input_len"] = len(in)
 	}
 
 	// Create a processor that just passes errors to Cancel
@@ -186,7 +180,7 @@ func TestMetadataArgs_ConvertsToKeyValuePairs(t *testing.T) {
 	}
 
 	// Convert to args
-	args := metadata.Args()
+	args := metadata.args()
 
 	// The result should be a flattened key-value array
 	if len(args) != 6 {
