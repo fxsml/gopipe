@@ -3,6 +3,7 @@ package gopipe
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 // ProcessFunc is the function used by Processor.Process.
@@ -79,6 +80,15 @@ func WithCancel[In, Out any](cancel func(In, error)) Option[In, Out] {
 	}
 }
 
+// WithCleanup adds a cleanup function to be called when processing is complete.
+// If timeout is greater than zero, context will be canceled after the timeout duration.
+func WithCleanup[In, Out any](cleanup func(ctx context.Context), timeout time.Duration) Option[In, Out] {
+	return func(cfg *config[In, Out]) {
+		cfg.cleanup = cleanup
+		cfg.cleanupTimeout = timeout
+	}
+}
+
 // StartProcessor processes items from the input channel using the provided processor
 // and returns a channel that will receive the processed outputs.
 //
@@ -152,6 +162,17 @@ func startProcessor[In, Out any](
 		wgProcess.Wait()
 		cancel()
 		wgCancel.Wait()
+
+		if c.cleanup != nil {
+			cleanupCtx := context.Background()
+			if c.cleanupTimeout > 0 {
+				var cancel context.CancelFunc
+				cleanupCtx, cancel = context.WithTimeout(context.Background(), c.cleanupTimeout)
+				defer cancel()
+			}
+			c.cleanup(cleanupCtx)
+		}
+
 		close(out)
 	}()
 

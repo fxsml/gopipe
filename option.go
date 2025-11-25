@@ -1,6 +1,7 @@
 package gopipe
 
 import (
+	"context"
 	"time"
 )
 
@@ -13,6 +14,8 @@ type config[In, Out any] struct {
 	timeout            time.Duration
 	contextPropagation bool
 	cancel             []CancelFunc[In]
+	cleanup            func(context.Context)
+	cleanupTimeout     time.Duration
 
 	middleware       []MiddlewareFunc[In, Out]
 	metricsCollector []MetricsCollector

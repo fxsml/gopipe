@@ -43,6 +43,48 @@ func TestStartProcessor_Basic(t *testing.T) {
 	}
 }
 
+func TestStartProcessor_CleanupBeforeChannelClose(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	in := make(chan int, 1)
+	in <- 3
+	close(in)
+	cleanupStarted := make(chan struct{})
+	cleanupRelease := make(chan struct{})
+	cleanupDone := make(chan struct{})
+	cleanup := func(ctx context.Context) {
+		close(cleanupStarted)
+		<-cleanupRelease
+		close(cleanupDone)
+	}
+	proc := NewProcessor(
+		func(ctx context.Context, val int) ([]int, error) {
+			return []int{val * 4}, nil
+		},
+		func(val int, err error) {},
+	)
+	out := StartProcessor(ctx, in, proc, WithCleanup[int, int](cleanup, 0))
+	outputClosed := make(chan struct{})
+	go func() {
+		for range out {
+		}
+		close(outputClosed)
+	}()
+	<-cleanupStarted
+	select {
+	case <-outputClosed:
+		t.Error("Output channel closed before cleanup finished")
+	default:
+	}
+	close(cleanupRelease)
+	<-cleanupDone
+	select {
+	case <-outputClosed:
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Output channel not closed after cleanup finished")
+	}
+}
+
 func TestStartProcessor_ErrorCallsCancel(t *testing.T) {
 	in := make(chan int)
 
