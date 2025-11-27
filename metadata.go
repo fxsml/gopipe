@@ -9,16 +9,6 @@ import (
 // Metadata is a key-value store for additional information about pipeline items.
 type Metadata map[string]any
 
-// Args converts the metadata map into a slice of alternating keys and values,
-// suitable for use with structured logging systems like slog.
-func (m Metadata) Args() []any {
-	args := make([]any, 0, len(m)*2)
-	for k, v := range m {
-		args = append(args, k, v)
-	}
-	return args
-}
-
 // MetadataProvider is a function that provides Metadata for a processing context.
 // It may extract information from the input value.
 type MetadataProvider[In any] func(in In) Metadata
@@ -56,6 +46,14 @@ func WithMetadataProvider[In, Out any](provider MetadataProvider[In]) Option[In,
 	return func(cfg *config[In, Out]) {
 		cfg.metadataProvider = append(cfg.metadataProvider, useMetadata[In, Out](provider))
 	}
+}
+
+func (m Metadata) args() []any {
+	args := make([]any, 0, len(m)*2)
+	for k, v := range m {
+		args = append(args, k, v)
+	}
+	return args
 }
 
 type metadataKeyType struct{}

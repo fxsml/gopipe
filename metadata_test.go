@@ -186,7 +186,7 @@ func TestMetadataArgs_ConvertsToKeyValuePairs(t *testing.T) {
 	}
 
 	// Convert to args
-	args := metadata.Args()
+	args := metadata.args()
 
 	// The result should be a flattened key-value array
 	if len(args) != 6 {
