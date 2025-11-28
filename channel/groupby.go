@@ -13,44 +13,48 @@ type Group[K comparable, V any] struct {
 
 // GroupByConfig configures the GroupBy aggregator.
 type GroupByConfig struct {
+	// MaxBatchSize is the maximum number of items per batch for each group.
+	// When a group reaches this size, it is immediately flushed.
+	// Default is 100.
+	MaxBatchSize int
+
+	// MaxDuration is the maximum time to wait before flushing a group.
+	// A group is flushed when MaxDuration elapses since the first item was added.
+	// Default is 1 second.
+	MaxDuration time.Duration
+
 	// MaxConcurrentGroups limits the number of active groups.
-	// When exceeded, new groups will cause the oldest group to be flushed.
-	// Zero means no limit.
+	// When exceeded, new groups will cause the oldest group to be flushed (LRU eviction).
+	// Default is 0 (no limit).
 	MaxConcurrentGroups int
-
-	// FlushOnClose determines whether to flush partial batches when the input channel closes.
-	// Default is true.
-	FlushOnClose bool
 }
 
-// GroupByOption configures GroupBy behavior.
-type GroupByOption func(*GroupByConfig)
-
-// WithMaxConcurrentGroups limits the number of active groups.
-func WithMaxConcurrentGroups(max int) GroupByOption {
-	return func(c *GroupByConfig) {
-		c.MaxConcurrentGroups = max
+// applyDefaults returns a config with defaults applied for any zero-value fields.
+func (c GroupByConfig) applyDefaults() GroupByConfig {
+	if c.MaxBatchSize <= 0 {
+		c.MaxBatchSize = 100
 	}
-}
-
-// WithFlushOnClose controls whether partial batches are flushed when input closes.
-func WithFlushOnClose(flush bool) GroupByOption {
-	return func(c *GroupByConfig) {
-		c.FlushOnClose = flush
+	if c.MaxDuration <= 0 {
+		c.MaxDuration = time.Second
 	}
+	return c
 }
 
 // GroupBy groups items from the input channel by key and emits batches.
-// Each group accumulates items until maxBatchSize is reached or maxDuration elapses.
+// Each group accumulates items until MaxBatchSize is reached or MaxDuration elapses.
 //
 // The keyFunc extracts the grouping key from each item.
 // Items with the same key are batched together.
 //
 // Batches are emitted when:
-//   - A group reaches maxBatchSize items
-//   - maxDuration elapses since the first item in the group
-//   - The input channel closes (if FlushOnClose is true, default)
-//   - The context is canceled
+//   - A group reaches MaxBatchSize items
+//   - MaxDuration elapses since the first item in the group
+//   - The input channel closes (partial batches are flushed)
+//
+// Use GroupByConfig to configure batching behavior. Zero-value fields use defaults:
+//   - MaxBatchSize: 100
+//   - MaxDuration: 1 second
+//   - MaxConcurrentGroups: 0 (unlimited)
 //
 // Example - Topic-based routing:
 //
@@ -62,42 +66,45 @@ func WithFlushOnClose(flush bool) GroupByOption {
 //	batches := channel.GroupBy(
 //	    events,
 //	    func(e Event) string { return e.Topic },
-//	    100,              // max 100 events per topic batch
-//	    5*time.Second,    // or flush after 5 seconds
+//	    channel.GroupByConfig{
+//	        MaxBatchSize: 100,
+//	        MaxDuration:  5 * time.Second,
+//	    },
 //	)
 //
 //	for batch := range batches {
-//	    publisher.Publish(batch.Key, batch.Items) // Publish to topic
+//	    publisher.Publish(batch.Key, batch.Items)
 //	}
 //
-// Example - Multi-tenant processing:
+// Example - Multi-tenant processing with defaults:
 //
 //	batches := channel.GroupBy(
 //	    requests,
 //	    func(r Request) string { return r.TenantID },
-//	    50,
-//	    time.Second,
-//	    channel.WithMaxConcurrentGroups(1000),
+//	    channel.GroupByConfig{
+//	        MaxConcurrentGroups: 1000,
+//	    },
+//	)
+//
+// Example - Using all defaults:
+//
+//	batches := channel.GroupBy(
+//	    events,
+//	    func(e Event) string { return e.Topic },
+//	    channel.GroupByConfig{},
 //	)
 func GroupBy[V any, K comparable](
 	in <-chan V,
 	keyFunc func(V) K,
-	maxBatchSize int,
-	maxDuration time.Duration,
-	opts ...GroupByOption,
+	config GroupByConfig,
 ) <-chan Group[K, V] {
-	config := GroupByConfig{
-		FlushOnClose: true,
-	}
-	for _, opt := range opts {
-		opt(&config)
-	}
+	config = config.applyDefaults()
 
 	out := make(chan Group[K, V])
 
 	go func() {
 		defer close(out)
-		groupBy(in, out, keyFunc, maxBatchSize, maxDuration, config)
+		groupBy(in, out, keyFunc, config)
 	}()
 
 	return out
@@ -114,12 +121,12 @@ type groupAccumulator[K comparable, V any] struct {
 // newGroupAccumulator creates a new accumulator for a group.
 func newGroupAccumulator[K comparable, V any](
 	key K,
-	maxBatchSize int,
+	config GroupByConfig,
 ) *groupAccumulator[K, V] {
 	return &groupAccumulator[K, V]{
 		key:          key,
-		items:        make([]V, 0, maxBatchSize),
-		maxBatchSize: maxBatchSize,
+		items:        make([]V, 0, config.MaxBatchSize),
+		maxBatchSize: config.MaxBatchSize,
 	}
 }
 
@@ -144,8 +151,6 @@ func groupBy[V any, K comparable](
 	in <-chan V,
 	out chan<- Group[K, V],
 	keyFunc func(V) K,
-	maxBatchSize int,
-	maxDuration time.Duration,
 	config GroupByConfig,
 ) {
 	groups := make(map[K]*groupAccumulator[K, V])
@@ -186,7 +191,7 @@ func groupBy[V any, K comparable](
 			evictOldest()
 		}
 
-		acc := newGroupAccumulator[K, V](key, maxBatchSize)
+		acc := newGroupAccumulator[K, V](key, config)
 		groups[key] = acc
 		groupOrder = append(groupOrder, key)
 		return acc
@@ -195,19 +200,17 @@ func groupBy[V any, K comparable](
 	// flushAll flushes all groups and cleans up.
 	flushAll := func() {
 		for key, acc := range groups {
-			if config.FlushOnClose {
-				emit(key, acc.items)
-			}
+			emit(key, acc.items)
 		}
 		groups = make(map[K]*groupAccumulator[K, V])
 		groupOrder = nil
 	}
 
-	// checkExpiredGroups flushes groups that have exceeded maxDuration.
+	// checkExpiredGroups flushes groups that have exceeded MaxDuration.
 	checkExpiredGroups := func() {
 		now := time.Now()
 		for key, acc := range groups {
-			if len(acc.items) > 0 && now.Sub(acc.firstItemAt) >= maxDuration {
+			if len(acc.items) > 0 && now.Sub(acc.firstItemAt) >= config.MaxDuration {
 				items := acc.flush()
 				emit(key, items)
 			}
@@ -215,7 +218,7 @@ func groupBy[V any, K comparable](
 	}
 
 	// Start a goroutine to periodically check for expired groups
-	ticker := time.NewTicker(maxDuration / 10)
+	ticker := time.NewTicker(config.MaxDuration / 10)
 	defer ticker.Stop()
 
 	done := make(chan struct{})

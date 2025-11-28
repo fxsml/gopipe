@@ -95,8 +95,10 @@ func main() {
 		func(msg *message.Message[Event]) string {
 			return msg.Payload().Topic
 		},
-		5,               // Max batch size per topic
-		200*time.Millisecond, // Max wait time
+		channel.GroupByConfig{
+			MaxBatchSize: 5,                    // Max batch size per topic
+			MaxDuration:  200 * time.Millisecond, // Max wait time
+		},
 	)
 
 	// Publish batches to their respective topics
