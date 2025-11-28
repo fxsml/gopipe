@@ -17,8 +17,10 @@ func TestGroupBy_BasicGrouping(t *testing.T) {
 	batches := channel.GroupBy(
 		in,
 		func(e testEvent) string { return e.topic },
-		10,
-		time.Hour, // Long duration to test size-based batching
+		channel.GroupByConfig{
+			MaxBatchSize: 10,
+			MaxDuration:  time.Hour, // Long duration to test size-based batching
+		},
 	)
 
 	// Send events for two topics
@@ -61,8 +63,10 @@ func TestGroupBy_SizeBasedBatching(t *testing.T) {
 	batches := channel.GroupBy(
 		in,
 		func(e testEvent) string { return e.topic },
-		3, // Batch size of 3
-		time.Hour,
+		channel.GroupByConfig{
+			MaxBatchSize: 3, // Batch size of 3
+			MaxDuration:  time.Hour,
+		},
 	)
 
 	// Send events that should trigger size-based batching
@@ -100,8 +104,10 @@ func TestGroupBy_TimeBasedBatching(t *testing.T) {
 	batches := channel.GroupBy(
 		in,
 		func(e testEvent) string { return e.topic },
-		100,              // Large batch size
-		100*time.Millisecond, // Short duration
+		channel.GroupByConfig{
+			MaxBatchSize: 100,                  // Large batch size
+			MaxDuration:  100 * time.Millisecond, // Short duration
+		},
 	)
 
 	// Send a few events, then wait for time-based flush
@@ -135,8 +141,10 @@ func TestGroupBy_MultipleGroups(t *testing.T) {
 	batches := channel.GroupBy(
 		in,
 		func(e testEvent) string { return e.topic },
-		2, // Small batch size
-		time.Hour,
+		channel.GroupByConfig{
+			MaxBatchSize: 2, // Small batch size
+			MaxDuration:  time.Hour,
+		},
 	)
 
 	// Send events for multiple topics
@@ -169,9 +177,11 @@ func TestGroupBy_MaxConcurrentGroups(t *testing.T) {
 	batches := channel.GroupBy(
 		in,
 		func(e testEvent) string { return e.topic },
-		10,
-		time.Hour,
-		channel.WithMaxConcurrentGroups(2), // Limit to 2 concurrent groups
+		channel.GroupByConfig{
+			MaxBatchSize:        10,
+			MaxDuration:         time.Hour,
+			MaxConcurrentGroups: 2, // Limit to 2 concurrent groups
+		},
 	)
 
 	// Send events for 3 topics (exceeding the limit)
@@ -212,57 +222,30 @@ func TestGroupBy_MaxConcurrentGroups(t *testing.T) {
 }
 
 func TestGroupBy_FlushOnClose(t *testing.T) {
-	t.Run("FlushOnClose=true", func(t *testing.T) {
-		in := make(chan testEvent)
-		batches := channel.GroupBy(
-			in,
-			func(e testEvent) string { return e.topic },
-			10,
-			time.Hour,
-			channel.WithFlushOnClose(true),
-		)
+	in := make(chan testEvent)
+	batches := channel.GroupBy(
+		in,
+		func(e testEvent) string { return e.topic },
+		channel.GroupByConfig{
+			MaxBatchSize: 10,
+			MaxDuration:  time.Hour,
+		},
+	)
 
-		go func() {
-			defer close(in)
-			in <- testEvent{"topic-a", 1}
-			in <- testEvent{"topic-a", 2}
-		}()
+	go func() {
+		defer close(in)
+		in <- testEvent{"topic-a", 1}
+		in <- testEvent{"topic-a", 2}
+	}()
 
-		var count int
-		for batch := range batches {
-			count += len(batch.Items)
-		}
+	var count int
+	for batch := range batches {
+		count += len(batch.Items)
+	}
 
-		if count != 2 {
-			t.Errorf("Expected 2 items flushed on close, got %d", count)
-		}
-	})
-
-	t.Run("FlushOnClose=false", func(t *testing.T) {
-		in := make(chan testEvent)
-		batches := channel.GroupBy(
-			in,
-			func(e testEvent) string { return e.topic },
-			10,
-			time.Hour,
-			channel.WithFlushOnClose(false),
-		)
-
-		go func() {
-			defer close(in)
-			in <- testEvent{"topic-a", 1}
-			in <- testEvent{"topic-a", 2}
-		}()
-
-		var count int
-		for batch := range batches {
-			count += len(batch.Items)
-		}
-
-		if count != 0 {
-			t.Errorf("Expected 0 items with FlushOnClose=false, got %d", count)
-		}
-	})
+	if count != 2 {
+		t.Errorf("Expected 2 items flushed on close, got %d", count)
+	}
 }
 
 func TestGroupBy_EmptyChannel(t *testing.T) {
@@ -270,8 +253,10 @@ func TestGroupBy_EmptyChannel(t *testing.T) {
 	batches := channel.GroupBy(
 		in,
 		func(e testEvent) string { return e.topic },
-		10,
-		time.Hour,
+		channel.GroupByConfig{
+			MaxBatchSize: 10,
+			MaxDuration:  time.Hour,
+		},
 	)
 
 	close(in) // Close immediately
@@ -287,8 +272,10 @@ func TestGroupBy_SingleItem(t *testing.T) {
 	batches := channel.GroupBy(
 		in,
 		func(e testEvent) string { return e.topic },
-		10,
-		time.Hour,
+		channel.GroupByConfig{
+			MaxBatchSize: 10,
+			MaxDuration:  time.Hour,
+		},
 	)
 
 	go func() {
@@ -316,8 +303,10 @@ func TestGroupBy_IntegerKeys(t *testing.T) {
 	batches := channel.GroupBy(
 		in,
 		func(e numberEvent) int { return e.partition },
-		2,
-		time.Hour,
+		channel.GroupByConfig{
+			MaxBatchSize: 2,
+			MaxDuration:  time.Hour,
+		},
 	)
 
 	go func() {
@@ -343,8 +332,10 @@ func TestGroupBy_ConcurrentWrites(t *testing.T) {
 	batches := channel.GroupBy(
 		in,
 		func(e testEvent) string { return e.topic },
-		10,
-		time.Hour,
+		channel.GroupByConfig{
+			MaxBatchSize: 10,
+			MaxDuration:  time.Hour,
+		},
 	)
 
 	// Simulate concurrent writers
@@ -383,8 +374,10 @@ func BenchmarkGroupBy_ManyGroups(b *testing.B) {
 		batches := channel.GroupBy(
 			in,
 			func(e testEvent) string { return e.topic },
-			100,
-			time.Hour,
+			channel.GroupByConfig{
+				MaxBatchSize: 100,
+				MaxDuration:  time.Hour,
+			},
 		)
 
 		go func() {
@@ -407,8 +400,10 @@ func BenchmarkGroupBy_FewGroups(b *testing.B) {
 		batches := channel.GroupBy(
 			in,
 			func(e testEvent) string { return e.topic },
-			100,
-			time.Hour,
+			channel.GroupByConfig{
+				MaxBatchSize: 100,
+				MaxDuration:  time.Hour,
+			},
 		)
 
 		go func() {
