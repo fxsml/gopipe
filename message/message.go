@@ -1,7 +1,6 @@
 package message
 
 import (
-	"context"
 	"maps"
 	"sync"
 	"time"
@@ -24,10 +23,9 @@ type acking struct {
 	expectedAckCount int
 }
 
-// Message wraps a payload with properties, context, and acknowledgment callbacks.
+// Message wraps a payload with properties and acknowledgment callbacks.
 // It provides thread-safe, mutually exclusive ack/nack operations for reliable message processing.
 // Once acknowledged (ack or nack), subsequent calls return the existing state without re-executing callbacks.
-// The context (stored in properties under PropContext) is the source of truth for deadlines and cancellation.
 type Message[T any] struct {
 	// payload is the actual message data of any type.
 	payload T
@@ -60,11 +58,11 @@ func New[T any](payload T, opts ...Option[T]) *Message[T] {
 	return m
 }
 
-// WithContext sets the message context.
-func WithContext[T any](ctx context.Context) Option[T] {
+// WithDeadline sets the message processing deadline.
+func WithDeadline[T any](deadline time.Time) Option[T] {
 	return func(m *Message[T]) {
-		if ctx != nil {
-			m.properties.Set(PropContext, ctx)
+		if !deadline.IsZero() {
+			m.properties.Set(PropDeadline, deadline)
 		}
 	}
 }
@@ -125,18 +123,6 @@ func (m *Message[T]) Payload() T {
 	return m.payload
 }
 
-// Context returns the message context. If no context is stored, returns context.Background().
-func (m *Message[T]) Context() context.Context {
-	if m.properties != nil {
-		if v, ok := m.properties.Get(PropContext); ok {
-			if ctx, ok := v.(context.Context); ok {
-				return ctx
-			}
-		}
-	}
-	return context.Background()
-}
-
 // ID returns the message ID. This is a convenience shortcut for m.Properties().ID().
 func (m *Message[T]) ID() string {
 	if m.properties == nil {
@@ -187,10 +173,17 @@ func (m *Message[T]) SetExpectedAckCount(count int) bool {
 	return true
 }
 
-// Deadline returns the deadline for processing this message, extracted from the context.
+// Deadline returns the deadline for processing this message.
 // Returns the deadline and true if a deadline is set, otherwise returns zero time and false.
 func (m *Message[T]) Deadline() (time.Time, bool) {
-	return m.Context().Deadline()
+	if m.properties != nil {
+		if v, ok := m.properties.Get(PropDeadline); ok {
+			if deadline, ok := v.(time.Time); ok {
+				return deadline, true
+			}
+		}
+	}
+	return time.Time{}, false
 }
 
 // Ack acknowledges successful processing of the message.
@@ -248,7 +241,7 @@ func (m *Message[T]) Nack(err error) bool {
 }
 
 // Copy creates a new message with a different payload while preserving the original message's
-// properties (including context) and acknowledgment callbacks. This allows output messages to share
+// properties and acknowledgment callbacks. This allows output messages to share
 // the same acknowledgment state as their input message. Thread-safe.
 func Copy[In, Out any](msg *Message[In], payload Out) *Message[Out] {
 	return &Message[Out]{
