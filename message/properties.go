@@ -23,6 +23,27 @@ const (
 
 	// PropDeadline stores the message processing deadline.
 	PropDeadline = "gopipe.message.deadline"
+
+	// PropReplyTo indicates the address to send replies to.
+	PropReplyTo = "gopipe.message.reply_to"
+
+	// PropSequenceNumber indicates the sequence number of the message.
+	PropSequenceNumber = "gopipe.message.sequence_number"
+
+	// PropPartitionKey indicates the partition key of the message.
+	PropPartitionKey = "gopipe.message.partition_key"
+
+	// PropPartitionOffset indicates the offset within the partition.
+	PropPartitionOffset = "gopipe.message.partition_offset"
+
+	// PropTTL indicates the time-to-live of the message.
+	PropTTL = "gopipe.message.ttl"
+
+	// PropSubject indicates the subject of the message.
+	PropSubject = "gopipe.message.subject"
+
+	// PropContentType indicates the content type of the message.
+	PropContentType = "gopipe.message.content_type"
 )
 
 // Properties provides thread-safe access to message properties.
@@ -161,4 +182,95 @@ func (p *Properties) IncrementRetryCount() int {
 	count++
 	p.m[PropRetryCount] = count
 	return count
+}
+
+// ReplyTo returns the reply-to address.
+func (p *Properties) ReplyTo() string {
+	if p == nil {
+		return ""
+	}
+	if v, ok := p.Get(PropReplyTo); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// SequenceNumber returns the sequence number of the message.
+func (p *Properties) SequenceNumber() int64 {
+	if p == nil {
+		return 0
+	}
+	if v, ok := p.Get(PropSequenceNumber); ok {
+		if n, ok := v.(int64); ok {
+			return n
+		}
+	}
+	return 0
+}
+
+// PartitionKey returns the partition key.
+func (p *Properties) PartitionKey() string {
+	if p == nil {
+		return ""
+	}
+	if v, ok := p.Get(PropPartitionKey); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// PartitionOffset returns the offset within the partition.
+func (p *Properties) PartitionOffset() int64 {
+	if p == nil {
+		return 0
+	}
+	if v, ok := p.Get(PropPartitionOffset); ok {
+		if n, ok := v.(int64); ok {
+			return n
+		}
+	}
+	return 0
+}
+
+// TTL returns the time-to-live of the message.
+func (p *Properties) TTL() time.Duration {
+	if p == nil {
+		return 0
+	}
+	if v, ok := p.Get(PropTTL); ok {
+		if d, ok := v.(time.Duration); ok {
+			return d
+		}
+	}
+	return 0
+}
+
+// Subject returns the subject of the message.
+func (p *Properties) Subject() string {
+	if p == nil {
+		return ""
+	}
+	if v, ok := p.Get(PropSubject); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// ContentType returns the content type of the message.
+func (p *Properties) ContentType() string {
+	if p == nil {
+		return ""
+	}
+	if v, ok := p.Get(PropContentType); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }

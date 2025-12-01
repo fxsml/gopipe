@@ -118,6 +118,55 @@ func WithCreatedAt[T any](createdAt time.Time) Option[T] {
 	}
 }
 
+// WithReplyTo sets the reply-to address.
+func WithReplyTo[T any](addr string) Option[T] {
+	return func(m *Message[T]) {
+		m.properties.Set(PropReplyTo, addr)
+	}
+}
+
+// WithSequenceNumber sets the sequence number of the message.
+func WithSequenceNumber[T any](seq int64) Option[T] {
+	return func(m *Message[T]) {
+		m.properties.Set(PropSequenceNumber, seq)
+	}
+}
+
+// WithPartitionKey sets the partition key.
+func WithPartitionKey[T any](key string) Option[T] {
+	return func(m *Message[T]) {
+		m.properties.Set(PropPartitionKey, key)
+	}
+}
+
+// WithPartitionOffset sets the offset within the partition.
+func WithPartitionOffset[T any](offset int64) Option[T] {
+	return func(m *Message[T]) {
+		m.properties.Set(PropPartitionOffset, offset)
+	}
+}
+
+// WithTTL sets the time-to-live of the message.
+func WithTTL[T any](ttl time.Duration) Option[T] {
+	return func(m *Message[T]) {
+		m.properties.Set(PropTTL, ttl)
+	}
+}
+
+// WithSubject sets the subject of the message.
+func WithSubject[T any](subject string) Option[T] {
+	return func(m *Message[T]) {
+		m.properties.Set(PropSubject, subject)
+	}
+}
+
+// WithContentType sets the content type of the message.
+func WithContentType[T any](ct string) Option[T] {
+	return func(m *Message[T]) {
+		m.properties.Set(PropContentType, ct)
+	}
+}
+
 // Payload returns the message payload.
 func (m *Message[T]) Payload() T {
 	return m.payload
@@ -153,6 +202,62 @@ func (m *Message[T]) RetryCount() int {
 		return 0
 	}
 	return m.properties.RetryCount()
+}
+
+// ReplyTo returns the reply-to address. This is a convenience shortcut for m.Properties().ReplyTo().
+func (m *Message[T]) ReplyTo() string {
+	if m.properties == nil {
+		return ""
+	}
+	return m.properties.ReplyTo()
+}
+
+// SequenceNumber returns the sequence number. This is a convenience shortcut for m.Properties().SequenceNumber().
+func (m *Message[T]) SequenceNumber() int64 {
+	if m.properties == nil {
+		return 0
+	}
+	return m.properties.SequenceNumber()
+}
+
+// PartitionKey returns the partition key. This is a convenience shortcut for m.Properties().PartitionKey().
+func (m *Message[T]) PartitionKey() string {
+	if m.properties == nil {
+		return ""
+	}
+	return m.properties.PartitionKey()
+}
+
+// PartitionOffset returns the partition offset. This is a convenience shortcut for m.Properties().PartitionOffset().
+func (m *Message[T]) PartitionOffset() int64 {
+	if m.properties == nil {
+		return 0
+	}
+	return m.properties.PartitionOffset()
+}
+
+// TTL returns the time-to-live. This is a convenience shortcut for m.Properties().TTL().
+func (m *Message[T]) TTL() time.Duration {
+	if m.properties == nil {
+		return 0
+	}
+	return m.properties.TTL()
+}
+
+// Subject returns the subject. This is a convenience shortcut for m.Properties().Subject().
+func (m *Message[T]) Subject() string {
+	if m.properties == nil {
+		return ""
+	}
+	return m.properties.Subject()
+}
+
+// ContentType returns the content type. This is a convenience shortcut for m.Properties().ContentType().
+func (m *Message[T]) ContentType() string {
+	if m.properties == nil {
+		return ""
+	}
+	return m.properties.ContentType()
 }
 
 // SetExpectedAckCount sets the number of acknowledgments required before invoking the ack callback.
