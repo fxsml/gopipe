@@ -9,9 +9,6 @@ import (
 // Reserved property keys for gopipe internal use.
 // User-defined properties should NOT use the "gopipe." prefix.
 const (
-	// PropContext stores the runtime context (not serialized directly).
-	PropContext = "gopipe.internal.context"
-
 	// PropID is the unique message identifier.
 	PropID = "gopipe.message.id"
 
@@ -23,6 +20,9 @@ const (
 
 	// PropRetryCount tracks how many times the message has been retried.
 	PropRetryCount = "gopipe.message.retry_count"
+
+	// PropDeadline stores the message processing deadline.
+	PropDeadline = "gopipe.message.deadline"
 )
 
 // Properties provides thread-safe access to message properties.

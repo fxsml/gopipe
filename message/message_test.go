@@ -1,7 +1,6 @@
 package message_test
 
 import (
-	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -14,12 +13,10 @@ func TestMessage_NewMessage(t *testing.T) {
 	t.Parallel()
 
 	deadline := time.Now().Add(1 * time.Hour)
-	ctx, cancel := context.WithDeadline(context.Background(), deadline)
-	defer cancel()
 	var ackCalled, nackCalled bool
 
 	msg := message.New("payload",
-		message.WithContext[string](ctx),
+		message.WithDeadline[string](deadline),
 		message.WithAcking[string](
 			func() { ackCalled = true },
 			func(error) { nackCalled = true },
@@ -58,7 +55,6 @@ func TestMessage_AckIdempotency(t *testing.T) {
 
 	var ackCount int
 	msg := message.New(42,
-		message.WithContext[int](context.Background()),
 		message.WithAcking[int](
 			func() { ackCount++ },
 			func(error) {},
@@ -86,7 +82,6 @@ func TestMessage_NackIdempotency(t *testing.T) {
 	var nackCount int
 	var capturedErr error
 	msg := message.New(42,
-		message.WithContext[int](context.Background()),
 		message.WithAcking[int](
 			func() {},
 			func(err error) {
@@ -121,12 +116,10 @@ func TestMessage_Copy(t *testing.T) {
 	t.Parallel()
 
 	deadline := time.Now().Add(1 * time.Hour)
-	ctx, cancel := context.WithDeadline(context.Background(), deadline)
-	defer cancel()
 	var ackCalled bool
 
 	original := message.New("original",
-		message.WithContext[string](ctx),
+		message.WithDeadline[string](deadline),
 		message.WithAcking[string](
 			func() { ackCalled = true },
 			func(error) {},
@@ -198,7 +191,6 @@ func TestMessage_MultiStageAcking(t *testing.T) {
 
 	var ackCalled bool
 	msg := message.New(42,
-		message.WithContext[int](context.Background()),
 		message.WithAcking[int](
 			func() { ackCalled = true },
 			func(error) {},
@@ -454,12 +446,10 @@ func TestMessage_NewWithOptions(t *testing.T) {
 		}
 	})
 
-	t.Run("WithContext", func(t *testing.T) {
+	t.Run("WithDeadline", func(t *testing.T) {
 		deadline := time.Now().Add(1 * time.Hour)
-		ctx, cancel := context.WithDeadline(context.Background(), deadline)
-		defer cancel()
 
-		msg := message.New("payload", message.WithContext[string](ctx))
+		msg := message.New("payload", message.WithDeadline[string](deadline))
 
 		if msgDeadline, ok := msg.Deadline(); !ok || msgDeadline != deadline {
 			t.Errorf("Expected deadline %v, got %v (ok=%v)", deadline, msgDeadline, ok)
@@ -527,13 +517,11 @@ func TestMessage_NewWithOptions(t *testing.T) {
 
 	t.Run("CombinedOptions", func(t *testing.T) {
 		deadline := time.Now().Add(1 * time.Hour)
-		ctx, cancel := context.WithDeadline(context.Background(), deadline)
-		defer cancel()
 
 		var ackCalled bool
 
 		msg := message.New("order-data",
-			message.WithContext[string](ctx),
+			message.WithDeadline[string](deadline),
 			message.WithAcking[string](
 				func() { ackCalled = true },
 				func(error) {},

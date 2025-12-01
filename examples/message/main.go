@@ -19,16 +19,17 @@ func main() {
 	nack := func(err error) { fmt.Printf("✗ Message rejected: %v\n", err) }
 
 	// Create messages using the new functional options API
+	deadline := time.Now().Add(30 * time.Second)
 	in := channel.FromValues(
 		message.New(12,
-			message.WithContext[int](ctx),
+			message.WithDeadline[int](deadline),
 			message.WithAcking[int](ack, nack),
 			message.WithID[int]("msg-001"),
 			message.WithProperty[int]("source", "orders-queue"),
 			message.WithCreatedAt[int](time.Now()),
 		),
 		message.New(42,
-			message.WithContext[int](ctx),
+			message.WithDeadline[int](deadline),
 			message.WithAcking[int](ack, nack),
 			message.WithID[int]("msg-002"),
 			message.WithProperty[int]("source", "orders-queue"),
