@@ -630,7 +630,7 @@ func TestMessage_TypedAccessors(t *testing.T) {
 			message.WithID[int]("msg-001"),
 			message.WithCorrelationID[int]("corr-123"),
 			message.WithProperty[int](message.PropCreatedAt, now),
-			message.WithProperty[int](message.PropRetryCount, 3),
+			message.WithProperty[int](message.PropDeliveryCount, 3),
 		)
 
 		// Test ID
@@ -648,9 +648,9 @@ func TestMessage_TypedAccessors(t *testing.T) {
 			t.Errorf("Expected CreatedAt %v, got %v (ok=%v)", now, ts, ok)
 		}
 
-		// Test RetryCount
-		if count, ok := msg.RetryCount(); !ok || count != 3 {
-			t.Errorf("Expected RetryCount 3, got %d (ok=%v)", count, ok)
+		// Test DeliveryCount
+		if count, ok := msg.DeliveryCount(); !ok || count != 3 {
+			t.Errorf("Expected DeliveryCount 3, got %d (ok=%v)", count, ok)
 		}
 	})
 
@@ -663,7 +663,7 @@ func TestMessage_TypedAccessors(t *testing.T) {
 		msg.Properties().Set(message.PropID, "msg-001")
 		msg.Properties().Set(message.PropCorrelationID, "corr-123")
 		msg.Properties().Set(message.PropCreatedAt, now)
-		msg.Properties().Set(message.PropRetryCount, 3)
+		msg.Properties().Set(message.PropDeliveryCount, 3)
 
 		// Get via message shortcuts
 		if id, ok := msg.ID(); !ok || id != "msg-001" {
@@ -678,64 +678,37 @@ func TestMessage_TypedAccessors(t *testing.T) {
 			t.Errorf("Expected CreatedAt %v, got %v (ok=%v)", now, ts, ok)
 		}
 
-		if count, ok := msg.RetryCount(); !ok || count != 3 {
-			t.Errorf("Expected RetryCount 3, got %d (ok=%v)", count, ok)
-		}
-	})
-
-	t.Run("IncrementRetryCount", func(t *testing.T) {
-		msg := message.New(42)
-
-		count := msg.Properties().IncrementRetryCount()
-		if count != 1 {
-			t.Errorf("Expected IncrementRetryCount to return 1, got %d", count)
-		}
-
-		if retryCount, ok := msg.RetryCount(); !ok || retryCount != 1 {
-			t.Errorf("Expected RetryCount 1, got %d (ok=%v)", retryCount, ok)
-		}
-
-		count = msg.Properties().IncrementRetryCount()
-		if count != 2 {
-			t.Errorf("Expected IncrementRetryCount to return 2, got %d", count)
+		if count, ok := msg.DeliveryCount(); !ok || count != 3 {
+			t.Errorf("Expected DeliveryCount 3, got %d (ok=%v)", count, ok)
 		}
 	})
 }
 
-// TestMessageProperties_ConcurrentIncrementRetryCount verifies that IncrementRetryCount
-// is properly atomic and all concurrent increments are counted without race conditions.
-func TestMessageProperties_ConcurrentIncrementRetryCount(t *testing.T) {
+// TestMessageProperties_ConcurrentDeliveryCount verifies that DeliveryCount
+// can be safely read concurrently.
+func TestMessageProperties_ConcurrentDeliveryCount(t *testing.T) {
 	t.Parallel()
 
 	msg := message.New("payload")
+	msg.Properties().Set(message.PropDeliveryCount, 5)
 
 	const numGoroutines = 100
-	const incrementsPerGoroutine = 100
-	const expectedTotal = numGoroutines * incrementsPerGoroutine
 
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
 
-	// Launch goroutines that concurrently increment retry count
+	// Launch goroutines that concurrently read delivery count
 	for range numGoroutines {
 		go func() {
 			defer wg.Done()
-			for range incrementsPerGoroutine {
-				msg.Properties().IncrementRetryCount()
+			for range 100 {
+				if count, ok := msg.DeliveryCount(); !ok || count != 5 {
+					t.Errorf("Expected DeliveryCount 5, got %d (ok=%v)", count, ok)
+				}
 			}
 		}()
 	}
 
 	// Wait for all goroutines to complete
 	wg.Wait()
-
-	// Verify final count - all increments should be counted
-	finalCount, ok := msg.RetryCount()
-	if !ok {
-		t.Fatal("Expected RetryCount to return ok=true")
-	}
-	if finalCount != expectedTotal {
-		t.Errorf("Expected final retry count to be %d, got %d (lost %d increments)",
-			expectedTotal, finalCount, expectedTotal-finalCount)
-	}
 }

@@ -18,8 +18,8 @@ const (
 	// PropCreatedAt stores when the message was created.
 	PropCreatedAt = "gopipe.message.created_at"
 
-	// PropRetryCount tracks how many times the message has been retried.
-	PropRetryCount = "gopipe.message.retry_count"
+	// PropDeliveryCount tracks how many times the message has been delivered.
+	PropDeliveryCount = "gopipe.message.delivery_count"
 
 	// PropDeadline stores the message processing deadline.
 	PropDeadline = "gopipe.message.deadline"
@@ -147,41 +147,17 @@ func (p *Properties) CreatedAt() (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// RetryCount returns the number of times the message has been retried.
-func (p *Properties) RetryCount() (int, bool) {
+// DeliveryCount returns the number of times the message has been delivered.
+func (p *Properties) DeliveryCount() (int, bool) {
 	if p == nil {
 		return 0, false
 	}
-	if v, ok := p.Get(PropRetryCount); ok {
+	if v, ok := p.Get(PropDeliveryCount); ok {
 		if count, ok := v.(int); ok {
 			return count, true
 		}
 	}
 	return 0, false
-}
-
-// IncrementRetryCount atomically increments and returns the new retry count.
-// This is the only mutation allowed for the RetryCount reserved property after message creation.
-// Thread-safe for concurrent access.
-func (p *Properties) IncrementRetryCount() int {
-	if p == nil {
-		return 0
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// Read current count
-	count := 0
-	if v, ok := p.m[PropRetryCount]; ok {
-		if c, ok := v.(int); ok {
-			count = c
-		}
-	}
-
-	// Increment and store
-	count++
-	p.m[PropRetryCount] = count
-	return count
 }
 
 // ReplyTo returns the reply-to address.

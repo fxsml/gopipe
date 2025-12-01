@@ -187,9 +187,9 @@ func (m *Message[T]) CreatedAt() (time.Time, bool) {
 	return m.properties.CreatedAt()
 }
 
-// RetryCount returns the retry count. This is a convenience shortcut for m.Properties().RetryCount().
-func (m *Message[T]) RetryCount() (int, bool) {
-	return m.properties.RetryCount()
+// DeliveryCount returns the delivery count. This is a convenience shortcut for m.Properties().DeliveryCount().
+func (m *Message[T]) DeliveryCount() (int, bool) {
+	return m.properties.DeliveryCount()
 }
 
 // ReplyTo returns the reply-to address. This is a convenience shortcut for m.Properties().ReplyTo().
