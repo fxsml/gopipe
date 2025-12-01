@@ -173,90 +173,57 @@ func (m *Message[T]) Payload() T {
 }
 
 // ID returns the message ID. This is a convenience shortcut for m.Properties().ID().
-func (m *Message[T]) ID() string {
-	if m.properties == nil {
-		return ""
-	}
+func (m *Message[T]) ID() (string, bool) {
 	return m.properties.ID()
 }
 
 // CorrelationID returns the correlation ID. This is a convenience shortcut for m.Properties().CorrelationID().
-func (m *Message[T]) CorrelationID() string {
-	if m.properties == nil {
-		return ""
-	}
+func (m *Message[T]) CorrelationID() (string, bool) {
 	return m.properties.CorrelationID()
 }
 
 // CreatedAt returns when the message was created. This is a convenience shortcut for m.Properties().CreatedAt().
-func (m *Message[T]) CreatedAt() time.Time {
-	if m.properties == nil {
-		return time.Time{}
-	}
+func (m *Message[T]) CreatedAt() (time.Time, bool) {
 	return m.properties.CreatedAt()
 }
 
 // RetryCount returns the retry count. This is a convenience shortcut for m.Properties().RetryCount().
-func (m *Message[T]) RetryCount() int {
-	if m.properties == nil {
-		return 0
-	}
+func (m *Message[T]) RetryCount() (int, bool) {
 	return m.properties.RetryCount()
 }
 
 // ReplyTo returns the reply-to address. This is a convenience shortcut for m.Properties().ReplyTo().
-func (m *Message[T]) ReplyTo() string {
-	if m.properties == nil {
-		return ""
-	}
+func (m *Message[T]) ReplyTo() (string, bool) {
 	return m.properties.ReplyTo()
 }
 
 // SequenceNumber returns the sequence number. This is a convenience shortcut for m.Properties().SequenceNumber().
-func (m *Message[T]) SequenceNumber() int64 {
-	if m.properties == nil {
-		return 0
-	}
+func (m *Message[T]) SequenceNumber() (int64, bool) {
 	return m.properties.SequenceNumber()
 }
 
 // PartitionKey returns the partition key. This is a convenience shortcut for m.Properties().PartitionKey().
-func (m *Message[T]) PartitionKey() string {
-	if m.properties == nil {
-		return ""
-	}
+func (m *Message[T]) PartitionKey() (string, bool) {
 	return m.properties.PartitionKey()
 }
 
 // PartitionOffset returns the partition offset. This is a convenience shortcut for m.Properties().PartitionOffset().
-func (m *Message[T]) PartitionOffset() int64 {
-	if m.properties == nil {
-		return 0
-	}
+func (m *Message[T]) PartitionOffset() (int64, bool) {
 	return m.properties.PartitionOffset()
 }
 
 // TTL returns the time-to-live. This is a convenience shortcut for m.Properties().TTL().
-func (m *Message[T]) TTL() time.Duration {
-	if m.properties == nil {
-		return 0
-	}
+func (m *Message[T]) TTL() (time.Duration, bool) {
 	return m.properties.TTL()
 }
 
 // Subject returns the subject. This is a convenience shortcut for m.Properties().Subject().
-func (m *Message[T]) Subject() string {
-	if m.properties == nil {
-		return ""
-	}
+func (m *Message[T]) Subject() (string, bool) {
 	return m.properties.Subject()
 }
 
 // ContentType returns the content type. This is a convenience shortcut for m.Properties().ContentType().
-func (m *Message[T]) ContentType() string {
-	if m.properties == nil {
-		return ""
-	}
+func (m *Message[T]) ContentType() (string, bool) {
 	return m.properties.ContentType()
 }
 

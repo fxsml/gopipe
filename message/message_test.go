@@ -482,21 +482,21 @@ func TestMessage_NewWithOptions(t *testing.T) {
 	t.Run("WithID", func(t *testing.T) {
 		msg := message.New("payload", message.WithID[string]("msg-001"))
 
-		if msg.ID() != "msg-001" {
-			t.Errorf("Expected ID 'msg-001', got %q", msg.ID())
+		if id, ok := msg.ID(); !ok || id != "msg-001" {
+			t.Errorf("Expected ID 'msg-001', got %q (ok=%v)", id, ok)
 		}
 
 		// Also test via Properties
-		if msg.Properties().ID() != "msg-001" {
-			t.Errorf("Expected ID 'msg-001' via Properties, got %q", msg.Properties().ID())
+		if id, ok := msg.Properties().ID(); !ok || id != "msg-001" {
+			t.Errorf("Expected ID 'msg-001' via Properties, got %q (ok=%v)", id, ok)
 		}
 	})
 
 	t.Run("WithCorrelationID", func(t *testing.T) {
 		msg := message.New("payload", message.WithCorrelationID[string]("corr-123"))
 
-		if msg.CorrelationID() != "corr-123" {
-			t.Errorf("Expected CorrelationID 'corr-123', got %q", msg.CorrelationID())
+		if id, ok := msg.CorrelationID(); !ok || id != "corr-123" {
+			t.Errorf("Expected CorrelationID 'corr-123', got %q (ok=%v)", id, ok)
 		}
 	})
 
@@ -538,13 +538,13 @@ func TestMessage_NewWithOptions(t *testing.T) {
 		}
 
 		// Verify ID
-		if msg.ID() != "msg-001" {
-			t.Errorf("Expected ID 'msg-001', got %q", msg.ID())
+		if id, ok := msg.ID(); !ok || id != "msg-001" {
+			t.Errorf("Expected ID 'msg-001', got %q", id)
 		}
 
 		// Verify CorrelationID
-		if msg.CorrelationID() != "order-123" {
-			t.Errorf("Expected CorrelationID 'order-123', got %q", msg.CorrelationID())
+		if corrID, ok := msg.CorrelationID(); !ok || corrID != "order-123" {
+			t.Errorf("Expected CorrelationID 'order-123', got %q", corrID)
 		}
 
 		// Verify custom properties
@@ -583,8 +583,8 @@ func TestMessage_NewWithOptions(t *testing.T) {
 		)
 
 		// Verify that ID set before WithProperties is preserved
-		if msg.ID() != "msg-001" {
-			t.Errorf("Expected ID 'msg-001', got %q", msg.ID())
+		if id, ok := msg.ID(); !ok || id != "msg-001" {
+			t.Errorf("Expected ID 'msg-001', got %q", id)
 		}
 
 		// Verify that property set before WithProperties is preserved
@@ -602,8 +602,8 @@ func TestMessage_NewWithOptions(t *testing.T) {
 		}
 
 		// Verify that CorrelationID set after WithProperties is preserved
-		if msg.CorrelationID() != "corr-123" {
-			t.Errorf("Expected CorrelationID 'corr-123', got %q", msg.CorrelationID())
+		if corrID, ok := msg.CorrelationID(); !ok || corrID != "corr-123" {
+			t.Errorf("Expected CorrelationID 'corr-123', got %q", corrID)
 		}
 
 		// Count all properties
@@ -634,23 +634,23 @@ func TestMessage_TypedAccessors(t *testing.T) {
 		)
 
 		// Test ID
-		if msg.ID() != "msg-001" {
-			t.Errorf("Expected ID 'msg-001', got %q", msg.ID())
+		if id, ok := msg.ID(); !ok || id != "msg-001" {
+			t.Errorf("Expected ID 'msg-001', got %q (ok=%v)", id, ok)
 		}
 
 		// Test CorrelationID
-		if msg.CorrelationID() != "corr-123" {
-			t.Errorf("Expected CorrelationID 'corr-123', got %q", msg.CorrelationID())
+		if id, ok := msg.CorrelationID(); !ok || id != "corr-123" {
+			t.Errorf("Expected CorrelationID 'corr-123', got %q (ok=%v)", id, ok)
 		}
 
 		// Test CreatedAt
-		if !msg.CreatedAt().Equal(now) {
-			t.Errorf("Expected CreatedAt %v, got %v", now, msg.CreatedAt())
+		if ts, ok := msg.CreatedAt(); !ok || !ts.Equal(now) {
+			t.Errorf("Expected CreatedAt %v, got %v (ok=%v)", now, ts, ok)
 		}
 
 		// Test RetryCount
-		if msg.RetryCount() != 3 {
-			t.Errorf("Expected RetryCount 3, got %d", msg.RetryCount())
+		if count, ok := msg.RetryCount(); !ok || count != 3 {
+			t.Errorf("Expected RetryCount 3, got %d (ok=%v)", count, ok)
 		}
 	})
 
@@ -666,20 +666,20 @@ func TestMessage_TypedAccessors(t *testing.T) {
 		msg.Properties().Set(message.PropRetryCount, 3)
 
 		// Get via message shortcuts
-		if msg.ID() != "msg-001" {
-			t.Errorf("Expected ID 'msg-001', got %q", msg.ID())
+		if id, ok := msg.ID(); !ok || id != "msg-001" {
+			t.Errorf("Expected ID 'msg-001', got %q (ok=%v)", id, ok)
 		}
 
-		if msg.CorrelationID() != "corr-123" {
-			t.Errorf("Expected CorrelationID 'corr-123', got %q", msg.CorrelationID())
+		if id, ok := msg.CorrelationID(); !ok || id != "corr-123" {
+			t.Errorf("Expected CorrelationID 'corr-123', got %q (ok=%v)", id, ok)
 		}
 
-		if !msg.CreatedAt().Equal(now) {
-			t.Errorf("Expected CreatedAt %v, got %v", now, msg.CreatedAt())
+		if ts, ok := msg.CreatedAt(); !ok || !ts.Equal(now) {
+			t.Errorf("Expected CreatedAt %v, got %v (ok=%v)", now, ts, ok)
 		}
 
-		if msg.RetryCount() != 3 {
-			t.Errorf("Expected RetryCount 3, got %d", msg.RetryCount())
+		if count, ok := msg.RetryCount(); !ok || count != 3 {
+			t.Errorf("Expected RetryCount 3, got %d (ok=%v)", count, ok)
 		}
 	})
 
@@ -691,8 +691,8 @@ func TestMessage_TypedAccessors(t *testing.T) {
 			t.Errorf("Expected IncrementRetryCount to return 1, got %d", count)
 		}
 
-		if msg.RetryCount() != 1 {
-			t.Errorf("Expected RetryCount 1, got %d", msg.RetryCount())
+		if retryCount, ok := msg.RetryCount(); !ok || retryCount != 1 {
+			t.Errorf("Expected RetryCount 1, got %d (ok=%v)", retryCount, ok)
 		}
 
 		count = msg.Properties().IncrementRetryCount()
@@ -730,7 +730,10 @@ func TestMessageProperties_ConcurrentIncrementRetryCount(t *testing.T) {
 	wg.Wait()
 
 	// Verify final count - all increments should be counted
-	finalCount := msg.RetryCount()
+	finalCount, ok := msg.RetryCount()
+	if !ok {
+		t.Fatal("Expected RetryCount to return ok=true")
+	}
 	if finalCount != expectedTotal {
 		t.Errorf("Expected final retry count to be %d, got %d (lost %d increments)",
 			expectedTotal, finalCount, expectedTotal-finalCount)

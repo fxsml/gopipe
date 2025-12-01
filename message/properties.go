@@ -109,55 +109,55 @@ func (p *Properties) Range(f func(key string, value any) bool) {
 }
 
 // ID returns the message ID.
-func (p *Properties) ID() string {
+func (p *Properties) ID() (string, bool) {
 	if p == nil {
-		return ""
+		return "", false
 	}
 	if v, ok := p.Get(PropID); ok {
 		if id, ok := v.(string); ok {
-			return id
+			return id, true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // CorrelationID returns the correlation ID.
-func (p *Properties) CorrelationID() string {
+func (p *Properties) CorrelationID() (string, bool) {
 	if p == nil {
-		return ""
+		return "", false
 	}
 	if v, ok := p.Get(PropCorrelationID); ok {
 		if id, ok := v.(string); ok {
-			return id
+			return id, true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // CreatedAt returns when the message was created.
-func (p *Properties) CreatedAt() time.Time {
+func (p *Properties) CreatedAt() (time.Time, bool) {
 	if p == nil {
-		return time.Time{}
+		return time.Time{}, false
 	}
 	if v, ok := p.Get(PropCreatedAt); ok {
 		if t, ok := v.(time.Time); ok {
-			return t
+			return t, true
 		}
 	}
-	return time.Time{}
+	return time.Time{}, false
 }
 
 // RetryCount returns the number of times the message has been retried.
-func (p *Properties) RetryCount() int {
+func (p *Properties) RetryCount() (int, bool) {
 	if p == nil {
-		return 0
+		return 0, false
 	}
 	if v, ok := p.Get(PropRetryCount); ok {
 		if count, ok := v.(int); ok {
-			return count
+			return count, true
 		}
 	}
-	return 0
+	return 0, false
 }
 
 // IncrementRetryCount atomically increments and returns the new retry count.
@@ -185,92 +185,92 @@ func (p *Properties) IncrementRetryCount() int {
 }
 
 // ReplyTo returns the reply-to address.
-func (p *Properties) ReplyTo() string {
+func (p *Properties) ReplyTo() (string, bool) {
 	if p == nil {
-		return ""
+		return "", false
 	}
 	if v, ok := p.Get(PropReplyTo); ok {
 		if s, ok := v.(string); ok {
-			return s
+			return s, true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // SequenceNumber returns the sequence number of the message.
-func (p *Properties) SequenceNumber() int64 {
+func (p *Properties) SequenceNumber() (int64, bool) {
 	if p == nil {
-		return 0
+		return 0, false
 	}
 	if v, ok := p.Get(PropSequenceNumber); ok {
 		if n, ok := v.(int64); ok {
-			return n
+			return n, true
 		}
 	}
-	return 0
+	return 0, false
 }
 
 // PartitionKey returns the partition key.
-func (p *Properties) PartitionKey() string {
+func (p *Properties) PartitionKey() (string, bool) {
 	if p == nil {
-		return ""
+		return "", false
 	}
 	if v, ok := p.Get(PropPartitionKey); ok {
 		if s, ok := v.(string); ok {
-			return s
+			return s, true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // PartitionOffset returns the offset within the partition.
-func (p *Properties) PartitionOffset() int64 {
+func (p *Properties) PartitionOffset() (int64, bool) {
 	if p == nil {
-		return 0
+		return 0, false
 	}
 	if v, ok := p.Get(PropPartitionOffset); ok {
 		if n, ok := v.(int64); ok {
-			return n
+			return n, true
 		}
 	}
-	return 0
+	return 0, false
 }
 
 // TTL returns the time-to-live of the message.
-func (p *Properties) TTL() time.Duration {
+func (p *Properties) TTL() (time.Duration, bool) {
 	if p == nil {
-		return 0
+		return 0, false
 	}
 	if v, ok := p.Get(PropTTL); ok {
 		if d, ok := v.(time.Duration); ok {
-			return d
+			return d, true
 		}
 	}
-	return 0
+	return 0, false
 }
 
 // Subject returns the subject of the message.
-func (p *Properties) Subject() string {
+func (p *Properties) Subject() (string, bool) {
 	if p == nil {
-		return ""
+		return "", false
 	}
 	if v, ok := p.Get(PropSubject); ok {
 		if s, ok := v.(string); ok {
-			return s
+			return s, true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // ContentType returns the content type of the message.
-func (p *Properties) ContentType() string {
+func (p *Properties) ContentType() (string, bool) {
 	if p == nil {
-		return ""
+		return "", false
 	}
 	if v, ok := p.Get(PropContentType); ok {
 		if s, ok := v.(string); ok {
-			return s
+			return s, true
 		}
 	}
-	return ""
+	return "", false
 }
