@@ -52,7 +52,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message[[]byte]) <-chan
 
 	handle := func(ctx context.Context, msg *Message[[]byte]) ([]*Message[[]byte], error) {
 		for _, h := range r.handlers {
-			if h.Match(msg.Properties()) {
+			if h.Match(msg.Properties) {
 				return h.Handle(ctx, msg)
 			}
 		}
@@ -69,10 +69,10 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message[[]byte]) <-chan
 		}),
 		gopipe.WithMetadataProvider[*Message[[]byte], *Message[[]byte]](func(msg *Message[[]byte]) gopipe.Metadata {
 			metadata := gopipe.Metadata{}
-			if id, ok := msg.ID(); ok {
+			if id, ok := IDProps(msg.Properties); ok {
 				metadata["message_id"] = id
 			}
-			if corr, ok := msg.CorrelationID(); ok {
+			if corr, ok := CorrelationIDProps(msg.Properties); ok {
 				metadata["correlation_id"] = corr
 			}
 			return metadata
@@ -96,7 +96,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message[[]byte]) <-chan
 
 type Handler struct {
 	Handle func(ctx context.Context, msg *Message[[]byte]) ([]*Message[[]byte], error)
-	Match  func(prop *Properties) bool
+	Match  func(prop map[string]any) bool
 
 	marshal   func(msg any) ([]byte, error)
 	unmarshal func(data []byte, msg any) error
@@ -104,8 +104,8 @@ type Handler struct {
 
 func NewHandler[In, Out any](
 	handle func(ctx context.Context, payload In) ([]Out, error),
-	match func(prop *Properties) bool,
-	props func(prop *Properties) *Properties,
+	match func(prop map[string]any) bool,
+	props func(prop map[string]any) map[string]any,
 ) *Handler {
 	h := &Handler{
 		Match:     match,
@@ -115,7 +115,7 @@ func NewHandler[In, Out any](
 
 	h.Handle = func(ctx context.Context, msg *Message[[]byte]) ([]*Message[[]byte], error) {
 		var payload In
-		if err := h.unmarshal(msg.Payload(), &payload); err != nil {
+		if err := h.unmarshal(msg.Payload, &payload); err != nil {
 			err = fmt.Errorf("unmarshal: %w: %w", ErrInvalidMessagePayload, err)
 			msg.Nack(err)
 			return nil, err
@@ -136,9 +136,8 @@ func NewHandler[In, Out any](
 				msg.Nack(err)
 				return nil, err
 			}
-			// Create new message using Copy to preserve acking
 			outMsg := Copy(msg, data)
-			outMsg.properties = props(msg.Properties())
+			outMsg.Properties = props(msg.Properties)
 			msgs = append(msgs, outMsg)
 		}
 
