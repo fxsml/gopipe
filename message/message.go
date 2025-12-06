@@ -24,33 +24,25 @@ type acking struct {
 }
 
 // Message wraps a payload with properties and acknowledgment callbacks.
-// It provides thread-safe, mutually exclusive ack/nack operations for reliable message processing.
-// Once acknowledged (ack or nack), subsequent calls return the existing state without re-executing callbacks.
+// Payload and Properties are public for direct access.
+// Ack/Nack operations are mutually exclusive and idempotent.
 type Message[T any] struct {
-	// payload is the actual message data of any type.
-	payload T
+	Payload    T
+	Properties map[string]any
 
-	properties *Properties
-	a          *acking
-}
-
-// Properties returns the message properties for thread-safe access to properties.
-func (m *Message[T]) Properties() *Properties {
-	return m.properties
+	a *acking
 }
 
 // Option is a functional option for configuring a Message.
 type Option[T any] func(*Message[T])
 
 // New creates a new message with the given payload and options.
-// This is the recommended constructor for creating messages.
 func New[T any](payload T, opts ...Option[T]) *Message[T] {
 	m := &Message[T]{
-		properties: NewProperties(nil),
-		payload:    payload,
+		Payload:    payload,
+		Properties: make(map[string]any),
 	}
 
-	// Apply options
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -62,7 +54,7 @@ func New[T any](payload T, opts ...Option[T]) *Message[T] {
 func WithDeadline[T any](deadline time.Time) Option[T] {
 	return func(m *Message[T]) {
 		if !deadline.IsZero() {
-			m.properties.Set(PropDeadline, deadline)
+			m.Properties[PropDeadline] = deadline
 		}
 	}
 }
@@ -84,7 +76,7 @@ func WithAcking[T any](ack func(), nack func(error)) Option[T] {
 // WithProperty sets a custom property on the message.
 func WithProperty[T any](key string, value any) Option[T] {
 	return func(m *Message[T]) {
-		m.properties.Set(key, value)
+		m.Properties[key] = value
 	}
 }
 
@@ -92,7 +84,7 @@ func WithProperty[T any](key string, value any) Option[T] {
 func WithProperties[T any](props map[string]any) Option[T] {
 	return func(m *Message[T]) {
 		if props != nil {
-			maps.Copy(m.properties.m, props)
+			maps.Copy(m.Properties, props)
 		}
 	}
 }
@@ -100,131 +92,86 @@ func WithProperties[T any](props map[string]any) Option[T] {
 // WithID sets the message ID.
 func WithID[T any](id string) Option[T] {
 	return func(m *Message[T]) {
-		m.properties.Set(PropID, id)
+		m.Properties[PropID] = id
 	}
 }
 
 // WithCorrelationID sets the correlation ID for tracking related messages.
 func WithCorrelationID[T any](correlationID string) Option[T] {
 	return func(m *Message[T]) {
-		m.properties.Set(PropCorrelationID, correlationID)
+		m.Properties[PropCorrelationID] = correlationID
 	}
 }
 
 // WithCreatedAt sets the creation timestamp of the message.
 func WithCreatedAt[T any](createdAt time.Time) Option[T] {
 	return func(m *Message[T]) {
-		m.properties.Set(PropCreatedAt, createdAt)
-	}
-}
-
-// WithReplyTo sets the reply-to address.
-func WithReplyTo[T any](addr string) Option[T] {
-	return func(m *Message[T]) {
-		m.properties.Set(PropReplyTo, addr)
-	}
-}
-
-// WithSequenceNumber sets the sequence number of the message.
-func WithSequenceNumber[T any](seq int64) Option[T] {
-	return func(m *Message[T]) {
-		m.properties.Set(PropSequenceNumber, seq)
-	}
-}
-
-// WithPartitionKey sets the partition key.
-func WithPartitionKey[T any](key string) Option[T] {
-	return func(m *Message[T]) {
-		m.properties.Set(PropPartitionKey, key)
-	}
-}
-
-// WithPartitionOffset sets the offset within the partition.
-func WithPartitionOffset[T any](offset int64) Option[T] {
-	return func(m *Message[T]) {
-		m.properties.Set(PropPartitionOffset, offset)
-	}
-}
-
-// WithTTL sets the time-to-live of the message.
-func WithTTL[T any](ttl time.Duration) Option[T] {
-	return func(m *Message[T]) {
-		m.properties.Set(PropTTL, ttl)
+		m.Properties[PropCreatedAt] = createdAt
 	}
 }
 
 // WithSubject sets the subject of the message.
 func WithSubject[T any](subject string) Option[T] {
 	return func(m *Message[T]) {
-		m.properties.Set(PropSubject, subject)
+		m.Properties[PropSubject] = subject
 	}
 }
 
 // WithContentType sets the content type of the message.
 func WithContentType[T any](ct string) Option[T] {
 	return func(m *Message[T]) {
-		m.properties.Set(PropContentType, ct)
+		m.Properties[PropContentType] = ct
 	}
 }
 
-// Payload returns the message payload.
-func (m *Message[T]) Payload() T {
-	return m.payload
+// IDProps returns the message ID from properties.
+func IDProps(m map[string]any) (string, bool) {
+	if v, ok := m[PropID]; ok {
+		if id, ok := v.(string); ok {
+			return id, true
+		}
+	}
+	return "", false
 }
 
-// ID returns the message ID. This is a convenience shortcut for m.Properties().ID().
-func (m *Message[T]) ID() (string, bool) {
-	return m.properties.ID()
+// CorrelationIDProps returns the correlation ID from properties.
+func CorrelationIDProps(m map[string]any) (string, bool) {
+	if v, ok := m[PropCorrelationID]; ok {
+		if id, ok := v.(string); ok {
+			return id, true
+		}
+	}
+	return "", false
 }
 
-// CorrelationID returns the correlation ID. This is a convenience shortcut for m.Properties().CorrelationID().
-func (m *Message[T]) CorrelationID() (string, bool) {
-	return m.properties.CorrelationID()
+// CreatedAtProps returns the created timestamp from properties.
+func CreatedAtProps(m map[string]any) (time.Time, bool) {
+	if v, ok := m[PropCreatedAt]; ok {
+		if t, ok := v.(time.Time); ok {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
-// CreatedAt returns when the message was created. This is a convenience shortcut for m.Properties().CreatedAt().
-func (m *Message[T]) CreatedAt() (time.Time, bool) {
-	return m.properties.CreatedAt()
+// SubjectProps returns the subject from properties.
+func SubjectProps(m map[string]any) (string, bool) {
+	if v, ok := m[PropSubject]; ok {
+		if s, ok := v.(string); ok {
+			return s, true
+		}
+	}
+	return "", false
 }
 
-// DeliveryCount returns the delivery count. This is a convenience shortcut for m.Properties().DeliveryCount().
-func (m *Message[T]) DeliveryCount() (int, bool) {
-	return m.properties.DeliveryCount()
-}
-
-// ReplyTo returns the reply-to address. This is a convenience shortcut for m.Properties().ReplyTo().
-func (m *Message[T]) ReplyTo() (string, bool) {
-	return m.properties.ReplyTo()
-}
-
-// SequenceNumber returns the sequence number. This is a convenience shortcut for m.Properties().SequenceNumber().
-func (m *Message[T]) SequenceNumber() (int64, bool) {
-	return m.properties.SequenceNumber()
-}
-
-// PartitionKey returns the partition key. This is a convenience shortcut for m.Properties().PartitionKey().
-func (m *Message[T]) PartitionKey() (string, bool) {
-	return m.properties.PartitionKey()
-}
-
-// PartitionOffset returns the partition offset. This is a convenience shortcut for m.Properties().PartitionOffset().
-func (m *Message[T]) PartitionOffset() (int64, bool) {
-	return m.properties.PartitionOffset()
-}
-
-// TTL returns the time-to-live. This is a convenience shortcut for m.Properties().TTL().
-func (m *Message[T]) TTL() (time.Duration, bool) {
-	return m.properties.TTL()
-}
-
-// Subject returns the subject. This is a convenience shortcut for m.Properties().Subject().
-func (m *Message[T]) Subject() (string, bool) {
-	return m.properties.Subject()
-}
-
-// ContentType returns the content type. This is a convenience shortcut for m.Properties().ContentType().
-func (m *Message[T]) ContentType() (string, bool) {
-	return m.properties.ContentType()
+// ContentTypeProps returns the content type from properties.
+func ContentTypeProps(m map[string]any) (string, bool) {
+	if v, ok := m[PropContentType]; ok {
+		if ct, ok := v.(string); ok {
+			return ct, true
+		}
+	}
+	return "", false
 }
 
 // SetExpectedAckCount sets the number of acknowledgments required before invoking the ack callback.
@@ -246,13 +193,10 @@ func (m *Message[T]) SetExpectedAckCount(count int) bool {
 }
 
 // Deadline returns the deadline for processing this message.
-// Returns the deadline and true if a deadline is set, otherwise returns zero time and false.
 func (m *Message[T]) Deadline() (time.Time, bool) {
-	if m.properties != nil {
-		if v, ok := m.properties.Get(PropDeadline); ok {
-			if deadline, ok := v.(time.Time); ok {
-				return deadline, true
-			}
+	if v, ok := m.Properties[PropDeadline]; ok {
+		if deadline, ok := v.(time.Time); ok {
+			return deadline, true
 		}
 	}
 	return time.Time{}, false
@@ -312,13 +256,12 @@ func (m *Message[T]) Nack(err error) bool {
 	return true
 }
 
-// Copy creates a new message with a different payload while preserving the original message's
-// properties and acknowledgment callbacks. This allows output messages to share
-// the same acknowledgment state as their input message. Thread-safe.
+// Copy creates a new message with a different payload while preserving
+// properties and acknowledgment callbacks.
 func Copy[In, Out any](msg *Message[In], payload Out) *Message[Out] {
 	return &Message[Out]{
-		properties: msg.properties,
-		payload:    payload,
+		Payload:    payload,
+		Properties: msg.Properties,
 		a:          msg.a,
 	}
 }
