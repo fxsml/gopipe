@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,11 @@ import (
 	"github.com/fxsml/gopipe/message"
 )
 
+type Order struct {
+	ID     string
+	Amount int
+}
+
 func main() {
 	ctx := context.Background()
 
@@ -18,54 +24,78 @@ func main() {
 	ack := func() { fmt.Println("✓ Message acknowledged") }
 	nack := func(err error) { fmt.Printf("✗ Message rejected: %v\n", err) }
 
-	// Create messages using the new functional options API
+	// Create messages using non-generic Message type (pub/sub pattern)
 	deadline := time.Now().Add(30 * time.Second)
+
+	// Marshal orders to []byte for messaging
+	order1, _ := json.Marshal(Order{ID: "order-1", Amount: 100})
+	order2, _ := json.Marshal(Order{ID: "order-2", Amount: 200})
+
 	in := channel.FromValues(
-		message.New(12,
-			message.WithDeadline[int](deadline),
-			message.WithAcking[int](ack, nack),
-			message.WithID[int]("msg-001"),
-			message.WithProperty[int]("source", "orders-queue"),
-			message.WithCreatedAt[int](time.Now()),
+		message.New(order1,
+			message.WithDeadline[[]byte](deadline),
+			message.WithAcking[[]byte](ack, nack),
+			message.WithID[[]byte]("msg-001"),
+			message.WithSubject[[]byte]("orders.created"),
+			message.WithCreatedAt[[]byte](time.Now()),
 		),
-		message.New(42,
-			message.WithDeadline[int](deadline),
-			message.WithAcking[int](ack, nack),
-			message.WithID[int]("msg-002"),
-			message.WithProperty[int]("source", "orders-queue"),
-			message.WithCreatedAt[int](time.Now()),
+		message.New(order2,
+			message.WithDeadline[[]byte](deadline),
+			message.WithAcking[[]byte](ack, nack),
+			message.WithID[[]byte]("msg-002"),
+			message.WithSubject[[]byte]("orders.created"),
+			message.WithCreatedAt[[]byte](time.Now()),
 		),
 	)
 
-	// Create pipe with acknowledgment
+	// Create pipe with acknowledgment - using non-generic Message
 	pipe := gopipe.NewTransformPipe(
-		func(ctx context.Context, msg *message.TypedMessage[int]) (*message.TypedMessage[int], error) {
+		func(ctx context.Context, msg *message.Message) (*message.Message, error) {
 			msg.Properties["processed_at"] = time.Now().Format(time.RFC3339)
 
-			// Simulate processing error
-			p := msg.Payload
-			if p == 12 {
-				err := fmt.Errorf("cannot process payload 12")
+			// Unmarshal the order
+			var order Order
+			if err := json.Unmarshal(msg.Payload, &order); err != nil {
+				err := fmt.Errorf("failed to unmarshal order: %w", err)
 				msg.Nack(err)
 				return nil, err
 			}
 
+			// Simulate processing error for order-1
+			if order.ID == "order-1" {
+				err := fmt.Errorf("cannot process order %s", order.ID)
+				msg.Nack(err)
+				return nil, err
+			}
+
+			// Process successfully - double the amount
+			order.Amount *= 2
+
+			// Marshal back to []byte
+			processedData, _ := json.Marshal(order)
+
 			// On success
-			res := p * 2
 			msg.Ack()
-			return message.Copy(msg, res), nil
+			result := message.Copy(msg, processedData)
+			result.Properties[message.PropSubject] = "orders.processed"
+			return result, nil
 		},
 	)
 
-	// Process message
+	// Process messages
 	results := pipe.Start(ctx, in)
 
 	// Consume results
-	<-channel.Sink(results, func(result *message.TypedMessage[int]) {
+	<-channel.Sink(results, func(result *message.Message) {
+		var order Order
+		json.Unmarshal(result.Payload, &order)
+
 		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Order ID: %s, Amount: %d\n", order.ID, order.Amount))
+		sb.WriteString("Properties:\n")
 		for key, value := range result.Properties {
 			sb.WriteString(fmt.Sprintf("  %s: %v\n", key, value))
 		}
-		fmt.Printf("Payload: %d\nProperties:\n%s", result.Payload, sb.String())
+		fmt.Print(sb.String())
 	})
 }
