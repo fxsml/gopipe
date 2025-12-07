@@ -70,10 +70,10 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Messag
 		gopipe.WithMetadataProvider[*Message, *Message](func(msg *Message) gopipe.Metadata {
 			metadata := gopipe.Metadata{}
 			if id, ok := msg.Properties.ID(); ok {
-				metadata["message_id"] = id
+				metadata[PropID] = id
 			}
 			if corr, ok := msg.Properties.CorrelationID(); ok {
-				metadata["correlation_id"] = corr
+				metadata[PropCorrelationID] = corr
 			}
 			return metadata
 		}),
