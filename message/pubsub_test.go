@@ -98,9 +98,9 @@ func TestPublisher_Basic(t *testing.T) {
 	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
-		msgs <- message.New([]byte("msg1"), message.WithSubject[[]byte]("topic-a"))
-		msgs <- message.New([]byte("msg2"), message.WithSubject[[]byte]("topic-a"))
-		msgs <- message.New([]byte("msg3"), message.WithSubject[[]byte]("topic-b"))
+		msgs <- message.New([]byte("msg1"), message.Properties{message.PropSubject: "topic-a"}, nil)
+		msgs <- message.New([]byte("msg2"), message.Properties{message.PropSubject: "topic-a"}, nil)
+		msgs <- message.New([]byte("msg3"), message.Properties{message.PropSubject: "topic-b"}, nil)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -151,7 +151,7 @@ func TestPublisher_Batching(t *testing.T) {
 	go func() {
 		defer close(msgs)
 		for i := 0; i < 10; i++ {
-			msgs <- message.New([]byte("msg"))
+			msgs <- message.New([]byte("msg"), nil, nil)
 		}
 	}()
 
@@ -188,7 +188,7 @@ func TestPublisher_ErrorHandling(t *testing.T) {
 	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
-		msgs <- message.New([]byte("msg"))
+		msgs <- message.New([]byte("msg"), nil, nil)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -228,7 +228,7 @@ func TestPublisher_Concurrency(t *testing.T) {
 	go func() {
 		defer close(msgs)
 		for i := 0; i < 10; i++ {
-			msgs <- message.New([]byte("msg"), message.WithSubject[[]byte]("topic-a"))
+			msgs <- message.New([]byte("msg"), message.Properties{message.PropSubject: "topic-a"}, nil)
 		}
 	}()
 
@@ -245,8 +245,8 @@ func TestPublisher_Concurrency(t *testing.T) {
 func TestSubscriber_Basic(t *testing.T) {
 	receiver := newMockReceiver()
 	receiver.addMessages("topic-a",
-		message.New([]byte("msg1")),
-		message.New([]byte("msg2")),
+		message.New([]byte("msg1"), nil, nil),
+		message.New([]byte("msg2"), nil, nil),
 	)
 
 	var callCount int
@@ -317,9 +317,9 @@ func TestSubscriber_MultipleReceives(t *testing.T) {
 		callCount++
 		switch callCount {
 		case 1:
-			return []*message.Message{message.New([]byte("msg1"))}, nil
+			return []*message.Message{message.New([]byte("msg1"), nil, nil)}, nil
 		case 2:
-			return []*message.Message{message.New([]byte("msg2"))}, nil
+			return []*message.Message{message.New([]byte("msg2"), nil, nil)}, nil
 		default:
 			<-ctx.Done()
 			return nil, ctx.Err()
@@ -368,7 +368,7 @@ func TestPublisher_WithRecover(t *testing.T) {
 	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
-		msgs <- message.New([]byte("msg"))
+		msgs <- message.New([]byte("msg"), nil, nil)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

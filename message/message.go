@@ -1,7 +1,6 @@
 package message
 
 import (
-	"maps"
 	"sync"
 	"time"
 )
@@ -23,13 +22,16 @@ type acking struct {
 	expectedAckCount int
 }
 
+// Properties is a map of message properties.
+type Properties map[string]any
+
 // TypedMessage wraps a typed payload with properties and acknowledgment callbacks.
 // Use this for type-safe pipelines where you need compile-time guarantees.
 // Payload and Properties are public for direct access.
 // Ack/Nack operations are mutually exclusive and idempotent.
 type TypedMessage[T any] struct {
 	Payload    T
-	Properties map[string]any
+	Properties Properties
 
 	a *acking
 }
@@ -39,107 +41,41 @@ type TypedMessage[T any] struct {
 // message broker integrations (Kafka, RabbitMQ, NATS, etc.).
 type Message = TypedMessage[[]byte]
 
-// Option is a functional option for configuring a TypedMessage.
-type Option[T any] func(*TypedMessage[T])
-
-// New creates a new typed message with the given payload and options.
-// For type-safe pipelines, use NewTyped which is more explicit.
-// For pub/sub messaging with []byte payloads, consider using the Message alias.
-func New[T any](payload T, opts ...Option[T]) *TypedMessage[T] {
-	m := &TypedMessage[T]{
+// New creates a new typed message with the given payload, properties, and acking.
+// Pass nil for properties if no properties are needed.
+// Pass nil for acking if no acknowledgment is required.
+func New[T any](payload T, props Properties, a *acking) *TypedMessage[T] {
+	if props == nil {
+		props = make(Properties)
+	}
+	return &TypedMessage[T]{
 		Payload:    payload,
-		Properties: make(map[string]any),
+		Properties: props,
+		a:          a,
 	}
-
-	for _, opt := range opts {
-		opt(m)
-	}
-
-	return m
 }
 
-// NewTyped creates a new typed message with the given payload and options.
+// NewTyped creates a new typed message with the given payload, properties, and acking.
 // This is an alias for New that makes the intent more explicit in typed pipelines.
-func NewTyped[T any](payload T, opts ...Option[T]) *TypedMessage[T] {
-	return New(payload, opts...)
+func NewTyped[T any](payload T, props Properties, a *acking) *TypedMessage[T] {
+	return New(payload, props, a)
 }
 
-// WithDeadline sets the message processing deadline.
-func WithDeadline[T any](deadline time.Time) Option[T] {
-	return func(m *TypedMessage[T]) {
-		if !deadline.IsZero() {
-			m.Properties[PropDeadline] = deadline
-		}
+// NewAcking creates an acking configuration with the given callbacks.
+// Both ack and nack callbacks must be provided (not nil).
+func NewAcking(ack func(), nack func(error)) *acking {
+	if ack == nil || nack == nil {
+		return nil
 	}
-}
-
-// WithAcking configures acknowledgment callbacks for the message.
-// Both ack and nack callbacks must be provided (not nil) for acknowledgment to be enabled.
-func WithAcking[T any](ack func(), nack func(error)) Option[T] {
-	return func(m *TypedMessage[T]) {
-		if ack != nil && nack != nil {
-			m.a = &acking{
-				ack:              ack,
-				nack:             nack,
-				expectedAckCount: 1,
-			}
-		}
-	}
-}
-
-// WithProperty sets a custom property on the message.
-func WithProperty[T any](key string, value any) Option[T] {
-	return func(m *TypedMessage[T]) {
-		m.Properties[key] = value
-	}
-}
-
-// WithProperties sets message properties using a map of key-value pairs.
-func WithProperties[T any](props map[string]any) Option[T] {
-	return func(m *TypedMessage[T]) {
-		if props != nil {
-			maps.Copy(m.Properties, props)
-		}
-	}
-}
-
-// WithID sets the message ID.
-func WithID[T any](id string) Option[T] {
-	return func(m *TypedMessage[T]) {
-		m.Properties[PropID] = id
-	}
-}
-
-// WithCorrelationID sets the correlation ID for tracking related messages.
-func WithCorrelationID[T any](correlationID string) Option[T] {
-	return func(m *TypedMessage[T]) {
-		m.Properties[PropCorrelationID] = correlationID
-	}
-}
-
-// WithCreatedAt sets the creation timestamp of the message.
-func WithCreatedAt[T any](createdAt time.Time) Option[T] {
-	return func(m *TypedMessage[T]) {
-		m.Properties[PropCreatedAt] = createdAt
-	}
-}
-
-// WithSubject sets the subject of the message.
-func WithSubject[T any](subject string) Option[T] {
-	return func(m *TypedMessage[T]) {
-		m.Properties[PropSubject] = subject
-	}
-}
-
-// WithContentType sets the content type of the message.
-func WithContentType[T any](ct string) Option[T] {
-	return func(m *TypedMessage[T]) {
-		m.Properties[PropContentType] = ct
+	return &acking{
+		ack:              ack,
+		nack:             nack,
+		expectedAckCount: 1,
 	}
 }
 
 // IDProps returns the message ID from properties.
-func IDProps(m map[string]any) (string, bool) {
+func IDProps(m Properties) (string, bool) {
 	if v, ok := m[PropID]; ok {
 		if id, ok := v.(string); ok {
 			return id, true
@@ -149,7 +85,7 @@ func IDProps(m map[string]any) (string, bool) {
 }
 
 // CorrelationIDProps returns the correlation ID from properties.
-func CorrelationIDProps(m map[string]any) (string, bool) {
+func CorrelationIDProps(m Properties) (string, bool) {
 	if v, ok := m[PropCorrelationID]; ok {
 		if id, ok := v.(string); ok {
 			return id, true
@@ -159,7 +95,7 @@ func CorrelationIDProps(m map[string]any) (string, bool) {
 }
 
 // CreatedAtProps returns the created timestamp from properties.
-func CreatedAtProps(m map[string]any) (time.Time, bool) {
+func CreatedAtProps(m Properties) (time.Time, bool) {
 	if v, ok := m[PropCreatedAt]; ok {
 		if t, ok := v.(time.Time); ok {
 			return t, true
@@ -169,7 +105,7 @@ func CreatedAtProps(m map[string]any) (time.Time, bool) {
 }
 
 // SubjectProps returns the subject from properties.
-func SubjectProps(m map[string]any) (string, bool) {
+func SubjectProps(m Properties) (string, bool) {
 	if v, ok := m[PropSubject]; ok {
 		if s, ok := v.(string); ok {
 			return s, true
@@ -179,7 +115,7 @@ func SubjectProps(m map[string]any) (string, bool) {
 }
 
 // ContentTypeProps returns the content type from properties.
-func ContentTypeProps(m map[string]any) (string, bool) {
+func ContentTypeProps(m Properties) (string, bool) {
 	if v, ok := m[PropContentType]; ok {
 		if ct, ok := v.(string); ok {
 			return ct, true
