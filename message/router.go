@@ -10,53 +10,46 @@ import (
 )
 
 var (
-	ErrInvalidMessageProperties = fmt.Errorf("invalid message properties")
-	ErrInvalidMessagePayload    = fmt.Errorf("invalid message payload")
+	// ErrInvalidMessagePayload indicates message payload marshal or unmarshal failure.
+	ErrInvalidMessagePayload = fmt.Errorf("invalid message payload")
 )
 
+// RouterConfig configures message routing behavior.
 type RouterConfig struct {
 	Concurrency int
 	Timeout     time.Duration
 	Retry       *gopipe.RetryConfig
 	Recover     bool
-
-	Marshal   func(msg any) ([]byte, error)
-	Unmarshal func(data []byte, msg any) error
 }
 
+// Router dispatches messages to registered handlers based on property matching.
 type Router struct {
-	handlers []*Handler
+	handlers []Handler
 	config   RouterConfig
 }
 
-func NewRouter(config RouterConfig, handlers ...*Handler) *Router {
+// NewRouter creates a router with the given configuration and handlers.
+func NewRouter(config RouterConfig, handlers ...Handler) *Router {
 	return &Router{
 		handlers: handlers,
 		config:   config,
 	}
 }
 
-func (r *Router) AddHandler(handler *Handler) {
+// AddHandler appends a handler to the router's handler list.
+func (r *Router) AddHandler(handler Handler) {
 	r.handlers = append(r.handlers, handler)
 }
 
+// Start processes incoming messages through matched handlers and returns output messages.
 func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Message {
-	for _, h := range r.handlers {
-		if r.config.Marshal != nil {
-			h.marshal = r.config.Marshal
-		}
-		if r.config.Unmarshal != nil {
-			h.unmarshal = r.config.Unmarshal
-		}
-	}
-
 	handle := func(ctx context.Context, msg *Message) ([]*Message, error) {
 		for _, h := range r.handlers {
 			if h.Match(msg.Properties) {
 				return h.Handle(ctx, msg)
 			}
 		}
-		err := fmt.Errorf("%w: no handler matched", ErrInvalidMessageProperties)
+		err := fmt.Errorf("no handler matched")
 		msg.Nack(err)
 		return nil, err
 	}
@@ -94,29 +87,46 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Messag
 	return gopipe.NewProcessPipe(handle, opts...).Start(ctx, msgs)
 }
 
-type Handler struct {
-	Handle func(ctx context.Context, msg *Message) ([]*Message, error)
-	Match  func(prop Properties) bool
-
-	marshal   func(msg any) ([]byte, error)
-	unmarshal func(data []byte, msg any) error
+// Handler processes messages matching specific properties.
+type Handler interface {
+	Handle(ctx context.Context, msg *Message) ([]*Message, error)
+	Match(prop Properties) bool
 }
 
-func NewHandler[In, Out any](
+type handler struct {
+	handle func(ctx context.Context, msg *Message) ([]*Message, error)
+	match  func(prop Properties) bool
+}
+
+func (h *handler) Handle(ctx context.Context, msg *Message) ([]*Message, error) {
+	return h.handle(ctx, msg)
+}
+
+func (h *handler) Match(prop Properties) bool {
+	return h.match(prop)
+}
+
+// NewHandler creates a handler from message processing and matching functions.
+func NewHandler(
+	handle func(ctx context.Context, msg *Message) ([]*Message, error),
+	match func(prop Properties) bool,
+) Handler {
+	return &handler{
+		handle: handle,
+		match:  match,
+	}
+}
+
+// NewJSONHandler creates a handler that unmarshals JSON input and marshals JSON output.
+func NewJSONHandler[In, Out any](
 	handle func(ctx context.Context, payload In) ([]Out, error),
 	match func(prop Properties) bool,
 	props func(prop Properties) Properties,
-) *Handler {
-	h := &Handler{
-		Match:     match,
-		unmarshal: json.Unmarshal,
-		marshal:   json.Marshal,
-	}
-
-	h.Handle = func(ctx context.Context, msg *Message) ([]*Message, error) {
+) Handler {
+	h := func(ctx context.Context, msg *Message) ([]*Message, error) {
 		var payload In
-		if err := h.unmarshal(msg.Payload, &payload); err != nil {
-			err = fmt.Errorf("unmarshal: %w: %w", ErrInvalidMessagePayload, err)
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			err = fmt.Errorf("unmarshal message: %w: %w", ErrInvalidMessagePayload, err)
 			msg.Nack(err)
 			return nil, err
 		}
@@ -130,9 +140,9 @@ func NewHandler[In, Out any](
 
 		var msgs []*Message
 		for _, o := range out {
-			data, err := h.marshal(o)
+			data, err := json.Marshal(o)
 			if err != nil {
-				err = fmt.Errorf("marshal: %w: %w", ErrInvalidMessagePayload, err)
+				err = fmt.Errorf("marshal message: %w: %w", ErrInvalidMessagePayload, err)
 				msg.Nack(err)
 				return nil, err
 			}
@@ -144,5 +154,8 @@ func NewHandler[In, Out any](
 		msg.Ack()
 		return msgs, nil
 	}
-	return h
+	return &handler{
+		handle: h,
+		match:  match,
+	}
 }

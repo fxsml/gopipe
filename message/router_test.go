@@ -23,7 +23,7 @@ type OrderConfirmed struct {
 }
 
 func TestRouter_BasicRouting(t *testing.T) {
-	orderHandler := message.NewHandler(
+	orderHandler := message.NewJSONHandler(
 		func(ctx context.Context, order Order) ([]OrderConfirmed, error) {
 			return []OrderConfirmed{{
 				ID:          order.ID,
@@ -77,7 +77,7 @@ func TestRouter_BasicRouting(t *testing.T) {
 }
 
 func TestRouter_MultipleHandlers(t *testing.T) {
-	orderHandler := message.NewHandler(
+	orderHandler := message.NewJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			order.Amount *= 2
 			return []Order{order}, nil
@@ -93,7 +93,7 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 		},
 	)
 
-	confirmHandler := message.NewHandler(
+	confirmHandler := message.NewJSONHandler(
 		func(ctx context.Context, order Order) ([]OrderConfirmed, error) {
 			return []OrderConfirmed{{ID: order.ID}}, nil
 		},
@@ -138,7 +138,7 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 }
 
 func TestRouter_NoMatchingHandler(t *testing.T) {
-	orderHandler := message.NewHandler(
+	orderHandler := message.NewJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
@@ -186,14 +186,14 @@ func TestRouter_NoMatchingHandler(t *testing.T) {
 	if !nackCalled {
 		t.Error("Expected nack to be called")
 	}
-	if nackErr == nil || !errors.Is(nackErr, message.ErrInvalidMessageProperties) {
-		t.Errorf("Expected ErrInvalidMessageProperties, got %v", nackErr)
+	if nackErr == nil {
+		t.Error("Expected nack error to be set")
 	}
 }
 
 func TestRouter_HandlerError(t *testing.T) {
 	testErr := errors.New("handler error")
-	handler := message.NewHandler(
+	handler := message.NewJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return nil, testErr
 		},
@@ -243,7 +243,7 @@ func TestRouter_HandlerError(t *testing.T) {
 }
 
 func TestRouter_UnmarshalError(t *testing.T) {
-	handler := message.NewHandler(
+	handler := message.NewJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
@@ -286,7 +286,7 @@ func TestRouter_UnmarshalError(t *testing.T) {
 }
 
 func TestRouter_AckOnSuccess(t *testing.T) {
-	handler := message.NewHandler(
+	handler := message.NewJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
@@ -328,7 +328,7 @@ func TestRouter_Concurrency(t *testing.T) {
 	var mu sync.Mutex
 	var processedIDs []string
 
-	handler := message.NewHandler(
+	handler := message.NewJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			time.Sleep(10 * time.Millisecond)
 			mu.Lock()
@@ -376,54 +376,8 @@ func TestRouter_Concurrency(t *testing.T) {
 	mu.Unlock()
 }
 
-func TestRouter_CustomMarshalUnmarshal(t *testing.T) {
-	handler := message.NewHandler(
-		func(ctx context.Context, order Order) ([]Order, error) {
-			return []Order{order}, nil
-		},
-		func(prop message.Properties) bool {
-			return true
-		},
-		func(prop message.Properties) message.Properties {
-			return make(message.Properties)
-		},
-	)
-
-	customMarshalCalled := false
-	customUnmarshalCalled := false
-
-	router := message.NewRouter(message.RouterConfig{
-		Marshal: func(msg any) ([]byte, error) {
-			customMarshalCalled = true
-			return json.Marshal(msg)
-		},
-		Unmarshal: func(data []byte, msg any) error {
-			customUnmarshalCalled = true
-			return json.Unmarshal(data, msg)
-		},
-	}, handler)
-
-	data, _ := json.Marshal(Order{ID: "order-1"})
-	in := channel.FromValues(message.New(data, nil))
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	out := router.Start(ctx, in)
-
-	for range out {
-	}
-
-	if !customMarshalCalled {
-		t.Error("Expected custom marshal to be called")
-	}
-	if !customUnmarshalCalled {
-		t.Error("Expected custom unmarshal to be called")
-	}
-}
-
 func TestRouter_WithRecover(t *testing.T) {
-	handler := message.NewHandler(
+	handler := message.NewJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			panic("handler panic")
 		},
@@ -453,7 +407,7 @@ func TestRouter_WithRecover(t *testing.T) {
 }
 
 func TestRouter_MultipleOutputMessages(t *testing.T) {
-	handler := message.NewHandler(
+	handler := message.NewJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			// Return multiple messages
 			return []Order{
@@ -490,7 +444,7 @@ func TestRouter_MultipleOutputMessages(t *testing.T) {
 }
 
 func TestRouter_PreservesProperties(t *testing.T) {
-	handler := message.NewHandler(
+	handler := message.NewJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
