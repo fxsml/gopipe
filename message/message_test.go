@@ -413,7 +413,7 @@ func TestMessage_NewWithOptions(t *testing.T) {
 		}
 		msg := message.New("payload", props)
 
-		if id, ok := message.IDProps(msg.Properties); !ok || id != "msg-001" {
+		if id, ok := msg.Properties.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q (ok=%v)", id, ok)
 		}
 	})
@@ -424,7 +424,7 @@ func TestMessage_NewWithOptions(t *testing.T) {
 		}
 		msg := message.New("payload", props)
 
-		if id, ok := message.CorrelationIDProps(msg.Properties); !ok || id != "corr-123" {
+		if id, ok := msg.Properties.CorrelationID(); !ok || id != "corr-123" {
 			t.Errorf("Expected CorrelationID 'corr-123', got %q (ok=%v)", id, ok)
 		}
 	})
@@ -466,12 +466,12 @@ func TestMessage_NewWithOptions(t *testing.T) {
 		}
 
 		// Verify ID
-		if id, ok := message.IDProps(msg.Properties); !ok || id != "msg-001" {
+		if id, ok := msg.Properties.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q", id)
 		}
 
 		// Verify CorrelationID
-		if corrID, ok := message.CorrelationIDProps(msg.Properties); !ok || corrID != "order-123" {
+		if corrID, ok := msg.Properties.CorrelationID(); !ok || corrID != "order-123" {
 			t.Errorf("Expected CorrelationID 'order-123', got %q", corrID)
 		}
 
@@ -501,16 +501,16 @@ func TestMessage_NewWithOptions(t *testing.T) {
 
 	t.Run("WithMultipleProperties", func(t *testing.T) {
 		props := message.Properties{
-			message.PropID:      "msg-001",
-			"initial":           "value",
-			"tenant":            "acme-corp",
-			"priority":          5,
+			message.PropID:            "msg-001",
+			"initial":                 "value",
+			"tenant":                  "acme-corp",
+			"priority":                5,
 			message.PropCorrelationID: "corr-123",
 		}
 		msg := message.New("payload", props)
 
 		// Verify that ID is set
-		if id, ok := message.IDProps(msg.Properties); !ok || id != "msg-001" {
+		if id, ok := msg.Properties.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q", id)
 		}
 
@@ -529,7 +529,7 @@ func TestMessage_NewWithOptions(t *testing.T) {
 		}
 
 		// Verify that CorrelationID is set
-		if corrID, ok := message.CorrelationIDProps(msg.Properties); !ok || corrID != "corr-123" {
+		if corrID, ok := msg.Properties.CorrelationID(); !ok || corrID != "corr-123" {
 			t.Errorf("Expected CorrelationID 'corr-123', got %q", corrID)
 		}
 
@@ -559,17 +559,17 @@ func TestMessage_TypedAccessors(t *testing.T) {
 		msg := message.New(42, props)
 
 		// Test ID
-		if id, ok := message.IDProps(msg.Properties); !ok || id != "msg-001" {
+		if id, ok := msg.Properties.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q (ok=%v)", id, ok)
 		}
 
 		// Test CorrelationID
-		if id, ok := message.CorrelationIDProps(msg.Properties); !ok || id != "corr-123" {
+		if id, ok := msg.Properties.CorrelationID(); !ok || id != "corr-123" {
 			t.Errorf("Expected CorrelationID 'corr-123', got %q (ok=%v)", id, ok)
 		}
 
 		// Test CreatedAt
-		if ts, ok := message.CreatedAtProps(msg.Properties); !ok || !ts.Equal(now) {
+		if ts, ok := msg.Properties.CreatedAt(); !ok || !ts.Equal(now) {
 			t.Errorf("Expected CreatedAt %v, got %v (ok=%v)", now, ts, ok)
 		}
 	})
@@ -584,15 +584,15 @@ func TestMessage_TypedAccessors(t *testing.T) {
 		msg.Properties[message.PropCreatedAt] = now
 
 		// Get via pass-through functions
-		if id, ok := message.IDProps(msg.Properties); !ok || id != "msg-001" {
+		if id, ok := msg.Properties.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q (ok=%v)", id, ok)
 		}
 
-		if id, ok := message.CorrelationIDProps(msg.Properties); !ok || id != "corr-123" {
+		if id, ok := msg.Properties.CorrelationID(); !ok || id != "corr-123" {
 			t.Errorf("Expected CorrelationID 'corr-123', got %q (ok=%v)", id, ok)
 		}
 
-		if ts, ok := message.CreatedAtProps(msg.Properties); !ok || !ts.Equal(now) {
+		if ts, ok := msg.Properties.CreatedAt(); !ok || !ts.Equal(now) {
 			t.Errorf("Expected CreatedAt %v, got %v (ok=%v)", now, ts, ok)
 		}
 	})

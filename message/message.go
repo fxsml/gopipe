@@ -76,39 +76,9 @@ func NewWithAcking[T any](payload T, props Properties, ack func(), nack func(err
 	}
 }
 
-// IDProps returns the message ID from properties.
-func IDProps(m Properties) (string, bool) {
-	if v, ok := m[PropID]; ok {
-		if id, ok := v.(string); ok {
-			return id, true
-		}
-	}
-	return "", false
-}
-
-// CorrelationIDProps returns the correlation ID from properties.
-func CorrelationIDProps(m Properties) (string, bool) {
-	if v, ok := m[PropCorrelationID]; ok {
-		if id, ok := v.(string); ok {
-			return id, true
-		}
-	}
-	return "", false
-}
-
-// CreatedAtProps returns the created timestamp from properties.
-func CreatedAtProps(m Properties) (time.Time, bool) {
-	if v, ok := m[PropCreatedAt]; ok {
-		if t, ok := v.(time.Time); ok {
-			return t, true
-		}
-	}
-	return time.Time{}, false
-}
-
-// SubjectProps returns the subject from properties.
-func SubjectProps(m Properties) (string, bool) {
-	if v, ok := m[PropSubject]; ok {
+// String retrieves a string property by key.
+func (p Properties) String(key string) (string, bool) {
+	if v, ok := p[key]; ok {
 		if s, ok := v.(string); ok {
 			return s, true
 		}
@@ -116,14 +86,44 @@ func SubjectProps(m Properties) (string, bool) {
 	return "", false
 }
 
-// ContentTypeProps returns the content type from properties.
-func ContentTypeProps(m Properties) (string, bool) {
-	if v, ok := m[PropContentType]; ok {
-		if ct, ok := v.(string); ok {
-			return ct, true
+// Time retrieves a time.Time property by key.
+func (p Properties) Time(key string) (time.Time, bool) {
+	if v, ok := p[key]; ok {
+		if t, ok := v.(time.Time); ok {
+			return t, true
 		}
 	}
-	return "", false
+	return time.Time{}, false
+}
+
+// ID returns the message ID as string from properties.
+func (p Properties) ID() (string, bool) {
+	return p.String(PropID)
+}
+
+// CorrelationID returns the correlation ID as string from properties.
+func (p Properties) CorrelationID() (string, bool) {
+	return p.String(PropCorrelationID)
+}
+
+// CreatedAt returns the created timestamp from properties.
+func (p Properties) CreatedAt() (time.Time, bool) {
+	return p.Time(PropCreatedAt)
+}
+
+// Subject returns the subject as string from properties.
+func (p Properties) Subject() (string, bool) {
+	return p.String(PropSubject)
+}
+
+// ContentType returns the content type as string from properties.
+func (p Properties) ContentType() (string, bool) {
+	return p.String(PropContentType)
+}
+
+// Deadline returns the deadline for processing this message.
+func (p Properties) Deadline() (time.Time, bool) {
+	return p.Time(PropDeadline)
 }
 
 // SetExpectedAckCount sets the number of acknowledgments required before invoking the ack callback.
