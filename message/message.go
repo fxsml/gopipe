@@ -76,20 +76,6 @@ func NewWithAcking[T any](payload T, props Properties, ack func(), nack func(err
 	}
 }
 
-// NewAcking creates an acking configuration with the given callbacks.
-// Both ack and nack callbacks must be provided (not nil).
-// Deprecated: Use NewWithAcking instead.
-func NewAcking(ack func(), nack func(error)) *acking {
-	if ack == nil || nack == nil {
-		return nil
-	}
-	return &acking{
-		ack:              ack,
-		nack:             nack,
-		expectedAckCount: 1,
-	}
-}
-
 // IDProps returns the message ID from properties.
 func IDProps(m Properties) (string, bool) {
 	if v, ok := m[PropID]; ok {
