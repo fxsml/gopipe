@@ -30,12 +30,12 @@ func TestRouter_BasicRouting(t *testing.T) {
 				ConfirmedAt: time.Now(),
 			}}, nil
 		},
-		func(prop map[string]any) bool {
-			subject, _ := message.SubjectProps(prop)
+		func(prop message.Properties) bool {
+			subject, _ := prop.Subject()
 			return subject == "orders.new"
 		},
-		func(prop map[string]any) map[string]any {
-			p := make(map[string]any)
+		func(prop message.Properties) message.Properties {
+			p := make(message.Properties)
 			p[message.PropSubject] = "orders.confirmed"
 			return p
 		},
@@ -63,7 +63,7 @@ func TestRouter_BasicRouting(t *testing.T) {
 	}
 
 	if len(results) > 0 {
-		subject, _ := message.SubjectProps(results[0].Properties)
+		subject, _ := results[0].Properties.Subject()
 		if subject != "orders.confirmed" {
 			t.Errorf("Expected subject 'orders.confirmed', got %s", subject)
 		}
@@ -82,12 +82,12 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 			order.Amount *= 2
 			return []Order{order}, nil
 		},
-		func(prop map[string]any) bool {
-			subject, _ := message.SubjectProps(prop)
+		func(prop message.Properties) bool {
+			subject, _ := prop.Subject()
 			return subject == "orders"
 		},
-		func(prop map[string]any) map[string]any {
-			p := make(map[string]any)
+		func(prop message.Properties) message.Properties {
+			p := make(message.Properties)
 			p[message.PropSubject] = "orders.processed"
 			return p
 		},
@@ -97,12 +97,12 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 		func(ctx context.Context, order Order) ([]OrderConfirmed, error) {
 			return []OrderConfirmed{{ID: order.ID}}, nil
 		},
-		func(prop map[string]any) bool {
-			subject, _ := message.SubjectProps(prop)
+		func(prop message.Properties) bool {
+			subject, _ := prop.Subject()
 			return subject == "confirmations"
 		},
-		func(prop map[string]any) map[string]any {
-			p := make(map[string]any)
+		func(prop message.Properties) message.Properties {
+			p := make(message.Properties)
 			p[message.PropSubject] = "confirmations.done"
 			return p
 		},
@@ -125,7 +125,7 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 
 	results := make(map[string]int)
 	for msg := range out {
-		subject, _ := message.SubjectProps(msg.Properties)
+		subject, _ := msg.Properties.Subject()
 		results[subject]++
 	}
 
@@ -142,12 +142,12 @@ func TestRouter_NoMatchingHandler(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
-		func(prop map[string]any) bool {
-			subject, _ := message.SubjectProps(prop)
+		func(prop message.Properties) bool {
+			subject, _ := prop.Subject()
 			return subject == "orders"
 		},
-		func(prop map[string]any) map[string]any {
-			return make(map[string]any)
+		func(prop message.Properties) message.Properties {
+			return make(message.Properties)
 		},
 	)
 
@@ -197,11 +197,11 @@ func TestRouter_HandlerError(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return nil, testErr
 		},
-		func(prop map[string]any) bool {
+		func(prop message.Properties) bool {
 			return true
 		},
-		func(prop map[string]any) map[string]any {
-			return make(map[string]any)
+		func(prop message.Properties) message.Properties {
+			return make(message.Properties)
 		},
 	)
 
@@ -247,11 +247,11 @@ func TestRouter_UnmarshalError(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
-		func(prop map[string]any) bool {
+		func(prop message.Properties) bool {
 			return true
 		},
-		func(prop map[string]any) map[string]any {
-			return make(map[string]any)
+		func(prop message.Properties) message.Properties {
+			return make(message.Properties)
 		},
 	)
 
@@ -290,11 +290,11 @@ func TestRouter_AckOnSuccess(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
-		func(prop map[string]any) bool {
+		func(prop message.Properties) bool {
 			return true
 		},
-		func(prop map[string]any) map[string]any {
-			return make(map[string]any)
+		func(prop message.Properties) message.Properties {
+			return make(message.Properties)
 		},
 	)
 
@@ -336,11 +336,11 @@ func TestRouter_Concurrency(t *testing.T) {
 			mu.Unlock()
 			return []Order{order}, nil
 		},
-		func(prop map[string]any) bool {
+		func(prop message.Properties) bool {
 			return true
 		},
-		func(prop map[string]any) map[string]any {
-			return make(map[string]any)
+		func(prop message.Properties) message.Properties {
+			return make(message.Properties)
 		},
 	)
 
@@ -381,11 +381,11 @@ func TestRouter_CustomMarshalUnmarshal(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
-		func(prop map[string]any) bool {
+		func(prop message.Properties) bool {
 			return true
 		},
-		func(prop map[string]any) map[string]any {
-			return make(map[string]any)
+		func(prop message.Properties) message.Properties {
+			return make(message.Properties)
 		},
 	)
 
@@ -427,11 +427,11 @@ func TestRouter_WithRecover(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			panic("handler panic")
 		},
-		func(prop map[string]any) bool {
+		func(prop message.Properties) bool {
 			return true
 		},
-		func(prop map[string]any) map[string]any {
-			return make(map[string]any)
+		func(prop message.Properties) message.Properties {
+			return make(message.Properties)
 		},
 	)
 
@@ -461,11 +461,11 @@ func TestRouter_MultipleOutputMessages(t *testing.T) {
 				{ID: order.ID + "-2", Amount: order.Amount},
 			}, nil
 		},
-		func(prop map[string]any) bool {
+		func(prop message.Properties) bool {
 			return true
 		},
-		func(prop map[string]any) map[string]any {
-			return make(map[string]any)
+		func(prop message.Properties) message.Properties {
+			return make(message.Properties)
 		},
 	)
 
@@ -494,13 +494,13 @@ func TestRouter_PreservesProperties(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
-		func(prop map[string]any) bool {
+		func(prop message.Properties) bool {
 			return true
 		},
-		func(prop map[string]any) map[string]any {
+		func(prop message.Properties) message.Properties {
 			// Preserve correlation ID
-			p := make(map[string]any)
-			if corr, ok := message.CorrelationIDProps(prop); ok {
+			p := make(message.Properties)
+			if corr, ok := prop.CorrelationID(); ok {
 				p[message.PropCorrelationID] = corr
 			}
 			p[message.PropSubject] = "processed"
@@ -523,11 +523,11 @@ func TestRouter_PreservesProperties(t *testing.T) {
 	out := router.Start(ctx, in)
 
 	for msg := range out {
-		corrID, ok := message.CorrelationIDProps(msg.Properties)
+		corrID, ok := msg.Properties.CorrelationID()
 		if !ok || corrID != "corr-123" {
 			t.Errorf("Expected correlation ID 'corr-123', got %s (ok=%v)", corrID, ok)
 		}
-		subject, ok := message.SubjectProps(msg.Properties)
+		subject, ok := msg.Properties.Subject()
 		if !ok || subject != "processed" {
 			t.Errorf("Expected subject 'processed', got %s (ok=%v)", subject, ok)
 		}

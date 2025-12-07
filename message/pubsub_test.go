@@ -86,7 +86,7 @@ func TestPublisher_Basic(t *testing.T) {
 	publisher := message.NewPublisher(
 		sender,
 		func(msg *message.Message) string {
-			subject, _ := message.SubjectProps(msg.Properties)
+			subject, _ := msg.Properties.Subject()
 			return subject
 		},
 		message.PublisherConfig{
@@ -214,7 +214,7 @@ func TestPublisher_Concurrency(t *testing.T) {
 	publisher := message.NewPublisher(
 		sender,
 		func(msg *message.Message) string {
-			subject, _ := message.SubjectProps(msg.Properties)
+			subject, _ := msg.Properties.Subject()
 			return subject
 		},
 		message.PublisherConfig{

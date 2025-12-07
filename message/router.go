@@ -69,10 +69,10 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Messag
 		}),
 		gopipe.WithMetadataProvider[*Message, *Message](func(msg *Message) gopipe.Metadata {
 			metadata := gopipe.Metadata{}
-			if id, ok := IDProps(msg.Properties); ok {
+			if id, ok := msg.Properties.ID(); ok {
 				metadata["message_id"] = id
 			}
-			if corr, ok := CorrelationIDProps(msg.Properties); ok {
+			if corr, ok := msg.Properties.CorrelationID(); ok {
 				metadata["correlation_id"] = corr
 			}
 			return metadata
@@ -96,7 +96,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Messag
 
 type Handler struct {
 	Handle func(ctx context.Context, msg *Message) ([]*Message, error)
-	Match  func(prop map[string]any) bool
+	Match  func(prop Properties) bool
 
 	marshal   func(msg any) ([]byte, error)
 	unmarshal func(data []byte, msg any) error
@@ -104,8 +104,8 @@ type Handler struct {
 
 func NewHandler[In, Out any](
 	handle func(ctx context.Context, payload In) ([]Out, error),
-	match func(prop map[string]any) bool,
-	props func(prop map[string]any) map[string]any,
+	match func(prop Properties) bool,
+	props func(prop Properties) Properties,
 ) *Handler {
 	h := &Handler{
 		Match:     match,
