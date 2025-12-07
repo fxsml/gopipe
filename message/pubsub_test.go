@@ -14,18 +14,18 @@ import (
 // Mock sender for testing
 type mockSender struct {
 	mu       sync.Mutex
-	sent     map[string][][]*message.Message[[]byte]
+	sent     map[string][][]*message.Message
 	sendErr  error
-	sendFunc func(ctx context.Context, topic string, msgs []*message.Message[[]byte]) error
+	sendFunc func(ctx context.Context, topic string, msgs []*message.Message) error
 }
 
 func newMockSender() *mockSender {
 	return &mockSender{
-		sent: make(map[string][][]*message.Message[[]byte]),
+		sent: make(map[string][][]*message.Message),
 	}
 }
 
-func (m *mockSender) Send(ctx context.Context, topic string, msgs []*message.Message[[]byte]) error {
+func (m *mockSender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	if m.sendFunc != nil {
 		return m.sendFunc(ctx, topic, msgs)
 	}
@@ -38,7 +38,7 @@ func (m *mockSender) Send(ctx context.Context, topic string, msgs []*message.Mes
 	return nil
 }
 
-func (m *mockSender) getSent(topic string) [][]*message.Message[[]byte] {
+func (m *mockSender) getSent(topic string) [][]*message.Message {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.sent[topic]
@@ -47,24 +47,24 @@ func (m *mockSender) getSent(topic string) [][]*message.Message[[]byte] {
 // Mock receiver for testing
 type mockReceiver struct {
 	mu          sync.Mutex
-	messages    map[string][]*message.Message[[]byte]
+	messages    map[string][]*message.Message
 	receiveErr  error
-	receiveFunc func(ctx context.Context, topic string) ([]*message.Message[[]byte], error)
+	receiveFunc func(ctx context.Context, topic string) ([]*message.Message, error)
 }
 
 func newMockReceiver() *mockReceiver {
 	return &mockReceiver{
-		messages: make(map[string][]*message.Message[[]byte]),
+		messages: make(map[string][]*message.Message),
 	}
 }
 
-func (m *mockReceiver) addMessages(topic string, msgs ...*message.Message[[]byte]) {
+func (m *mockReceiver) addMessages(topic string, msgs ...*message.Message) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.messages[topic] = append(m.messages[topic], msgs...)
 }
 
-func (m *mockReceiver) Receive(ctx context.Context, topic string) ([]*message.Message[[]byte], error) {
+func (m *mockReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
 	if m.receiveFunc != nil {
 		return m.receiveFunc(ctx, topic)
 	}
@@ -85,7 +85,7 @@ func TestPublisher_Basic(t *testing.T) {
 	sender := newMockSender()
 	publisher := message.NewPublisher(
 		sender,
-		func(msg *message.Message[[]byte]) string {
+		func(msg *message.Message) string {
 			subject, _ := message.SubjectProps(msg.Properties)
 			return subject
 		},
@@ -95,7 +95,7 @@ func TestPublisher_Basic(t *testing.T) {
 		},
 	)
 
-	msgs := make(chan *message.Message[[]byte])
+	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
 		msgs <- message.New([]byte("msg1"), message.WithSubject[[]byte]("topic-a"))
@@ -140,14 +140,14 @@ func TestPublisher_Batching(t *testing.T) {
 	sender := newMockSender()
 	publisher := message.NewPublisher(
 		sender,
-		func(msg *message.Message[[]byte]) string { return "topic" },
+		func(msg *message.Message) string { return "topic" },
 		message.PublisherConfig{
 			MaxBatchSize: 3,
 			MaxDuration:  time.Hour,
 		},
 	)
 
-	msgs := make(chan *message.Message[[]byte])
+	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
 		for i := 0; i < 10; i++ {
@@ -174,7 +174,7 @@ func TestPublisher_ErrorHandling(t *testing.T) {
 
 	publisher := message.NewPublisher(
 		sender,
-		func(msg *message.Message[[]byte]) string { return "topic" },
+		func(msg *message.Message) string { return "topic" },
 		message.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
@@ -185,7 +185,7 @@ func TestPublisher_ErrorHandling(t *testing.T) {
 		},
 	)
 
-	msgs := make(chan *message.Message[[]byte])
+	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
 		msgs <- message.New([]byte("msg"))
@@ -203,7 +203,7 @@ func TestPublisher_Concurrency(t *testing.T) {
 	var mu sync.Mutex
 
 	sender := newMockSender()
-	sender.sendFunc = func(ctx context.Context, topic string, msgs []*message.Message[[]byte]) error {
+	sender.sendFunc = func(ctx context.Context, topic string, msgs []*message.Message) error {
 		mu.Lock()
 		sendCount++
 		mu.Unlock()
@@ -213,7 +213,7 @@ func TestPublisher_Concurrency(t *testing.T) {
 
 	publisher := message.NewPublisher(
 		sender,
-		func(msg *message.Message[[]byte]) string {
+		func(msg *message.Message) string {
 			subject, _ := message.SubjectProps(msg.Properties)
 			return subject
 		},
@@ -224,7 +224,7 @@ func TestPublisher_Concurrency(t *testing.T) {
 		},
 	)
 
-	msgs := make(chan *message.Message[[]byte])
+	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
 		for i := 0; i < 10; i++ {
@@ -250,7 +250,7 @@ func TestSubscriber_Basic(t *testing.T) {
 	)
 
 	var callCount int
-	receiver.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message[[]byte], error) {
+	receiver.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message, error) {
 		callCount++
 		if callCount == 1 {
 			return receiver.messages[topic], nil
@@ -313,13 +313,13 @@ func TestSubscriber_MultipleReceives(t *testing.T) {
 	receiver := newMockReceiver()
 	callCount := 0
 
-	receiver.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message[[]byte], error) {
+	receiver.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message, error) {
 		callCount++
 		switch callCount {
 		case 1:
-			return []*message.Message[[]byte]{message.New([]byte("msg1"))}, nil
+			return []*message.Message{message.New([]byte("msg1"))}, nil
 		case 2:
-			return []*message.Message[[]byte]{message.New([]byte("msg2"))}, nil
+			return []*message.Message{message.New([]byte("msg2"))}, nil
 		default:
 			<-ctx.Done()
 			return nil, ctx.Err()
@@ -351,13 +351,13 @@ func TestSubscriber_MultipleReceives(t *testing.T) {
 
 func TestPublisher_WithRecover(t *testing.T) {
 	sender := newMockSender()
-	sender.sendFunc = func(ctx context.Context, topic string, msgs []*message.Message[[]byte]) error {
+	sender.sendFunc = func(ctx context.Context, topic string, msgs []*message.Message) error {
 		panic("send panic")
 	}
 
 	publisher := message.NewPublisher(
 		sender,
-		func(msg *message.Message[[]byte]) string { return "topic" },
+		func(msg *message.Message) string { return "topic" },
 		message.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
@@ -365,7 +365,7 @@ func TestPublisher_WithRecover(t *testing.T) {
 		},
 	)
 
-	msgs := make(chan *message.Message[[]byte])
+	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
 		msgs <- message.New([]byte("msg"))
@@ -380,7 +380,7 @@ func TestPublisher_WithRecover(t *testing.T) {
 
 func TestSubscriber_WithRecover(t *testing.T) {
 	receiver := newMockReceiver()
-	receiver.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message[[]byte], error) {
+	receiver.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message, error) {
 		panic("receive panic")
 	}
 

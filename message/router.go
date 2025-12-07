@@ -40,7 +40,7 @@ func (r *Router) AddHandler(handler *Handler) {
 	r.handlers = append(r.handlers, handler)
 }
 
-func (r *Router) Start(ctx context.Context, msgs <-chan *Message[[]byte]) <-chan *Message[[]byte] {
+func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Message {
 	for _, h := range r.handlers {
 		if r.config.Marshal != nil {
 			h.marshal = r.config.Marshal
@@ -50,7 +50,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message[[]byte]) <-chan
 		}
 	}
 
-	handle := func(ctx context.Context, msg *Message[[]byte]) ([]*Message[[]byte], error) {
+	handle := func(ctx context.Context, msg *Message) ([]*Message, error) {
 		for _, h := range r.handlers {
 			if h.Match(msg.Properties) {
 				return h.Handle(ctx, msg)
@@ -61,13 +61,13 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message[[]byte]) <-chan
 		return nil, err
 	}
 
-	opts := []gopipe.Option[*Message[[]byte], *Message[[]byte]]{
-		gopipe.WithLogConfig[*Message[[]byte], *Message[[]byte]](gopipe.LogConfig{
+	opts := []gopipe.Option[*Message, *Message]{
+		gopipe.WithLogConfig[*Message, *Message](gopipe.LogConfig{
 			MessageSuccess: "Processed messages",
 			MessageFailure: "Failed to process messages",
 			MessageCancel:  "Canceled processing messages",
 		}),
-		gopipe.WithMetadataProvider[*Message[[]byte], *Message[[]byte]](func(msg *Message[[]byte]) gopipe.Metadata {
+		gopipe.WithMetadataProvider[*Message, *Message](func(msg *Message) gopipe.Metadata {
 			metadata := gopipe.Metadata{}
 			if id, ok := IDProps(msg.Properties); ok {
 				metadata["message_id"] = id
@@ -79,23 +79,23 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message[[]byte]) <-chan
 		}),
 	}
 	if r.config.Recover {
-		opts = append(opts, gopipe.WithRecover[*Message[[]byte], *Message[[]byte]]())
+		opts = append(opts, gopipe.WithRecover[*Message, *Message]())
 	}
 	if r.config.Concurrency > 0 {
-		opts = append(opts, gopipe.WithConcurrency[*Message[[]byte], *Message[[]byte]](r.config.Concurrency))
+		opts = append(opts, gopipe.WithConcurrency[*Message, *Message](r.config.Concurrency))
 	}
 	if r.config.Timeout > 0 {
-		opts = append(opts, gopipe.WithTimeout[*Message[[]byte], *Message[[]byte]](r.config.Timeout))
+		opts = append(opts, gopipe.WithTimeout[*Message, *Message](r.config.Timeout))
 	}
 	if r.config.Retry != nil {
-		opts = append(opts, gopipe.WithRetryConfig[*Message[[]byte], *Message[[]byte]](*r.config.Retry))
+		opts = append(opts, gopipe.WithRetryConfig[*Message, *Message](*r.config.Retry))
 	}
 
 	return gopipe.NewProcessPipe(handle, opts...).Start(ctx, msgs)
 }
 
 type Handler struct {
-	Handle func(ctx context.Context, msg *Message[[]byte]) ([]*Message[[]byte], error)
+	Handle func(ctx context.Context, msg *Message) ([]*Message, error)
 	Match  func(prop map[string]any) bool
 
 	marshal   func(msg any) ([]byte, error)
@@ -113,7 +113,7 @@ func NewHandler[In, Out any](
 		marshal:   json.Marshal,
 	}
 
-	h.Handle = func(ctx context.Context, msg *Message[[]byte]) ([]*Message[[]byte], error) {
+	h.Handle = func(ctx context.Context, msg *Message) ([]*Message, error) {
 		var payload In
 		if err := h.unmarshal(msg.Payload, &payload); err != nil {
 			err = fmt.Errorf("unmarshal: %w: %w", ErrInvalidMessagePayload, err)
@@ -128,7 +128,7 @@ func NewHandler[In, Out any](
 			return nil, err
 		}
 
-		var msgs []*Message[[]byte]
+		var msgs []*Message
 		for _, o := range out {
 			data, err := h.marshal(o)
 			if err != nil {

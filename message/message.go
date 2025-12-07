@@ -23,22 +23,30 @@ type acking struct {
 	expectedAckCount int
 }
 
-// Message wraps a payload with properties and acknowledgment callbacks.
+// TypedMessage wraps a typed payload with properties and acknowledgment callbacks.
+// Use this for type-safe pipelines where you need compile-time guarantees.
 // Payload and Properties are public for direct access.
 // Ack/Nack operations are mutually exclusive and idempotent.
-type Message[T any] struct {
+type TypedMessage[T any] struct {
 	Payload    T
 	Properties map[string]any
 
 	a *acking
 }
 
-// Option is a functional option for configuring a Message.
-type Option[T any] func(*Message[T])
+// Message is a non-generic message with []byte payload for pub/sub patterns.
+// This is an alias for TypedMessage[[]byte], providing a simpler API for
+// message broker integrations (Kafka, RabbitMQ, NATS, etc.).
+type Message = TypedMessage[[]byte]
 
-// New creates a new message with the given payload and options.
-func New[T any](payload T, opts ...Option[T]) *Message[T] {
-	m := &Message[T]{
+// Option is a functional option for configuring a TypedMessage.
+type Option[T any] func(*TypedMessage[T])
+
+// New creates a new typed message with the given payload and options.
+// For type-safe pipelines, use NewTyped which is more explicit.
+// For pub/sub messaging with []byte payloads, consider using the Message alias.
+func New[T any](payload T, opts ...Option[T]) *TypedMessage[T] {
+	m := &TypedMessage[T]{
 		Payload:    payload,
 		Properties: make(map[string]any),
 	}
@@ -50,9 +58,15 @@ func New[T any](payload T, opts ...Option[T]) *Message[T] {
 	return m
 }
 
+// NewTyped creates a new typed message with the given payload and options.
+// This is an alias for New that makes the intent more explicit in typed pipelines.
+func NewTyped[T any](payload T, opts ...Option[T]) *TypedMessage[T] {
+	return New(payload, opts...)
+}
+
 // WithDeadline sets the message processing deadline.
 func WithDeadline[T any](deadline time.Time) Option[T] {
-	return func(m *Message[T]) {
+	return func(m *TypedMessage[T]) {
 		if !deadline.IsZero() {
 			m.Properties[PropDeadline] = deadline
 		}
@@ -62,7 +76,7 @@ func WithDeadline[T any](deadline time.Time) Option[T] {
 // WithAcking configures acknowledgment callbacks for the message.
 // Both ack and nack callbacks must be provided (not nil) for acknowledgment to be enabled.
 func WithAcking[T any](ack func(), nack func(error)) Option[T] {
-	return func(m *Message[T]) {
+	return func(m *TypedMessage[T]) {
 		if ack != nil && nack != nil {
 			m.a = &acking{
 				ack:              ack,
@@ -75,14 +89,14 @@ func WithAcking[T any](ack func(), nack func(error)) Option[T] {
 
 // WithProperty sets a custom property on the message.
 func WithProperty[T any](key string, value any) Option[T] {
-	return func(m *Message[T]) {
+	return func(m *TypedMessage[T]) {
 		m.Properties[key] = value
 	}
 }
 
 // WithProperties sets message properties using a map of key-value pairs.
 func WithProperties[T any](props map[string]any) Option[T] {
-	return func(m *Message[T]) {
+	return func(m *TypedMessage[T]) {
 		if props != nil {
 			maps.Copy(m.Properties, props)
 		}
@@ -91,35 +105,35 @@ func WithProperties[T any](props map[string]any) Option[T] {
 
 // WithID sets the message ID.
 func WithID[T any](id string) Option[T] {
-	return func(m *Message[T]) {
+	return func(m *TypedMessage[T]) {
 		m.Properties[PropID] = id
 	}
 }
 
 // WithCorrelationID sets the correlation ID for tracking related messages.
 func WithCorrelationID[T any](correlationID string) Option[T] {
-	return func(m *Message[T]) {
+	return func(m *TypedMessage[T]) {
 		m.Properties[PropCorrelationID] = correlationID
 	}
 }
 
 // WithCreatedAt sets the creation timestamp of the message.
 func WithCreatedAt[T any](createdAt time.Time) Option[T] {
-	return func(m *Message[T]) {
+	return func(m *TypedMessage[T]) {
 		m.Properties[PropCreatedAt] = createdAt
 	}
 }
 
 // WithSubject sets the subject of the message.
 func WithSubject[T any](subject string) Option[T] {
-	return func(m *Message[T]) {
+	return func(m *TypedMessage[T]) {
 		m.Properties[PropSubject] = subject
 	}
 }
 
 // WithContentType sets the content type of the message.
 func WithContentType[T any](ct string) Option[T] {
-	return func(m *Message[T]) {
+	return func(m *TypedMessage[T]) {
 		m.Properties[PropContentType] = ct
 	}
 }
@@ -179,7 +193,7 @@ func ContentTypeProps(m map[string]any) (string, bool) {
 // Returns true if the count was successfully set.
 // Returns false if no ack callbacks were provided, count is invalid (<=0), or if acking has already started.
 // Thread-safe.
-func (m *Message[T]) SetExpectedAckCount(count int) bool {
+func (m *TypedMessage[T]) SetExpectedAckCount(count int) bool {
 	if m.a == nil || count <= 0 {
 		return false
 	}
@@ -193,7 +207,7 @@ func (m *Message[T]) SetExpectedAckCount(count int) bool {
 }
 
 // Deadline returns the deadline for processing this message.
-func (m *Message[T]) Deadline() (time.Time, bool) {
+func (m *TypedMessage[T]) Deadline() (time.Time, bool) {
 	if v, ok := m.Properties[PropDeadline]; ok {
 		if deadline, ok := v.(time.Time); ok {
 			return deadline, true
@@ -206,7 +220,7 @@ func (m *Message[T]) Deadline() (time.Time, bool) {
 // Returns true if acknowledgment succeeded or was already performed.
 // Returns false if no ack callback was provided, if the message was already nacked, or if expectedAckCount <= 0.
 // The ack callback is invoked at most once when all stages have acked. Thread-safe.
-func (m *Message[T]) Ack() bool {
+func (m *TypedMessage[T]) Ack() bool {
 	if m.a == nil {
 		return false
 	}
@@ -236,7 +250,7 @@ func (m *Message[T]) Ack() bool {
 // Returns false if no nack callback was provided or if the message was already acked.
 // The nack callback is invoked immediately with the first error, permanently blocking all further acks.
 // Thread-safe.
-func (m *Message[T]) Nack(err error) bool {
+func (m *TypedMessage[T]) Nack(err error) bool {
 	if m.a == nil {
 		return false
 	}
@@ -258,8 +272,8 @@ func (m *Message[T]) Nack(err error) bool {
 
 // Copy creates a new message with a different payload while preserving
 // properties and acknowledgment callbacks.
-func Copy[In, Out any](msg *Message[In], payload Out) *Message[Out] {
-	return &Message[Out]{
+func Copy[In, Out any](msg *TypedMessage[In], payload Out) *TypedMessage[Out] {
+	return &TypedMessage[Out]{
 		Payload:    payload,
 		Properties: msg.Properties,
 		a:          msg.a,

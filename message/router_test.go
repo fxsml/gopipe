@@ -53,7 +53,7 @@ func TestRouter_BasicRouting(t *testing.T) {
 
 	out := router.Start(ctx, in)
 
-	var results []*message.Message[[]byte]
+	var results []*message.Message
 	for msg := range out {
 		results = append(results, msg)
 	}
@@ -359,7 +359,7 @@ func TestRouter_Concurrency(t *testing.T) {
 		Concurrency: 5,
 	}, handler)
 
-	in := make(chan *message.Message[[]byte], 10)
+	in := make(chan *message.Message, 10)
 	for i := 0; i < 10; i++ {
 		data, _ := json.Marshal(Order{ID: string(rune('A' + i))})
 		in <- message.New(data)
