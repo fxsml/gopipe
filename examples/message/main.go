@@ -40,10 +40,10 @@ func main() {
 	// Create pipe with acknowledgment
 	pipe := gopipe.NewTransformPipe(
 		func(ctx context.Context, msg *message.Message[int]) (*message.Message[int], error) {
-			defer msg.Properties().Set("processed_at", time.Now().Format(time.RFC3339))
+			msg.Properties["processed_at"] = time.Now().Format(time.RFC3339)
 
 			// Simulate processing error
-			p := msg.Payload()
+			p := msg.Payload
 			if p == 12 {
 				err := fmt.Errorf("cannot process payload 12")
 				msg.Nack(err)
@@ -63,10 +63,9 @@ func main() {
 	// Consume results
 	<-channel.Sink(results, func(result *message.Message[int]) {
 		var sb strings.Builder
-		result.Properties().Range(func(key string, value any) bool {
+		for key, value := range result.Properties {
 			sb.WriteString(fmt.Sprintf("  %s: %v\n", key, value))
-			return true
-		})
-		fmt.Printf("Payload: %d\nProperties:\n%s", result.Payload(), sb.String())
+		}
+		fmt.Printf("Payload: %d\nProperties:\n%s", result.Payload, sb.String())
 	})
 }
