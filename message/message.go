@@ -41,12 +41,33 @@ type TypedMessage[T any] struct {
 // message broker integrations (Kafka, RabbitMQ, NATS, etc.).
 type Message = TypedMessage[[]byte]
 
-// New creates a new typed message with the given payload, properties, and acking.
+// New creates a new typed message with the given payload and properties.
 // Pass nil for properties if no properties are needed.
-// Pass nil for acking if no acknowledgment is required.
-func New[T any](payload T, props Properties, a *acking) *TypedMessage[T] {
+// For messages requiring acknowledgment, use NewWithAcking instead.
+func New[T any](payload T, props Properties) *TypedMessage[T] {
 	if props == nil {
 		props = make(Properties)
+	}
+	return &TypedMessage[T]{
+		Payload:    payload,
+		Properties: props,
+		a:          nil,
+	}
+}
+
+// NewWithAcking creates a new typed message with the given payload, properties, and acknowledgment callbacks.
+// Both ack and nack callbacks must be provided (not nil).
+func NewWithAcking[T any](payload T, props Properties, ack func(), nack func(error)) *TypedMessage[T] {
+	if props == nil {
+		props = make(Properties)
+	}
+	var a *acking
+	if ack != nil && nack != nil {
+		a = &acking{
+			ack:              ack,
+			nack:             nack,
+			expectedAckCount: 1,
+		}
 	}
 	return &TypedMessage[T]{
 		Payload:    payload,
@@ -55,14 +76,9 @@ func New[T any](payload T, props Properties, a *acking) *TypedMessage[T] {
 	}
 }
 
-// NewTyped creates a new typed message with the given payload, properties, and acking.
-// This is an alias for New that makes the intent more explicit in typed pipelines.
-func NewTyped[T any](payload T, props Properties, a *acking) *TypedMessage[T] {
-	return New(payload, props, a)
-}
-
 // NewAcking creates an acking configuration with the given callbacks.
 // Both ack and nack callbacks must be provided (not nil).
+// Deprecated: Use NewWithAcking instead.
 func NewAcking(ack func(), nack func(error)) *acking {
 	if ack == nil || nack == nil {
 		return nil

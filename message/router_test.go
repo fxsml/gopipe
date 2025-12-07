@@ -45,7 +45,7 @@ func TestRouter_BasicRouting(t *testing.T) {
 
 	orderData, _ := json.Marshal(Order{ID: "order-1", Amount: 100})
 	in := channel.FromValues(
-		message.New(orderData, message.Properties{message.PropSubject: "orders.new"}, nil),
+		message.New(orderData, message.Properties{message.PropSubject: "orders.new"}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -114,8 +114,8 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 	confirmData, _ := json.Marshal(Order{ID: "order-2", Amount: 75})
 
 	in := channel.FromValues(
-		message.New(orderData, message.Properties{message.PropSubject: "orders"}, nil),
-		message.New(confirmData, message.Properties{message.PropSubject: "confirmations"}, nil),
+		message.New(orderData, message.Properties{message.PropSubject: "orders"}),
+		message.New(confirmData, message.Properties{message.PropSubject: "confirmations"}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -159,15 +159,14 @@ func TestRouter_NoMatchingHandler(t *testing.T) {
 	var nackErr error
 
 	in := channel.FromValues(
-		message.New(data, message.Properties{
+		message.NewWithAcking(data, message.Properties{
 			message.PropSubject: "unknown",
-		}, message.NewAcking(
+		},
 			func() {},
 			func(err error) {
 				nackCalled = true
 				nackErr = err
-			},
-		)),
+			}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -213,13 +212,12 @@ func TestRouter_HandlerError(t *testing.T) {
 	var nackErr error
 
 	in := channel.FromValues(
-		message.New(data, nil, message.NewAcking(
+		message.NewWithAcking(data, nil,
 			func() {},
 			func(err error) {
 				nackCalled = true
 				nackErr = err
-			},
-		)),
+			}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -263,13 +261,12 @@ func TestRouter_UnmarshalError(t *testing.T) {
 	var nackErr error
 
 	in := channel.FromValues(
-		message.New([]byte("invalid json"), nil, message.NewAcking(
+		message.NewWithAcking([]byte("invalid json"), nil,
 			func() {},
 			func(err error) {
 				nackCalled = true
 				nackErr = err
-			},
-		)),
+			}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -307,12 +304,11 @@ func TestRouter_AckOnSuccess(t *testing.T) {
 	var ackCalled bool
 
 	in := channel.FromValues(
-		message.New(data, nil, message.NewAcking(
+		message.NewWithAcking(data, nil,
 			func() {
 				ackCalled = true
 			},
-			func(err error) {},
-		)),
+			func(err error) {}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -355,7 +351,7 @@ func TestRouter_Concurrency(t *testing.T) {
 	in := make(chan *message.Message, 10)
 	for i := 0; i < 10; i++ {
 		data, _ := json.Marshal(Order{ID: string(rune('A' + i))})
-		in <- message.New(data, nil, nil)
+		in <- message.New(data, nil)
 	}
 	close(in)
 
@@ -408,7 +404,7 @@ func TestRouter_CustomMarshalUnmarshal(t *testing.T) {
 	}, handler)
 
 	data, _ := json.Marshal(Order{ID: "order-1"})
-	in := channel.FromValues(message.New(data, nil, nil))
+	in := channel.FromValues(message.New(data, nil))
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -444,7 +440,7 @@ func TestRouter_WithRecover(t *testing.T) {
 	}, handler)
 
 	data, _ := json.Marshal(Order{ID: "order-1"})
-	in := channel.FromValues(message.New(data, nil, nil))
+	in := channel.FromValues(message.New(data, nil))
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -476,7 +472,7 @@ func TestRouter_MultipleOutputMessages(t *testing.T) {
 	router := message.NewRouter(message.RouterConfig{}, handler)
 
 	data, _ := json.Marshal(Order{ID: "order", Amount: 100})
-	in := channel.FromValues(message.New(data, nil, nil))
+	in := channel.FromValues(message.New(data, nil))
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -518,7 +514,7 @@ func TestRouter_PreservesProperties(t *testing.T) {
 	in := channel.FromValues(
 		message.New(data, message.Properties{
 			message.PropCorrelationID: "corr-123",
-		}, nil),
+		}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
