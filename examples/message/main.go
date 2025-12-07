@@ -32,18 +32,18 @@ func main() {
 	order2, _ := json.Marshal(Order{ID: "order-2", Amount: 200})
 
 	in := channel.FromValues(
-		message.New(order1, message.Properties{
-			message.PropDeadline:   deadline,
-			message.PropID:         "msg-001",
-			message.PropSubject:    "orders.created",
-			message.PropCreatedAt:  time.Now(),
-		}, message.NewAcking(ack, nack)),
-		message.New(order2, message.Properties{
-			message.PropDeadline:   deadline,
-			message.PropID:         "msg-002",
-			message.PropSubject:    "orders.created",
-			message.PropCreatedAt:  time.Now(),
-		}, message.NewAcking(ack, nack)),
+		message.NewWithAcking(order1, message.Properties{
+			message.PropDeadline:  deadline,
+			message.PropID:        "msg-001",
+			message.PropSubject:   "orders.created",
+			message.PropCreatedAt: time.Now(),
+		}, ack, nack),
+		message.NewWithAcking(order2, message.Properties{
+			message.PropDeadline:  deadline,
+			message.PropID:        "msg-002",
+			message.PropSubject:   "orders.created",
+			message.PropCreatedAt: time.Now(),
+		}, ack, nack),
 	)
 
 	// Create pipe with acknowledgment - using non-generic Message

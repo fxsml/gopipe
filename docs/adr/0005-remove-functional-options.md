@@ -42,10 +42,14 @@ msg := message.New([]byte("data"),
 
 ## Decision
 
-**Remove functional options entirely** and use a simple 3-parameter constructor:
+**Remove functional options entirely** and use simple constructors:
 
 ```go
-func New[T any](payload T, props Properties, a *acking) *TypedMessage[T]
+// Default constructor for messages without acknowledgment
+func New[T any](payload T, props Properties) *TypedMessage[T]
+
+// Dedicated constructor for messages requiring acknowledgment
+func NewWithAcking[T any](payload T, props Properties, ack func(), nack func(error)) *TypedMessage[T]
 ```
 
 Introduce `Properties` as a type alias for better readability:
@@ -54,42 +58,60 @@ Introduce `Properties` as a type alias for better readability:
 type Properties map[string]any
 ```
 
+### Design Rationale
+
+Initially, we considered a 3-parameter constructor with an `acking` parameter:
+```go
+func New[T any](payload T, props Properties, a *acking) *TypedMessage[T]
+```
+
+However, this was further simplified by:
+1. **Removing the acking parameter from the default constructor**: Most messages don't require acknowledgment callbacks
+2. **Adding a dedicated `NewWithAcking()` constructor**: Makes the intent explicit when acknowledgment is needed
+3. **Deprecating `NewAcking()` constructor**: Acknowledgment callbacks are now passed directly to `NewWithAcking()`
+
 ### New API
 
+**For messages without acknowledgment** (most common case):
 ```go
-// Create properties
 props := message.Properties{
     message.PropID:      "msg-1",
     message.PropSubject: "orders.created",
     "custom-key":        "custom-value",
 }
 
-// Create acking
-acking := message.NewAcking(ack, nack)
+msg := message.New([]byte("data"), props)
+```
 
-// Create message
-msg := message.New([]byte("data"), props, acking)
+**For messages with acknowledgment**:
+```go
+props := message.Properties{
+    message.PropID:      "msg-1",
+    message.PropSubject: "orders.created",
+}
+
+msg := message.NewWithAcking([]byte("data"), props,
+    func() { broker.Ack(msgID) },
+    func(err error) { broker.Nack(msgID, err) },
+)
 ```
 
 ### Helper Functions
 
-Provide convenience helpers for common cases:
+Common cases are now cleaner:
 
 ```go
-// No acking needed
-msg := message.New(data, props, nil)
-
-// No properties needed
-msg := message.New(data, nil, acking)
-
 // Minimal message
-msg := message.New(data, nil, nil)
-```
+msg := message.New(data, nil)
 
-Provide acking constructor:
+// Message with properties
+msg := message.New(data, props)
 
-```go
-func NewAcking(ack func(), nack func(error)) *acking
+// Message with acknowledgment callbacks
+msg := message.NewWithAcking(data, nil, ack, nack)
+
+// Message with properties and acknowledgment
+msg := message.NewWithAcking(data, props, ack, nack)
 ```
 
 ## Rationale
@@ -115,10 +137,10 @@ message.New([]byte("data"),
 
 **After** (simple constructor):
 ```go
-message.New([]byte("data"), message.Properties{
+message.NewWithAcking([]byte("data"), message.Properties{
     message.PropID:      "msg-1",
     message.PropSubject: "orders",
-}, message.NewAcking(ack, nack))
+}, ack, nack)
 ```
 
 For the common non-generic `Message` type:
@@ -128,7 +150,7 @@ props := message.Properties{
     message.PropID:      "msg-1",
     message.PropSubject: "orders.created",
 }
-msg := message.New(data, props, message.NewAcking(ack, nack))
+msg := message.NewWithAcking(data, props, ack, nack)
 ```
 
 ## Breaking Changes
@@ -148,9 +170,13 @@ All functional options removed:
 
 ### New APIs
 
-**Constructor**:
+**Constructors**:
 ```go
-func New[T any](payload T, props Properties, a *acking) *TypedMessage[T]
+// Default constructor (no acknowledgment)
+func New[T any](payload T, props Properties) *TypedMessage[T]
+
+// Constructor with acknowledgment callbacks
+func NewWithAcking[T any](payload T, props Properties, ack func(), nack func(error)) *TypedMessage[T]
 ```
 
 **Type Alias**:
@@ -158,8 +184,9 @@ func New[T any](payload T, props Properties, a *acking) *TypedMessage[T]
 type Properties map[string]any
 ```
 
-**Acking Constructor**:
+**Deprecated**:
 ```go
+// Deprecated: Use NewWithAcking instead
 func NewAcking(ack func(), nack func(error)) *acking
 ```
 
@@ -187,7 +214,7 @@ msg := message.New(data,
 ```go
 msg := message.New(data, message.Properties{
     message.PropID: "msg-1",
-}, nil)
+})
 ```
 
 ### With Acknowledgment
@@ -201,7 +228,7 @@ msg := message.New(data,
 
 **After**:
 ```go
-msg := message.New(data, nil, message.NewAcking(ack, nack))
+msg := message.NewWithAcking(data, nil, ack, nack)
 ```
 
 ### Full Example
@@ -225,7 +252,7 @@ props := message.Properties{
     message.PropDeadline: deadline,
     "tenant":             "acme",
 }
-msg := message.New([]byte("data"), props, message.NewAcking(ack, nack))
+msg := message.NewWithAcking([]byte("data"), props, ack, nack)
 ```
 
 ### Reusable Properties
@@ -269,7 +296,7 @@ msg2 := message.New(data2, baseProps, ack2)
 ### Minimal Message (No Properties, No Acking)
 
 ```go
-msg := message.New([]byte("data"), nil, nil)
+msg := message.New([]byte("data"), nil)
 ```
 
 ### Message with Properties Only
@@ -278,16 +305,16 @@ msg := message.New([]byte("data"), nil, nil)
 msg := message.New([]byte("data"), message.Properties{
     message.PropID:      "msg-1",
     message.PropSubject: "orders",
-}, nil)
+})
 ```
 
 ### Message with Acking Only
 
 ```go
-msg := message.New([]byte("data"), nil, message.NewAcking(
+msg := message.NewWithAcking([]byte("data"), nil,
     func() { log.Println("acked") },
     func(err error) { log.Println("nacked:", err) },
-))
+)
 ```
 
 ### Complete Message
@@ -303,12 +330,10 @@ props := message.Properties{
     "priority":              "high",
 }
 
-acking := message.NewAcking(
+msg := message.NewWithAcking(orderData, props,
     func() { broker.Ack(msgID) },
     func(err error) { broker.Nack(msgID, err) },
 )
-
-msg := message.New(orderData, props, acking)
 ```
 
 ## References
