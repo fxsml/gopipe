@@ -1,23 +1,22 @@
 package message
 
-// Reserved property keys for gopipe internal use.
-// User-defined properties should NOT use the "gopipe." prefix.
+// Reserved property keys for standard message metadata.
 const (
 	// PropID is the unique message identifier.
-	PropID = "gopipe.message.id"
+	PropID = "message_id"
 
 	// PropCorrelationID is used to correlate related messages across services.
-	PropCorrelationID = "gopipe.message.correlation_id"
+	PropCorrelationID = "correlation_id"
 
 	// PropCreatedAt stores when the message was created.
-	PropCreatedAt = "gopipe.message.created_at"
+	PropCreatedAt = "created_at"
 
 	// PropDeadline stores the message processing deadline.
-	PropDeadline = "gopipe.message.deadline"
+	PropDeadline = "deadline"
 
 	// PropSubject indicates the subject of the message.
-	PropSubject = "gopipe.message.subject"
+	PropSubject = "subject"
 
 	// PropContentType indicates the content type of the message.
-	PropContentType = "gopipe.message.content_type"
+	PropContentType = "content_type"
 )
