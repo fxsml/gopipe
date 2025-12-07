@@ -9,34 +9,34 @@ import (
 )
 
 type Sender interface {
-	Send(ctx context.Context, topic string, msgs []*Message[[]byte]) error
+	Send(ctx context.Context, topic string, msgs []*Message) error
 }
 
 type Receiver interface {
-	Receive(ctx context.Context, topic string) ([]*Message[[]byte], error)
+	Receive(ctx context.Context, topic string) ([]*Message, error)
 }
 
 type Publisher interface {
-	Publish(ctx context.Context, msgs <-chan *Message[[]byte]) <-chan struct{}
+	Publish(ctx context.Context, msgs <-chan *Message) <-chan struct{}
 }
 
 type Subscriber interface {
-	Subscribe(ctx context.Context, topic string) <-chan *Message[[]byte]
+	Subscribe(ctx context.Context, topic string) <-chan *Message
 }
 
 type publisher struct {
-	publish func(ctx context.Context, msgs <-chan *Message[[]byte]) <-chan struct{}
+	publish func(ctx context.Context, msgs <-chan *Message) <-chan struct{}
 }
 
-func (p *publisher) Publish(ctx context.Context, msgs <-chan *Message[[]byte]) <-chan struct{} {
+func (p *publisher) Publish(ctx context.Context, msgs <-chan *Message) <-chan struct{} {
 	return p.publish(ctx, msgs)
 }
 
 type subsciber struct {
-	subscribe func(ctx context.Context, topic string) <-chan *Message[[]byte]
+	subscribe func(ctx context.Context, topic string) <-chan *Message
 }
 
-func (s *subsciber) Subscribe(ctx context.Context, topic string) <-chan *Message[[]byte] {
+func (s *subsciber) Subscribe(ctx context.Context, topic string) <-chan *Message {
 	return s.subscribe(ctx, topic)
 }
 
@@ -51,35 +51,35 @@ type PublisherConfig struct {
 
 func NewPublisher(
 	sender Sender,
-	route func(msg *Message[[]byte]) string,
+	route func(msg *Message) string,
 	config PublisherConfig,
 ) Publisher {
-	proc := gopipe.NewProcessor(func(ctx context.Context, group channel.Group[string, *Message[[]byte]]) ([]struct{}, error) {
+	proc := gopipe.NewProcessor(func(ctx context.Context, group channel.Group[string, *Message]) ([]struct{}, error) {
 		return nil, sender.Send(ctx, group.Key, group.Items)
 	}, nil)
 
-	opts := []gopipe.Option[channel.Group[string, *Message[[]byte]], struct{}]{
-		gopipe.WithLogConfig[channel.Group[string, *Message[[]byte]], struct{}](gopipe.LogConfig{
+	opts := []gopipe.Option[channel.Group[string, *Message], struct{}]{
+		gopipe.WithLogConfig[channel.Group[string, *Message], struct{}](gopipe.LogConfig{
 			MessageSuccess: "Published messages",
 			MessageFailure: "Failed to publish messages",
 			MessageCancel:  "Canceled publishing messages",
 		}),
 	}
 	if config.Recover {
-		opts = append(opts, gopipe.WithRecover[channel.Group[string, *Message[[]byte]], struct{}]())
+		opts = append(opts, gopipe.WithRecover[channel.Group[string, *Message], struct{}]())
 	}
 	if config.Concurrency > 0 {
-		opts = append(opts, gopipe.WithConcurrency[channel.Group[string, *Message[[]byte]], struct{}](config.Concurrency))
+		opts = append(opts, gopipe.WithConcurrency[channel.Group[string, *Message], struct{}](config.Concurrency))
 	}
 	if config.Timeout > 0 {
-		opts = append(opts, gopipe.WithTimeout[channel.Group[string, *Message[[]byte]], struct{}](config.Timeout))
+		opts = append(opts, gopipe.WithTimeout[channel.Group[string, *Message], struct{}](config.Timeout))
 	}
 	if config.Retry != nil {
-		opts = append(opts, gopipe.WithRetryConfig[channel.Group[string, *Message[[]byte]], struct{}](*config.Retry))
+		opts = append(opts, gopipe.WithRetryConfig[channel.Group[string, *Message], struct{}](*config.Retry))
 	}
 
 	return &publisher{
-		publish: func(ctx context.Context, msgs <-chan *Message[[]byte]) <-chan struct{} {
+		publish: func(ctx context.Context, msgs <-chan *Message) <-chan struct{} {
 			group := channel.GroupBy(msgs, route, channel.GroupByConfig{
 				MaxBatchSize: config.MaxBatchSize,
 				MaxDuration:  config.MaxDuration,
@@ -100,29 +100,29 @@ func NewSubscriber(
 	receiver Receiver,
 	config SubscriberConfig,
 ) Subscriber {
-	opts := []gopipe.Option[struct{}, *Message[[]byte]]{
-		gopipe.WithLogConfig[struct{}, *Message[[]byte]](gopipe.LogConfig{
+	opts := []gopipe.Option[struct{}, *Message]{
+		gopipe.WithLogConfig[struct{}, *Message](gopipe.LogConfig{
 			MessageSuccess: "Received messages",
 			MessageFailure: "Failed to receive messages",
 			MessageCancel:  "Canceled receiving messages",
 		}),
 	}
 	if config.Recover {
-		opts = append(opts, gopipe.WithRecover[struct{}, *Message[[]byte]]())
+		opts = append(opts, gopipe.WithRecover[struct{}, *Message]())
 	}
 	if config.Concurrency > 0 {
-		opts = append(opts, gopipe.WithConcurrency[struct{}, *Message[[]byte]](config.Concurrency))
+		opts = append(opts, gopipe.WithConcurrency[struct{}, *Message](config.Concurrency))
 	}
 	if config.Timeout > 0 {
-		opts = append(opts, gopipe.WithTimeout[struct{}, *Message[[]byte]](config.Timeout))
+		opts = append(opts, gopipe.WithTimeout[struct{}, *Message](config.Timeout))
 	}
 	if config.Retry != nil {
-		opts = append(opts, gopipe.WithRetryConfig[struct{}, *Message[[]byte]](*config.Retry))
+		opts = append(opts, gopipe.WithRetryConfig[struct{}, *Message](*config.Retry))
 	}
 
 	return &subsciber{
-		subscribe: func(ctx context.Context, topic string) <-chan *Message[[]byte] {
-			return gopipe.NewGenerator(func(ctx context.Context) ([]*Message[[]byte], error) {
+		subscribe: func(ctx context.Context, topic string) <-chan *Message {
+			return gopipe.NewGenerator(func(ctx context.Context) ([]*Message, error) {
 				return receiver.Receive(ctx, topic)
 			}, opts...).Generate(ctx)
 		},

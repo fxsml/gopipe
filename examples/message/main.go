@@ -39,7 +39,7 @@ func main() {
 
 	// Create pipe with acknowledgment
 	pipe := gopipe.NewTransformPipe(
-		func(ctx context.Context, msg *message.Message[int]) (*message.Message[int], error) {
+		func(ctx context.Context, msg *message.TypedMessage[int]) (*message.TypedMessage[int], error) {
 			msg.Properties["processed_at"] = time.Now().Format(time.RFC3339)
 
 			// Simulate processing error
@@ -61,7 +61,7 @@ func main() {
 	results := pipe.Start(ctx, in)
 
 	// Consume results
-	<-channel.Sink(results, func(result *message.Message[int]) {
+	<-channel.Sink(results, func(result *message.TypedMessage[int]) {
 		var sb strings.Builder
 		for key, value := range result.Properties {
 			sb.WriteString(fmt.Sprintf("  %s: %v\n", key, value))
