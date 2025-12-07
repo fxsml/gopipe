@@ -30,7 +30,7 @@ func TestMessage_NewMessage(t *testing.T) {
 		t.Errorf("Expected Payload 'payload', got %v", msg.Payload)
 	}
 
-	if msgDeadline, ok := msg.Deadline(); !ok || msgDeadline != deadline {
+	if msgDeadline, ok := msg.Properties.Deadline(); !ok || msgDeadline != deadline {
 		t.Errorf("Expected deadline %v, got %v (ok=%v)", deadline, msgDeadline, ok)
 	}
 
@@ -131,7 +131,7 @@ func TestMessage_Copy(t *testing.T) {
 		t.Errorf("Expected properties key='value', got %v", val)
 	}
 
-	if copyDeadline, ok := copy.Deadline(); !ok || copyDeadline != deadline {
+	if copyDeadline, ok := copy.Properties.Deadline(); !ok || copyDeadline != deadline {
 		t.Errorf("Expected deadline %v, got %v (ok=%v)", deadline, copyDeadline, ok)
 	}
 
@@ -383,7 +383,7 @@ func TestMessage_NewWithOptions(t *testing.T) {
 		}
 		msg := message.New("payload", props)
 
-		if msgDeadline, ok := msg.Deadline(); !ok || msgDeadline != deadline {
+		if msgDeadline, ok := msg.Properties.Deadline(); !ok || msgDeadline != deadline {
 			t.Errorf("Expected deadline %v, got %v (ok=%v)", deadline, msgDeadline, ok)
 		}
 	})
@@ -485,7 +485,7 @@ func TestMessage_NewWithOptions(t *testing.T) {
 		}
 
 		// Verify deadline
-		if msgDeadline, ok := msg.Deadline(); !ok || msgDeadline != deadline {
+		if msgDeadline, ok := msg.Properties.Deadline(); !ok || msgDeadline != deadline {
 			t.Errorf("Expected deadline %v, got %v (ok=%v)", deadline, msgDeadline, ok)
 		}
 
