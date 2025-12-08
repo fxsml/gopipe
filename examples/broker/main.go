@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -46,6 +48,15 @@ func main() {
 	gopipeIntegration(ctx, b, &wg)
 
 	wg.Wait()
+
+	// Example 5: IO Broker with file/stream support
+	fmt.Println("\n--- Example 5: IO Broker (JSON Streaming) ---")
+	ioBrokerExample()
+
+	// Example 6: IO Broker with pipe for IPC
+	fmt.Println("\n--- Example 6: IO Broker (Pipe IPC) ---")
+	ioBrokerPipeExample()
+
 	fmt.Println("\n=== All examples completed ===")
 }
 
@@ -170,4 +181,86 @@ func gopipeIntegration(ctx context.Context, b broker.Broker[string], wg *sync.Wa
 	b.Send(ctx, "input", message.New("message two"))
 
 	time.Sleep(100 * time.Millisecond)
+}
+
+func ioBrokerExample() {
+	// IO broker writes messages as newline-delimited JSON (NDJSON)
+	// This can be used for file-based persistence or log streaming
+
+	// Write messages to a buffer (could be a file)
+	var buf bytes.Buffer
+	sender := broker.NewIOSender[string](&buf, broker.IOConfig{})
+
+	ctx := context.Background()
+
+	// Send messages with properties
+	sender.Send(ctx, "logs/app", message.New("Application started",
+		message.WithID[string]("log-001"),
+		message.WithProperty[string]("level", "info"),
+	))
+	sender.Send(ctx, "logs/app", message.New("Processing request",
+		message.WithID[string]("log-002"),
+		message.WithProperty[string]("level", "debug"),
+	))
+	sender.Send(ctx, "logs/error", message.New("Connection failed",
+		message.WithID[string]("log-003"),
+		message.WithProperty[string]("level", "error"),
+	))
+
+	fmt.Println("  Written NDJSON:")
+	fmt.Printf("  %s", buf.String())
+
+	// Read messages back (simulating reading from a file)
+	reader := bytes.NewReader(buf.Bytes())
+	receiver := broker.NewIOReceiver[string](reader, broker.IOConfig{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	// Filter only app logs using wildcard pattern
+	msgs := receiver.Receive(ctx, "logs/app")
+
+	fmt.Println("  Filtered messages (logs/app only):")
+	for msg := range msgs {
+		level, _ := msg.Properties().Get("level")
+		fmt.Printf("    [%s] %s\n", level, msg.Payload())
+	}
+}
+
+func ioBrokerPipeExample() {
+	// Use pipes for inter-process communication (IPC)
+	// Messages are streamed as JSON between reader and writer
+
+	type Event struct {
+		Type    string `json:"type"`
+		Payload string `json:"payload"`
+	}
+
+	pr, pw := io.Pipe()
+	b := broker.NewIOBroker[Event](pr, pw, broker.IOConfig{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	// Start receiver in goroutine
+	msgs := b.Receive(ctx, "events")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for msg := range msgs {
+			e := msg.Payload()
+			fmt.Printf("  Received via pipe: type=%s payload=%s\n", e.Type, e.Payload)
+		}
+	}()
+
+	// Send events through the pipe
+	go func() {
+		b.Send(ctx, "events", message.New(Event{Type: "user.created", Payload: "user-123"}))
+		b.Send(ctx, "events", message.New(Event{Type: "order.placed", Payload: "order-456"}))
+		pw.Close() // Signal EOF
+	}()
+
+	wg.Wait()
 }

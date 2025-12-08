@@ -14,32 +14,43 @@ Introduce a `message/broker` package with:
 1. **Interfaces**: `Sender[T]` and `Receiver[T]` for decoupled send/receive operations
 2. **Broker interface**: Combines Sender and Receiver with lifecycle management
 3. **In-memory implementation**: Reference broker for testing and simple use cases
-4. **Configuration**: `CloseTimeout`, `SendTimeout`, `ReceiveTimeout`, `BufferSize`
+4. **IO implementation**: Stream-based broker using `io.Reader`/`io.Writer` with JSON wire format
+5. **Configuration**: `CloseTimeout`, `SendTimeout`, `ReceiveTimeout`, `BufferSize`
 
 Topic design:
 - String-based with "/" separator (e.g., "orders/created")
 - Topics created on-the-fly (no pre-registration)
 - Pattern matching utilities for wildcards (`+`, `#`)
 
-Three constructors:
-- `NewBroker[T](Config)` - full broker with send/receive
-- `NewSender[T](Broker)` - sender-only view of broker
-- `NewReceiver[T](Broker)` - receiver-only view of broker
+Constructors:
+- `NewBroker[T](Config)` - in-memory broker
+- `NewSender[T](Broker)` - sender-only view
+- `NewReceiver[T](Broker)` - receiver-only view
+- `NewIOBroker[T](io.Reader, io.Writer, IOConfig)` - stream-based broker
+- `NewIOSender[T](io.Writer, IOConfig)` - stream sender
+- `NewIOReceiver[T](io.Reader, IOConfig)` - stream receiver
+
+Wire format (IO broker):
+- Newline-delimited JSON (NDJSON)
+- Envelope: `{topic, properties, payload, timestamp}`
+- Pluggable marshaler (defaults to JSON)
 
 ### Consequences
 
 **Positive**
 - Consistent abstraction for all message transport scenarios
 - In-memory broker enables unit testing without external dependencies
+- IO broker enables file persistence, logging, and IPC via pipes
 - Hierarchical topics support domain-driven message organization
 - Channel-based receive integrates naturally with gopipe pipelines
 
 **Negative**
 - Generic type parameter requires explicit type at broker creation
 - In-memory broker lacks persistence and durability guarantees
+- IO broker requires manual lifecycle management of underlying streams
 - Pattern matching (wildcards) not integrated into core broker (utility only)
 
 **Identified Patterns for Future Work**
 - `channel.FanOut` - broadcast to multiple channels with backpressure
 - `channel.Subscribe` - topic pattern matching with channel output
-- Persistent broker implementations (file-based, embedded DB)
+- Persistent broker implementations (embedded DB)
