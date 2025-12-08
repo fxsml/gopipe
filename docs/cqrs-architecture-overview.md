@@ -339,9 +339,18 @@ Start ──► Layer 1 (cqrs)
 | Layer | Status | Package | Priority |
 |-------|--------|---------|----------|
 | **0: message** | ✅ Implemented | `message` | Core |
-| **1: cqrs** | 🚧 ADR approved | `cqrs` | High |
+| **1: cqrs** | ✅ **Implemented** | `cqrs` | High |
 | **2: compensation** | 📋 Designed | `cqrs/compensation` | Medium |
 | **3: outbox** | 📋 Designed | `cqrs/outbox` | Low |
+
+**Layer 1 (cqrs) is now available:**
+- `cqrs.NewCommandHandler[Cmd, Evt]()` - Type-safe command handlers
+- `cqrs.NewEventHandler[Evt]()` - Type-safe event handlers
+- `cqrs.SagaCoordinator` interface - Workflow orchestration
+- `cqrs.JSONMarshaler` - JSON serialization (Protobuf coming soon)
+- `cqrs.CreateCommand()` / `CreateCommands()` - Message utilities
+
+See `examples/cqrs-package/` for complete usage example.
 
 ## Summary
 

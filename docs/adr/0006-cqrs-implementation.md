@@ -1,10 +1,11 @@
 # ADR 0006: CQRS Implementation
 
 **Date:** 2025-12-08
-**Status:** Proposed (Revised)
+**Status:** Implemented
 **Revision History:**
 - 2025-12-08: Initial proposal
 - 2025-12-08: Revised based on design review (see Design Revision section)
+- 2025-12-08: Implemented core `cqrs` package (Phase 1 complete)
 
 ## Context
 
@@ -541,27 +542,134 @@ Leverages existing gopipe features:
 - Recovery
 - Metrics and logging
 
-## Implementation Phases
+## Implementation Status
 
-### Phase 1: Core CQRS Package
+### Phase 1: Core CQRS Package ✅ **COMPLETED**
 
-- [ ] `cqrs.Marshaler` interface
-- [ ] `cqrs.JSONMarshaler` implementation
-- [ ] `cqrs.CommandBus` and `cqrs.EventBus`
-- [ ] `cqrs.NewCommandHandler` and `cqrs.NewEventHandler`
-- [ ] `cqrs.CommandProcessor` and `cqrs.EventProcessor`
+The core `cqrs` package has been implemented and is available at `github.com/fxsml/gopipe/cqrs`.
 
-### Phase 2: Documentation & Examples
+**Implemented Components:**
 
-- [ ] Complete example: Order processing with CQRS
-- [ ] Example: Event sourcing pattern
-- [ ] Example: Saga pattern
-- [ ] Migration guide from direct message.Router usage
+- ✅ `cqrs.Marshaler` interface (`cqrs/marshaler.go:7`)
+- ✅ `cqrs.JSONMarshaler` implementation (`cqrs/marshaler.go:20`)
+- ✅ `cqrs.NewCommandHandler[Cmd, Evt]()` (`cqrs/handler.go:42`)
+- ✅ `cqrs.NewEventHandler[Evt]()` (`cqrs/handler.go:115`)
+- ✅ `cqrs.SagaCoordinator` interface (`cqrs/coordinator.go:10`)
+- ✅ `cqrs.CreateCommand()` utility (`cqrs/util.go:13`)
+- ✅ `cqrs.CreateCommands()` utility (`cqrs/util.go:49`)
+- ✅ Package documentation (`cqrs/doc.go`)
+
+**Examples:**
+
+- ✅ Complete saga example: `examples/cqrs-package/` - Demonstrates type-safe command/event handlers, saga coordinator pattern, and feedback loops
+- ✅ Design analysis: `docs/cqrs-design-analysis.md`
+- ✅ Pattern comparison: `docs/cqrs-saga-patterns.md`
+- ✅ Acking analysis: `docs/cqrs-acking-analysis.md`
+- ✅ Architecture overview: `docs/cqrs-architecture-overview.md`
+
+**Key Design Decisions:**
+
+1. **No CommandProcessor/EventProcessor classes** - Users compose handlers with `message.NewRouter()` directly, maintaining gopipe's simplicity
+2. **Type-safe handler functions** - `NewCommandHandler[Cmd, Evt]` and `NewEventHandler[Evt]` provide compile-time type safety
+3. **Saga Coordinator Interface** - Separates workflow logic from event side effects (recommended pattern)
+4. **Independent acking per stage** - Correlation IDs for end-to-end tracing, not propagated acking
+5. **Utility functions** - `CreateCommand` and `CreateCommands` simplify message creation
+
+**Example Usage:**
+
+```go
+marshaler := cqrs.NewJSONMarshaler()
+
+// Command handler: Command → Events
+createOrderHandler := cqrs.NewCommandHandler(
+    "CreateOrder",
+    marshaler,
+    func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
+        saveOrder(cmd)
+        return []OrderCreated{{ID: cmd.ID, Amount: cmd.Amount}}, nil
+    },
+)
+
+// Event handler: Event → Side effects
+emailHandler := cqrs.NewEventHandler(
+    "OrderCreated",
+    marshaler,
+    func(ctx context.Context, evt OrderCreated) error {
+        return emailService.Send(evt.CustomerID, "Order created!")
+    },
+)
+
+// Saga coordinator: Event → Commands (workflow logic)
+type OrderSagaCoordinator struct {
+    marshaler cqrs.Marshaler
+}
+
+func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+    subject, _ := msg.Properties.Subject()
+    corrID, _ := msg.Properties.CorrelationID()
+
+    switch subject {
+    case "OrderCreated":
+        var evt OrderCreated
+        s.marshaler.Unmarshal(msg.Payload, &evt)
+        return cqrs.CreateCommands(s.marshaler, corrID,
+            ChargePayment{OrderID: evt.ID, Amount: evt.Amount},
+        ), nil
+    }
+    return nil, nil
+}
+
+// Wire together
+commandRouter := message.NewRouter(message.RouterConfig{}, createOrderHandler)
+sideEffectsRouter := message.NewRouter(message.RouterConfig{}, emailHandler)
+sagaRouter := message.NewRouter(message.RouterConfig{}, sagaHandler)
+
+events := commandRouter.Start(ctx, commands)
+// Fan-out events to side effects and saga coordinator...
+```
+
+### Phase 2: Advanced Patterns 📋 **DESIGNED**
+
+Advanced patterns have been fully designed but not yet implemented:
+
+- 📋 `cqrs/compensation` package - Compensating saga pattern with automatic rollback
+- 📋 `cqrs/outbox` package - Transactional outbox pattern for exactly-once semantics
+
+See documentation:
+- [docs/cqrs-advanced-patterns.md](../cqrs-advanced-patterns.md) - Detailed design for compensations and outbox
+- [docs/cqrs-architecture-overview.md](../cqrs-architecture-overview.md) - Layered architecture overview
+
+These will be implemented when needed (10% and <1% of use cases respectively).
+
+### Phase 3: Additional Features (Future)
+
+- [ ] Event sourcing support
+- [ ] Command validation middleware
+- [ ] Event versioning
+- [ ] Replay capabilities
+- [ ] Saga state persistence (for compensation package)
+
+## Implementation Phases (Original Plan)
+
+### Phase 1: Core CQRS Package ✅ **COMPLETED**
+
+- ✅ `cqrs.Marshaler` interface
+- ✅ `cqrs.JSONMarshaler` implementation
+- ✅ `cqrs.NewCommandHandler` and `cqrs.NewEventHandler`
+- ✅ `cqrs.SagaCoordinator` interface
+- ✅ Documentation and examples
+
+### Phase 2: Documentation & Examples ✅ **COMPLETED**
+
+- ✅ Complete example: Order processing with CQRS (`examples/cqrs-package/`)
+- ✅ Example: Saga pattern (`examples/cqrs-saga-coordinator/`)
+- ✅ Pattern comparison guide (`docs/cqrs-saga-patterns.md`)
+- ✅ Architecture overview (`docs/cqrs-architecture-overview.md`)
 
 ### Phase 3: Advanced Features (Future)
 
 - [ ] Event sourcing support
-- [ ] Saga/process manager support
+- [ ] Saga/process manager support (compensation package)
 - [ ] Command validation
 - [ ] Event versioning
 - [ ] Replay capabilities
