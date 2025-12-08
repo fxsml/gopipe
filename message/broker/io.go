@@ -75,7 +75,7 @@ func (c *IOConfig) defaults() IOConfig {
 	return cfg
 }
 
-// IOSender writes messages to an io.Writer as newline-delimited JSON.
+// IOSender writes messages to an io.Writer as JSON Lines (JSONL).
 type IOSender[T any] struct {
 	config    IOConfig
 	mu        sync.Mutex
@@ -86,7 +86,7 @@ type IOSender[T any] struct {
 }
 
 // NewIOSender creates a sender that writes messages to the given writer.
-// Messages are encoded as newline-delimited JSON (NDJSON).
+// Messages are encoded as JSON Lines (JSONL) - one JSON object per line.
 func NewIOSender[T any](w io.Writer, config IOConfig) *IOSender[T] {
 	cfg := config.defaults()
 	return &IOSender[T]{
@@ -169,7 +169,7 @@ type IOReceiver[T any] struct {
 }
 
 // NewIOReceiver creates a receiver that reads messages from the given reader.
-// Messages are decoded from newline-delimited JSON (NDJSON).
+// Messages are decoded from JSON Lines (JSONL) - one JSON object per line.
 func NewIOReceiver[T any](r io.Reader, config IOConfig) *IOReceiver[T] {
 	cfg := config.defaults()
 	return &IOReceiver[T]{
@@ -233,7 +233,7 @@ func (r *IOReceiver[T]) readOne(ctx context.Context) (*message.Message[T], strin
 		return nil, "", ErrReaderClosed
 	}
 
-	// Read a line (NDJSON format)
+	// Read a line (JSONL format)
 	line, err := r.reader.ReadBytes('\n')
 	if err != nil {
 		return nil, "", err

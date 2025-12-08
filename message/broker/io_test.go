@@ -74,7 +74,7 @@ func TestIOSender_Close(t *testing.T) {
 }
 
 func TestIOReceiver_Receive(t *testing.T) {
-	// First, create proper NDJSON by using the sender
+	// First, create proper JSONL by using the sender
 	var buf bytes.Buffer
 	sender := broker.NewIOSender[string](&buf, broker.IOConfig{})
 	ctx := context.Background()
@@ -107,7 +107,7 @@ func TestIOReceiver_Receive(t *testing.T) {
 }
 
 func TestIOReceiver_TopicFilter(t *testing.T) {
-	// Create proper NDJSON using sender
+	// Create proper JSONL using sender
 	var buf bytes.Buffer
 	sender := broker.NewIOSender[string](&buf, broker.IOConfig{})
 	ctx := context.Background()
@@ -138,7 +138,7 @@ func TestIOReceiver_TopicFilter(t *testing.T) {
 }
 
 func TestIOReceiver_AllTopics(t *testing.T) {
-	// Create proper NDJSON using sender
+	// Create proper JSONL using sender
 	var buf bytes.Buffer
 	sender := broker.NewIOSender[int](&buf, broker.IOConfig{})
 	ctx := context.Background()
@@ -166,7 +166,7 @@ func TestIOReceiver_AllTopics(t *testing.T) {
 }
 
 func TestIOReceiver_WithProperties(t *testing.T) {
-	// Create proper NDJSON using sender
+	// Create proper JSONL using sender
 	var buf bytes.Buffer
 	sender := broker.NewIOSender[string](&buf, broker.IOConfig{})
 	ctx := context.Background()
@@ -317,7 +317,7 @@ func TestIOBroker_ComplexTypes(t *testing.T) {
 }
 
 func TestIOReceiver_MalformedJSON(t *testing.T) {
-	// Create proper NDJSON and inject malformed line
+	// Create proper JSONL and inject malformed line
 	var buf bytes.Buffer
 	sender := broker.NewIOSender[string](&buf, broker.IOConfig{})
 	ctx := context.Background()

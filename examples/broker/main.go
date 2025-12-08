@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http/httptest"
 	"sync"
 	"time"
 
@@ -56,6 +57,10 @@ func main() {
 	// Example 6: IO Broker with pipe for IPC
 	fmt.Println("\n--- Example 6: IO Broker (Pipe IPC) ---")
 	ioBrokerPipeExample()
+
+	// Example 7: HTTP Broker (webhook style)
+	fmt.Println("\n--- Example 7: HTTP Broker (Webhook) ---")
+	httpBrokerExample()
 
 	fmt.Println("\n=== All examples completed ===")
 }
@@ -184,7 +189,7 @@ func gopipeIntegration(ctx context.Context, b broker.Broker[string], wg *sync.Wa
 }
 
 func ioBrokerExample() {
-	// IO broker writes messages as newline-delimited JSON (NDJSON)
+	// IO broker writes messages as JSON Lines (JSONL)
 	// This can be used for file-based persistence or log streaming
 
 	// Write messages to a buffer (could be a file)
@@ -207,7 +212,7 @@ func ioBrokerExample() {
 		message.WithProperty[string]("level", "error"),
 	))
 
-	fmt.Println("  Written NDJSON:")
+	fmt.Println("  Written JSONL:")
 	fmt.Printf("  %s", buf.String())
 
 	// Read messages back (simulating reading from a file)
@@ -262,5 +267,64 @@ func ioBrokerPipeExample() {
 		pw.Close() // Signal EOF
 	}()
 
+	wg.Wait()
+}
+
+func httpBrokerExample() {
+	// HTTP broker uses POST requests with:
+	// - X-Gopipe-Topic header for the topic
+	// - X-Gopipe-Prop-* headers for message properties
+	// - Request body contains the payload
+	// Returns 201 Created on success
+
+	type WebhookEvent struct {
+		Action string `json:"action"`
+		Data   string `json:"data"`
+	}
+
+	// Create HTTP receiver
+	receiver := broker.NewHTTPReceiver[WebhookEvent](broker.HTTPConfig{}, 100)
+	defer receiver.Close()
+
+	// Start test server (in production, you'd use your own HTTP server)
+	server := httptest.NewServer(receiver.Handler())
+	defer server.Close()
+
+	// Create HTTP sender (webhook client)
+	sender := broker.NewHTTPSender[WebhookEvent](server.URL, broker.HTTPConfig{
+		Headers: map[string]string{
+			"Authorization": "Bearer webhook-token",
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	// Subscribe to webhook events
+	msgs := receiver.Receive(ctx, "webhooks/github")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for msg := range msgs {
+			e := msg.Payload()
+			fmt.Printf("  Received webhook: action=%s data=%s\n", e.Action, e.Data)
+		}
+	}()
+
+	// Send webhook events
+	time.Sleep(20 * time.Millisecond)
+	sender.Send(ctx, "webhooks/github", message.New(WebhookEvent{
+		Action: "push",
+		Data:   "main branch updated",
+	}))
+	sender.Send(ctx, "webhooks/github", message.New(WebhookEvent{
+		Action: "pull_request",
+		Data:   "PR #42 opened",
+	}))
+
+	time.Sleep(100 * time.Millisecond)
+	receiver.Close()
 	wg.Wait()
 }
