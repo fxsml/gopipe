@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/message/broker"
+	"github.com/fxsml/gopipe/pubsub"
+	"github.com/fxsml/gopipe/pubsub/http"
+	psio "github.com/fxsml/gopipe/pubsub/io"
+	"github.com/fxsml/gopipe/pubsub/memory"
 )
 
 func main() {
@@ -17,7 +20,7 @@ func main() {
 	fmt.Println()
 
 	// Create broker with configuration
-	b := broker.NewBroker(broker.Config{
+	b := memory.NewBroker(memory.Config{
 		CloseTimeout: 5 * time.Second,
 		SendTimeout:  time.Second,
 		BufferSize:   50,
@@ -61,10 +64,10 @@ func main() {
 	fmt.Println("\n=== All examples completed ===")
 }
 
-func basicPubSub(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
+func basicPubSub(ctx context.Context, b pubsub.Broker, wg *sync.WaitGroup) {
 	// Get sender and receiver interfaces
-	sender := broker.NewSender(b)
-	receiver := broker.NewReceiver(b)
+	sender := memory.NewSender(b)
+	receiver := memory.NewReceiver(b)
 
 	// Start subscriber - returns (messages, error)
 	msgs, err := receiver.Receive(ctx, "greetings")
@@ -91,7 +94,7 @@ func basicPubSub(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
 	time.Sleep(50 * time.Millisecond)
 }
 
-func multipleSubscribers(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
+func multipleSubscribers(ctx context.Context, b pubsub.Broker, wg *sync.WaitGroup) {
 	// Create multiple subscribers for the same topic
 	msgs1, _ := b.Receive(ctx, "events")
 	msgs2, _ := b.Receive(ctx, "events")
@@ -115,7 +118,7 @@ func multipleSubscribers(ctx context.Context, b message.Broker, wg *sync.WaitGro
 	time.Sleep(50 * time.Millisecond)
 }
 
-func hierarchicalTopics(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
+func hierarchicalTopics(ctx context.Context, b pubsub.Broker, wg *sync.WaitGroup) {
 	// Subscribe to different hierarchical topics
 	ordersCreated, _ := b.Receive(ctx, "orders/created")
 	ordersUpdated, _ := b.Receive(ctx, "orders/updated")
@@ -142,7 +145,7 @@ func hierarchicalTopics(ctx context.Context, b message.Broker, wg *sync.WaitGrou
 	time.Sleep(50 * time.Millisecond)
 }
 
-func gopipeIntegration(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
+func gopipeIntegration(ctx context.Context, b pubsub.Broker, wg *sync.WaitGroup) {
 	// Note: Broker now returns slices, not channels, so direct pipe integration needs adjustment
 	// For this example, we'll demonstrate receiving and processing messages
 	incoming, _ := b.Receive(ctx, "input")
@@ -185,7 +188,7 @@ func ioBrokerExample() {
 
 	// Write messages to a buffer (could be a file)
 	var buf bytes.Buffer
-	sender := broker.NewIOSender(&buf, broker.IOConfig{})
+	sender := psio.NewSender(&buf, psio.Config{})
 
 	ctx := context.Background()
 
@@ -204,7 +207,7 @@ func ioBrokerExample() {
 
 	// Read messages back (simulating reading from a file)
 	reader := bytes.NewReader(buf.Bytes())
-	receiver := broker.NewIOReceiver(reader, broker.IOConfig{})
+	receiver := psio.NewReceiver(reader, psio.Config{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -229,7 +232,7 @@ func ioBrokerPipeExample() {
 
 	// Note: IOBroker now uses []byte payload, not custom types
 	pr, pw := io.Pipe()
-	b := broker.NewIOBroker(pr, pw, broker.IOConfig{})
+	b := psio.NewBroker(pr, pw, psio.Config{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -267,8 +270,8 @@ func httpBrokerExample() {
 	// - Request body contains the payload ([]byte)
 	// Returns 201 Created on success
 
-	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
-	defer receiver.Close()
+	receiver := http.NewReceiver(http.Config{}, 100)
+	defer receiver.(interface{ Close() error }).Close()
 
 	// In a real scenario, you'd start an HTTP server
 	// For this example, we'll demonstrate the API usage
@@ -282,14 +285,14 @@ func httpBrokerExample() {
 	fmt.Println()
 
 	// To create a sender that posts to a webhook URL:
-	// sender := broker.NewHTTPSender("https://example.com/webhook", broker.HTTPConfig{
+	// sender := http.NewSender("https://example.com/webhook", http.Config{
 	// 	Headers: map[string]string{"Authorization": "Bearer webhook-token"},
 	// })
 	//
 	// ctx := context.Background()
 	// payload := []byte(`{"event": "order.created", "order_id": "123"}`)
 	// props := message.Properties{"source": "api", "priority": "high"}
-	// sender.Send(ctx, "webhooks/orders", []*message.Message{message.New(payload, props)})
+	// sender.Send(ctx, "webhooks/orders", []*message.Message{message.New(payload, props, nil)})
 
 	fmt.Println("  HTTP broker is fully functional with non-generic []byte payloads")
 }
