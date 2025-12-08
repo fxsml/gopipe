@@ -264,29 +264,32 @@ func httpBrokerExample() {
 	// HTTP broker uses POST requests with:
 	// - X-Gopipe-Topic header for the topic
 	// - X-Gopipe-Prop-* headers for message properties
-	// - Request body contains the payload
+	// - Request body contains the payload ([]byte)
 	// Returns 201 Created on success
 
-	// Note: HTTP broker functions are currently disabled in broker package
-	// This example would need to be updated once http.go is re-enabled
-	fmt.Println("  HTTP broker example is currently disabled (http.go needs refactoring)")
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
+	defer receiver.Close()
 
-	// Placeholder for future implementation:
-	// receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
-	// defer receiver.Close()
-	//
-	// server := httptest.NewServer(receiver.Handler())
-	// defer server.Close()
-	//
-	// sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{
+	// In a real scenario, you'd start an HTTP server
+	// For this example, we'll demonstrate the API usage
+	fmt.Println("  HTTP Receiver created and ready to accept webhook POSTs")
+	fmt.Println("  Example curl command:")
+	fmt.Println(`    curl -X POST http://localhost:8080/webhook \`)
+	fmt.Println(`      -H "X-Gopipe-Topic: webhooks/github" \`)
+	fmt.Println(`      -H "X-Gopipe-Prop-event: push" \`)
+	fmt.Println(`      -H "X-Gopipe-Prop-repo: gopipe" \`)
+	fmt.Println(`      -d '{"commits": 3, "branch": "main"}'`)
+	fmt.Println()
+
+	// To create a sender that posts to a webhook URL:
+	// sender := broker.NewHTTPSender("https://example.com/webhook", broker.HTTPConfig{
 	// 	Headers: map[string]string{"Authorization": "Bearer webhook-token"},
 	// })
 	//
-	// ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	// defer cancel()
-	//
-	// msgs, _ := receiver.Receive(ctx, "webhooks/github")
-	// for _, msg := range msgs {
-	// 	fmt.Printf("  Received webhook: %s\n", msg.Payload)
-	// }
+	// ctx := context.Background()
+	// payload := []byte(`{"event": "order.created", "order_id": "123"}`)
+	// props := message.Properties{"source": "api", "priority": "high"}
+	// sender.Send(ctx, "webhooks/orders", []*message.Message{message.New(payload, props)})
+
+	fmt.Println("  HTTP broker is fully functional with non-generic []byte payloads")
 }
