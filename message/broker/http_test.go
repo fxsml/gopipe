@@ -2,10 +2,10 @@ package broker_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -26,12 +26,13 @@ func TestHTTPSender_Send(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := broker.NewHTTPSender[string](server.URL, broker.HTTPConfig{})
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{})
 
 	ctx := context.Background()
-	msg := message.New("hello world", message.WithID[string]("msg-1"))
+	payload, _ := json.Marshal("hello world")
+	msg := message.New(payload, message.Properties{"gopipe.message.id": "msg-1"})
 
-	if err := sender.Send(ctx, "test/topic", msg); err != nil {
+	if err := sender.Send(ctx, "test/topic", []*message.Message{msg}); err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
 
@@ -59,15 +60,16 @@ func TestHTTPSender_Properties(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := broker.NewHTTPSender[string](server.URL, broker.HTTPConfig{})
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{})
 
 	ctx := context.Background()
-	msg := message.New("test",
-		message.WithID[string]("id-123"),
-		message.WithProperty[string]("custom.key", "custom-value"),
-	)
+	payload, _ := json.Marshal("test")
+	msg := message.New(payload, message.Properties{
+		"gopipe.message.id": "id-123",
+		"custom.key":        "custom-value",
+	})
 
-	if err := sender.Send(ctx, "topic", msg); err != nil {
+	if err := sender.Send(ctx, "topic", []*message.Message{msg}); err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
 
@@ -93,7 +95,7 @@ func TestHTTPSender_CustomHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := broker.NewHTTPSender[string](server.URL, broker.HTTPConfig{
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{
 		Headers: map[string]string{
 			"Authorization": "Bearer token123",
 			"X-Custom":      "custom-value",
@@ -101,7 +103,8 @@ func TestHTTPSender_CustomHeaders(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	if err := sender.Send(ctx, "topic", message.New("test")); err != nil {
+	payload, _ := json.Marshal("test")
+	if err := sender.Send(ctx, "topic", []*message.Message{message.New(payload, message.Properties{})}); err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
 
@@ -119,10 +122,11 @@ func TestHTTPSender_ErrorResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := broker.NewHTTPSender[string](server.URL, broker.HTTPConfig{})
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{})
 
 	ctx := context.Background()
-	err := sender.Send(ctx, "topic", message.New("test"))
+	payload, _ := json.Marshal("test")
+	err := sender.Send(ctx, "topic", []*message.Message{message.New(payload, message.Properties{})})
 
 	if err == nil {
 		t.Fatal("Expected error for 500 response")
@@ -130,14 +134,11 @@ func TestHTTPSender_ErrorResponse(t *testing.T) {
 }
 
 func TestHTTPReceiver_ServeHTTP(t *testing.T) {
-	receiver := broker.NewHTTPReceiver[string](broker.HTTPConfig{}, 100)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	defer receiver.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-
-	// Subscribe to topic
-	msgs := receiver.Receive(ctx, "test/topic")
 
 	// Create request
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`"hello world"`))
@@ -153,24 +154,26 @@ func TestHTTPReceiver_ServeHTTP(t *testing.T) {
 	}
 
 	// Check message received
-	select {
-	case msg := <-msgs:
-		if msg.Payload() != "hello world" {
-			t.Errorf("Expected 'hello world', got '%s'", msg.Payload())
-		}
-	case <-ctx.Done():
-		t.Fatal("Timeout waiting for message")
+	msgs, err := receiver.Receive(ctx, "test/topic")
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+	if len(msgs) == 0 {
+		t.Fatal("Expected message")
+	}
+	var str string
+	json.Unmarshal(msgs[0].Payload, &str)
+	if str != "hello world" {
+		t.Errorf("Expected 'hello world', got '%s'", str)
 	}
 }
 
 func TestHTTPReceiver_TopicFromPath(t *testing.T) {
-	receiver := broker.NewHTTPReceiver[string](broker.HTTPConfig{}, 100)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	defer receiver.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-
-	msgs := receiver.Receive(ctx, "orders/created")
 
 	// Request with topic in path (no header)
 	req := httptest.NewRequest(http.MethodPost, "/orders/created", strings.NewReader(`"order-123"`))
@@ -183,24 +186,26 @@ func TestHTTPReceiver_TopicFromPath(t *testing.T) {
 		t.Errorf("Expected 201, got %d", rec.Code)
 	}
 
-	select {
-	case msg := <-msgs:
-		if msg.Payload() != "order-123" {
-			t.Errorf("Expected 'order-123', got '%s'", msg.Payload())
-		}
-	case <-ctx.Done():
-		t.Fatal("Timeout")
+	msgs, err := receiver.Receive(ctx, "orders/created")
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+	if len(msgs) == 0 {
+		t.Fatal("Expected message")
+	}
+	var str string
+	json.Unmarshal(msgs[0].Payload, &str)
+	if str != "order-123" {
+		t.Errorf("Expected 'order-123', got '%s'", str)
 	}
 }
 
 func TestHTTPReceiver_PropertiesFromHeaders(t *testing.T) {
-	receiver := broker.NewHTTPReceiver[string](broker.HTTPConfig{}, 100)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	defer receiver.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-
-	msgs := receiver.Receive(ctx, "test")
 
 	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`"data"`))
 	req.Header.Set(broker.HeaderContentType, broker.ContentTypeJSON)
@@ -209,19 +214,21 @@ func TestHTTPReceiver_PropertiesFromHeaders(t *testing.T) {
 	rec := httptest.NewRecorder()
 	receiver.ServeHTTP(rec, req)
 
-	select {
-	case msg := <-msgs:
-		// Check property was received
-		if v, ok := msg.Properties().Get("custom.key"); !ok || v != "custom-value" {
-			t.Errorf("Expected custom property, got %v", v)
-		}
-	case <-ctx.Done():
-		t.Fatal("Timeout")
+	msgs, err := receiver.Receive(ctx, "test")
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+	if len(msgs) == 0 {
+		t.Fatal("Expected message")
+	}
+	// Check property was received
+	if v, ok := msgs[0].Properties["custom.key"]; !ok || v != "custom-value" {
+		t.Errorf("Expected custom property, got %v", v)
 	}
 }
 
 func TestHTTPReceiver_MethodNotAllowed(t *testing.T) {
-	receiver := broker.NewHTTPReceiver[string](broker.HTTPConfig{}, 100)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	defer receiver.Close()
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -235,7 +242,7 @@ func TestHTTPReceiver_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHTTPReceiver_MissingTopic(t *testing.T) {
-	receiver := broker.NewHTTPReceiver[string](broker.HTTPConfig{}, 100)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	defer receiver.Close()
 
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`"test"`))
@@ -249,39 +256,50 @@ func TestHTTPReceiver_MissingTopic(t *testing.T) {
 	}
 }
 
-func TestHTTPReceiver_InvalidPayload(t *testing.T) {
-	receiver := broker.NewHTTPReceiver[string](broker.HTTPConfig{}, 100)
+func TestHTTPReceiver_AnyPayload(t *testing.T) {
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	defer receiver.Close()
 
+	ctx := context.Background()
+
+	// HTTP receiver accepts any payload (raw bytes)
 	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`not valid json`))
 	req.Header.Set(broker.HeaderTopic, "test")
 
 	rec := httptest.NewRecorder()
 	receiver.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("Expected 400, got %d", rec.Code)
+	// Should accept any payload
+	if rec.Code != http.StatusCreated {
+		t.Errorf("Expected 201, got %d", rec.Code)
+	}
+
+	// Verify payload is stored as-is
+	msgs, err := receiver.Receive(ctx, "test")
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+	if len(msgs) == 0 {
+		t.Fatal("Expected message")
+	}
+	if string(msgs[0].Payload) != "not valid json" {
+		t.Errorf("Expected raw payload, got %s", msgs[0].Payload)
 	}
 }
 
 func TestHTTPReceiver_Close(t *testing.T) {
-	receiver := broker.NewHTTPReceiver[string](broker.HTTPConfig{}, 100)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 
 	ctx := context.Background()
-	msgs := receiver.Receive(ctx, "test")
 
 	if err := receiver.Close(); err != nil {
 		t.Fatalf("Close failed: %v", err)
 	}
 
-	// Channel should be closed
-	select {
-	case _, ok := <-msgs:
-		if ok {
-			t.Error("Expected channel to be closed")
-		}
-	case <-time.After(100 * time.Millisecond):
-		t.Error("Timeout waiting for channel close")
+	// Receive should fail after close
+	_, err := receiver.Receive(ctx, "test")
+	if err != broker.ErrHTTPServerClosed {
+		t.Errorf("Expected ErrHTTPServerClosed, got %v", err)
 	}
 
 	// Double close should error
@@ -301,16 +319,13 @@ func TestHTTPReceiver_Close(t *testing.T) {
 }
 
 func TestHTTPReceiver_WildcardTopic(t *testing.T) {
-	receiver := broker.NewHTTPReceiver[string](broker.HTTPConfig{}, 100)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	defer receiver.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	// Subscribe with wildcard
-	msgs := receiver.Receive(ctx, "orders/+")
-
-	// Send to specific topic
+	// Send to specific topics
 	req := httptest.NewRequest(http.MethodPost, "/orders/created", strings.NewReader(`"order1"`))
 	rec := httptest.NewRecorder()
 	receiver.ServeHTTP(rec, req)
@@ -319,59 +334,50 @@ func TestHTTPReceiver_WildcardTopic(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	receiver.ServeHTTP(rec2, req2)
 
-	// Should receive both
-	received := 0
-	timeout := time.After(500 * time.Millisecond)
-	for received < 2 {
-		select {
-		case <-msgs:
-			received++
-		case <-timeout:
-			t.Fatalf("Timeout after %d messages", received)
-		}
+	// Receive with wildcard - should get both
+	msgs, err := receiver.Receive(ctx, "orders/+")
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Errorf("Expected 2 messages, got %d", len(msgs))
 	}
 }
 
 func TestHTTP_RoundTrip(t *testing.T) {
 	// Create receiver with HTTP server
-	receiver := broker.NewHTTPReceiver[string](broker.HTTPConfig{}, 100)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	defer receiver.Close()
 
 	server := httptest.NewServer(receiver.Handler())
 	defer server.Close()
 
 	// Create sender pointing to server
-	sender := broker.NewHTTPSender[string](server.URL, broker.HTTPConfig{})
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	// Subscribe
-	msgs := receiver.Receive(ctx, "test")
-
 	// Send
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	go func() {
-		defer wg.Done()
-		time.Sleep(50 * time.Millisecond) // Wait for subscription
-		sender.Send(ctx, "test", message.New("round-trip-test",
-			message.WithProperty[string]("key", "value"),
-		))
-	}()
-
-	// Receive
-	select {
-	case msg := <-msgs:
-		if msg.Payload() != "round-trip-test" {
-			t.Errorf("Expected 'round-trip-test', got '%s'", msg.Payload())
-		}
-	case <-ctx.Done():
-		t.Fatal("Timeout")
+	payload, _ := json.Marshal("round-trip-test")
+	msg := message.New(payload, message.Properties{"key": "value"})
+	if err := sender.Send(ctx, "test", []*message.Message{msg}); err != nil {
+		t.Fatalf("Send failed: %v", err)
 	}
 
-	wg.Wait()
+	// Receive
+	msgs, err := receiver.Receive(ctx, "test")
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+	if len(msgs) == 0 {
+		t.Fatal("Expected message")
+	}
+	var str string
+	json.Unmarshal(msgs[0].Payload, &str)
+	if str != "round-trip-test" {
+		t.Errorf("Expected 'round-trip-test', got '%s'", str)
+	}
 }
 
 func TestHTTP_StructPayload(t *testing.T) {
@@ -380,30 +386,35 @@ func TestHTTP_StructPayload(t *testing.T) {
 		Data int    `json:"data"`
 	}
 
-	receiver := broker.NewHTTPReceiver[Event](broker.HTTPConfig{}, 100)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	defer receiver.Close()
 
 	server := httptest.NewServer(receiver.Handler())
 	defer server.Close()
 
-	sender := broker.NewHTTPSender[Event](server.URL, broker.HTTPConfig{})
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	msgs := receiver.Receive(ctx, "events")
-	time.Sleep(20 * time.Millisecond)
-
 	event := Event{Name: "test-event", Data: 42}
-	sender.Send(ctx, "events", message.New(event))
+	payload, _ := json.Marshal(event)
+	if err := sender.Send(ctx, "events", []*message.Message{message.New(payload, message.Properties{})}); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
 
-	select {
-	case msg := <-msgs:
-		if msg.Payload().Name != "test-event" || msg.Payload().Data != 42 {
-			t.Errorf("Payload mismatch: %+v", msg.Payload())
-		}
-	case <-ctx.Done():
-		t.Fatal("Timeout")
+	msgs, err := receiver.Receive(ctx, "events")
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+	if len(msgs) == 0 {
+		t.Fatal("Expected message")
+	}
+
+	var receivedEvent Event
+	json.Unmarshal(msgs[0].Payload, &receivedEvent)
+	if receivedEvent.Name != "test-event" || receivedEvent.Data != 42 {
+		t.Errorf("Payload mismatch: %+v", receivedEvent)
 	}
 }
 

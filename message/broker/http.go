@@ -71,7 +71,7 @@ func (c *HTTPConfig) defaults() HTTPConfig {
 
 // HTTPSender sends messages via HTTP POST to a webhook URL.
 // Properties are sent as X-Gopipe-* headers, payload is sent as request body.
-type HTTPSender[T any] struct {
+type HTTPSender struct {
 	config    HTTPConfig
 	url       string
 	marshaler Marshaler
@@ -82,9 +82,9 @@ type HTTPSender[T any] struct {
 // The topic is sent in X-Gopipe-Topic header.
 // Properties are sent as X-Gopipe-Prop-* headers.
 // Payload is sent as the request body with configured content type.
-func NewHTTPSender[T any](url string, config HTTPConfig) *HTTPSender[T] {
+func NewHTTPSender(url string, config HTTPConfig) *HTTPSender {
 	cfg := config.defaults()
-	return &HTTPSender[T]{
+	return &HTTPSender{
 		config:    cfg,
 		url:       url,
 		marshaler: cfg.Marshaler,
@@ -94,7 +94,7 @@ func NewHTTPSender[T any](url string, config HTTPConfig) *HTTPSender[T] {
 
 // Send POSTs messages to the configured webhook URL.
 // Each message is sent as a separate HTTP request.
-func (s *HTTPSender[T]) Send(ctx context.Context, topic string, msgs ...*message.Message[T]) error {
+func (s *HTTPSender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	// Apply timeout if configured
 	if s.config.SendTimeout > 0 {
 		var cancel context.CancelFunc
@@ -120,11 +120,11 @@ func (s *HTTPSender[T]) Send(ctx context.Context, topic string, msgs ...*message
 	return nil
 }
 
-func (s *HTTPSender[T]) sendOne(ctx context.Context, topic string, msg *message.Message[T]) error {
-	// Marshal payload
-	body, err := s.marshaler.Marshal(msg.Payload())
-	if err != nil {
-		return errors.Join(ErrMarshalFailed, err)
+func (s *HTTPSender) sendOne(ctx context.Context, topic string, msg *message.Message) error {
+	// Payload is already []byte (json.RawMessage)
+	body := msg.Payload
+	if len(body) == 0 {
+		body = []byte("null")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.url, bytes.NewReader(body))
@@ -142,11 +142,10 @@ func (s *HTTPSender[T]) sendOne(ctx context.Context, topic string, msg *message.
 	req.Header.Set(HeaderTimestamp, time.Now().UTC().Format(time.RFC3339Nano))
 
 	// Set properties as headers
-	msg.Properties().Range(func(key string, value any) bool {
+	for key, value := range msg.Properties {
 		headerKey := propertyToHeader(key)
 		req.Header.Set(headerKey, fmt.Sprintf("%v", value))
-		return true
-	})
+	}
 
 	// Set custom headers
 	for k, v := range s.config.Headers {
@@ -167,7 +166,7 @@ func (s *HTTPSender[T]) sendOne(ctx context.Context, topic string, msg *message.
 }
 
 // Close is a no-op for HTTPSender (implements Sender interface pattern).
-func (s *HTTPSender[T]) Close() error {
+func (s *HTTPSender) Close() error {
 	return nil
 }
 
@@ -196,23 +195,23 @@ func headerToProperty(header string) string {
 }
 
 // HTTPReceiver receives messages via HTTP POST requests.
-// It implements an HTTP handler that accepts messages and emits them on channels.
-type HTTPReceiver[T any] struct {
+// It implements an HTTP handler that accepts messages and buffers them.
+type HTTPReceiver struct {
 	config     HTTPConfig
 	mu         sync.RWMutex
-	topics     map[string]*httpTopic[T]
+	messages   []topicMessage
 	closed     bool
 	marshaler  Marshaler
 	bufferSize int
 }
 
-type httpTopic[T any] struct {
-	mu          sync.RWMutex
-	subscribers map[*httpSubscriber[T]]struct{}
+type topicMessage struct {
+	topic string
+	msg   *message.Message
 }
 
-type httpSubscriber[T any] struct {
-	ch     chan *message.Message[T]
+type httpSubscriber struct {
+	ch     chan *message.Message
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -222,28 +221,28 @@ type httpSubscriber[T any] struct {
 // Topic is read from X-Gopipe-Topic header.
 // Properties are read from X-Gopipe-Prop-* headers.
 // Payload is read from request body.
-func NewHTTPReceiver[T any](config HTTPConfig, bufferSize int) *HTTPReceiver[T] {
+func NewHTTPReceiver(config HTTPConfig, bufferSize int) *HTTPReceiver {
 	cfg := config.defaults()
 	if bufferSize <= 0 {
 		bufferSize = 100
 	}
-	return &HTTPReceiver[T]{
+	return &HTTPReceiver{
 		config:     cfg,
-		topics:     make(map[string]*httpTopic[T]),
+		messages:   make([]topicMessage, 0),
 		marshaler:  cfg.Marshaler,
 		bufferSize: bufferSize,
 	}
 }
 
 // Handler returns an http.Handler for receiving messages.
-func (r *HTTPReceiver[T]) Handler() http.Handler {
+func (r *HTTPReceiver) Handler() http.Handler {
 	return http.HandlerFunc(r.ServeHTTP)
 }
 
 // ServeHTTP implements http.Handler for receiving messages via POST.
 // Returns 201 Created on success, 400 Bad Request on invalid input,
 // 405 Method Not Allowed for non-POST requests.
-func (r *HTTPReceiver[T]) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (r *HTTPReceiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -275,23 +274,16 @@ func (r *HTTPReceiver[T]) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Unmarshal payload
-	var payload T
-	if err := r.marshaler.Unmarshal(body, &payload); err != nil {
-		http.Error(w, "Invalid payload", http.StatusBadRequest)
-		return
-	}
-
 	// Extract properties from headers
-	opts := []message.Option[T]{}
+	props := message.Properties{}
 	for key, values := range req.Header {
 		if strings.HasPrefix(key, HeaderPrefix+"Prop-") && len(values) > 0 {
 			propKey := headerToProperty(key)
-			opts = append(opts, message.WithProperty[T](propKey, values[0]))
+			props[propKey] = values[0]
 		}
 	}
 
-	msg := message.New(payload, opts...)
+	msg := message.New(body, props)
 
 	// Broadcast to subscribers
 	r.broadcast(topic, msg)
@@ -299,103 +291,44 @@ func (r *HTTPReceiver[T]) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func (r *HTTPReceiver[T]) getOrCreateTopic(name string) *httpTopic[T] {
-	r.mu.RLock()
-	t, ok := r.topics[name]
-	r.mu.RUnlock()
-	if ok {
-		return t
-	}
-
+func (r *HTTPReceiver) broadcast(topicName string, msg *message.Message) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if t, ok = r.topics[name]; ok {
-		return t
-	}
-	t = &httpTopic[T]{
-		subscribers: make(map[*httpSubscriber[T]]struct{}),
-	}
-	r.topics[name] = t
-	return t
+	r.messages = append(r.messages, topicMessage{topic: topicName, msg: msg})
 }
 
-func (r *HTTPReceiver[T]) broadcast(topicName string, msg *message.Message[T]) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	for name, topic := range r.topics {
-		matcher := NewTopicMatcher(name)
-		if matcher.Matches(topicName) {
-			topic.mu.RLock()
-			for sub := range topic.subscribers {
-				select {
-				case sub.ch <- msg:
-				case <-sub.ctx.Done():
-				default:
-					// Drop if subscriber is slow
-				}
-			}
-			topic.mu.RUnlock()
-		}
-	}
-}
-
-// Receive returns a channel that emits messages from the specified topic.
+// Receive returns all messages received for the specified topic.
 // The topic can include wildcards (+, #) for pattern matching.
-func (r *HTTPReceiver[T]) Receive(ctx context.Context, topic string) <-chan *message.Message[T] {
-	out := make(chan *message.Message[T], r.bufferSize)
-
+func (r *HTTPReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
 	r.mu.RLock()
 	if r.closed {
 		r.mu.RUnlock()
-		close(out)
-		return out
+		return nil, ErrHTTPServerClosed
 	}
 	r.mu.RUnlock()
 
-	subCtx, cancel := context.WithCancel(ctx)
-	sub := &httpSubscriber[T]{
-		ch:     make(chan *message.Message[T], r.bufferSize),
-		ctx:    subCtx,
-		cancel: cancel,
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
 	}
 
-	t := r.getOrCreateTopic(topic)
-	t.mu.Lock()
-	t.subscribers[sub] = struct{}{}
-	t.mu.Unlock()
+	// Filter messages by topic pattern
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 
-	go func() {
-		defer close(out)
-		defer func() {
-			t.mu.Lock()
-			delete(t.subscribers, sub)
-			t.mu.Unlock()
-			cancel()
-		}()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-sub.ch:
-				if !ok {
-					return
-				}
-				select {
-				case out <- msg:
-				case <-ctx.Done():
-					return
-				}
-			}
+	matcher := NewTopicMatcher(topic)
+	result := make([]*message.Message, 0)
+	for _, tm := range r.messages {
+		if matcher.Matches(tm.topic) {
+			result = append(result, tm.msg)
 		}
-	}()
-
-	return out
+	}
+	return result, nil
 }
 
-// Close shuts down the receiver and closes all subscriber channels.
-func (r *HTTPReceiver[T]) Close() error {
+// Close shuts down the receiver.
+func (r *HTTPReceiver) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -403,15 +336,6 @@ func (r *HTTPReceiver[T]) Close() error {
 		return ErrHTTPServerClosed
 	}
 	r.closed = true
-
-	for _, topic := range r.topics {
-		topic.mu.Lock()
-		for sub := range topic.subscribers {
-			sub.cancel()
-			close(sub.ch)
-		}
-		topic.mu.Unlock()
-	}
 
 	return nil
 }

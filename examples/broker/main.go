@@ -192,10 +192,10 @@ func ioBrokerExample() {
 	// Send messages with properties
 	msg1 := message.New([]byte("Application started"), message.Properties{"id": "log-001", "level": "info"})
 	sender.Send(ctx, "logs/app", []*message.Message{msg1})
-	
+
 	msg2 := message.New([]byte("Processing request"), message.Properties{"id": "log-002", "level": "debug"})
 	sender.Send(ctx, "logs/app", []*message.Message{msg2})
-	
+
 	msg3 := message.New([]byte("Connection failed"), message.Properties{"id": "log-003", "level": "error"})
 	sender.Send(ctx, "logs/error", []*message.Message{msg3})
 
@@ -274,10 +274,10 @@ func httpBrokerExample() {
 	// Placeholder for future implementation:
 	// receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	// defer receiver.Close()
-	// 
+	//
 	// server := httptest.NewServer(receiver.Handler())
 	// defer server.Close()
-	// 
+	//
 	// sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{
 	// 	Headers: map[string]string{"Authorization": "Bearer webhook-token"},
 	// })
