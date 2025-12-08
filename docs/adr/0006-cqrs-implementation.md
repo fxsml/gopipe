@@ -1,7 +1,10 @@
 # ADR 0006: CQRS Implementation
 
 **Date:** 2025-12-08
-**Status:** Proposed
+**Status:** Proposed (Revised)
+**Revision History:**
+- 2025-12-08: Initial proposal
+- 2025-12-08: Revised based on design review (see Design Revision section)
 
 ## Context
 
@@ -57,6 +60,93 @@ commandBus.Send(ctx, &BookRoom{RoomID: "123"})
 eventBus.Publish(ctx, &RoomBooked{RoomID: "123"})
 ```
 
+## Design Revision
+
+**Note:** The initial proposal had significant design issues that were identified during implementation. This section documents those issues and the revised design.
+
+### Issues with Initial Proposal
+
+1. **Violated gopipe's Channel Pattern**
+   - **Problem**: Buses consumed channels instead of returning them
+   - **Impact**: Inconsistent with gopipe's core API pattern
+
+2. **Command Handlers Called EventBus Directly**
+   - **Problem**: Handlers were coupled to EventBus
+   - **Impact**: Hard to test, not composable, tight coupling
+
+3. **No Saga Pattern Support**
+   - **Problem**: Event handlers couldn't trigger commands
+   - **Impact**: Can't implement event choreography or multi-step workflows
+
+4. **Missing Feedback Loops**
+   - **Problem**: No way to chain Commands → Events → Commands
+   - **Impact**: Limited to simple one-way flows
+
+### Revised Design Principles
+
+1. **Processors Return Channels** (gopipe pattern)
+   ```go
+   // ✅ Correct
+   events := commandProcessor.Start(ctx, commands)
+
+   // ❌ Wrong (initial proposal)
+   commandBus.Send(ctx, command)
+   ```
+
+2. **Command Handlers Return Events** (not send to bus)
+   ```go
+   // ✅ Correct (pure function)
+   func(ctx, cmd CreateOrder) ([]OrderCreated, error) {
+       return []OrderCreated{{...}}, nil
+   }
+
+   // ❌ Wrong (coupled to bus)
+   func(ctx, cmd CreateOrder) error {
+       return eventBus.Publish(ctx, OrderCreated{...})
+   }
+   ```
+
+3. **Event Handlers Return Commands** (saga pattern)
+   ```go
+   // ✅ Enables sagas
+   func(ctx, evt OrderCreated) ([]ChargePayment, error) {
+       return []ChargePayment{{...}}, nil
+   }
+   ```
+
+4. **Feedback Loop via channel.Merge**
+   ```go
+   sagaCommands := make(chan *Message, 100)
+   allCommands := channel.Merge(initialCommands, sagaCommands)
+   events := commandProcessor.Start(ctx, allCommands)
+   sagaOutputs := eventProcessor.Start(ctx, events)
+
+   // Route saga outputs back to commands
+   go func() {
+       for cmd := range sagaOutputs {
+           sagaCommands <- cmd
+       }
+   }()
+   ```
+
+### Pattern: Event Choreography (Saga)
+
+The revised design naturally supports **event choreography** where events trigger commands:
+
+```
+CreateOrder (cmd) → OrderCreated (evt) → ChargePayment (cmd)
+                                       → PaymentCharged (evt) → ShipOrder (cmd)
+                                                              → OrderShipped (evt) → Email
+```
+
+This is essential for:
+- Distributed transactions
+- Multi-step workflows
+- Service choreography
+- Process coordination
+
+See [examples/cqrs-v2](../../examples/cqrs-v2) for working implementation.
+
 ## Decision
 
 **Implement a dedicated `cqrs` package** that builds on gopipe's `message` package, providing CQRS-specific semantics while maintaining gopipe's philosophy of simplicity and type safety.
@@ -97,155 +187,203 @@ type Marshaler interface {
     Name(v any) string
 }
 
-// CommandBus sends commands to handlers
-type CommandBus struct {
-    marshaler Marshaler
-    send      func(ctx context.Context, name string, payload []byte,
-                   props message.Properties) error
-}
-
-// EventBus publishes events to subscribers
-type EventBus struct {
-    marshaler Marshaler
-    publish   func(ctx context.Context, name string, payload []byte,
-                   props message.Properties) error
-}
-
-// CommandProcessor routes commands to handlers
+// CommandProcessor routes commands to handlers and returns events
+// Follows gopipe's channel pattern
 type CommandProcessor struct {
-    router *message.Router
+    router    *message.Router
+    marshaler Marshaler
 }
 
-// EventProcessor routes events to handlers
+func (p *CommandProcessor) Start(ctx context.Context,
+    commands <-chan *message.Message) <-chan *message.Message {
+    return p.router.Start(ctx, commands)
+}
+
+// EventProcessor routes events to handlers and can return commands (saga pattern)
+// Follows gopipe's channel pattern
 type EventProcessor struct {
-    router *message.Router
+    router    *message.Router
+    marshaler Marshaler
+}
+
+func (p *EventProcessor) Start(ctx context.Context,
+    events <-chan *message.Message) <-chan *message.Message {
+    return p.router.Start(ctx, events)
 }
 ```
 
-### API Design
+### API Design (Revised)
 
-#### 1. Creating Buses
-
-```go
-// CommandBus for sending commands
-commandBus := cqrs.NewCommandBus(
-    cqrs.JSONMarshaler{},
-    func(ctx context.Context, name string, payload []byte,
-         props message.Properties) error {
-        // Send to message broker/channel
-        msg := message.New(payload, props)
-        return publisher.Send(ctx, name, msg)
-    },
-)
-
-// EventBus for publishing events
-eventBus := cqrs.NewEventBus(
-    cqrs.JSONMarshaler{},
-    func(ctx context.Context, name string, payload []byte,
-         props message.Properties) error {
-        // Publish to message broker/channel
-        msg := message.New(payload, props)
-        return publisher.Publish(ctx, name, msg)
-    },
-)
-```
-
-#### 2. Sending Commands
+#### 1. Creating Processors
 
 ```go
-type CreateOrder struct {
-    ID       string
-    Amount   int
-    CustomerID string
-}
+marshaler := cqrs.JSONMarshaler{}
 
-// Send command
-err := commandBus.Send(ctx, CreateOrder{
-    ID:       "order-123",
-    Amount:   100,
-    CustomerID: "cust-456",
-})
-```
-
-#### 3. Publishing Events
-
-```go
-type OrderCreated struct {
-    ID          string
-    Amount      int
-    CustomerID  string
-    CreatedAt   time.Time
-}
-
-// Publish event
-err := eventBus.Publish(ctx, OrderCreated{
-    ID:         "order-123",
-    Amount:     100,
-    CustomerID: "cust-456",
-    CreatedAt:  time.Now(),
-})
-```
-
-#### 4. Handling Commands
-
-```go
-// Command handler - single responsibility
-handleCreateOrder := cqrs.NewCommandHandler(
-    "CreateOrder",
-    func(ctx context.Context, cmd CreateOrder) error {
-        // Process command
-        order := createOrder(cmd)
-
-        // Publish event
-        return eventBus.Publish(ctx, OrderCreated{
-            ID:         order.ID,
-            Amount:     order.Amount,
-            CustomerID: order.CustomerID,
-            CreatedAt:  time.Now(),
-        })
-    },
-)
-
-processor := cqrs.NewCommandProcessor(
+// CommandProcessor: Commands → Events
+commandProcessor := cqrs.NewCommandProcessor(
     message.RouterConfig{
         Concurrency: 10,
         Recover:     true,
     },
-    handleCreateOrder,
+    marshaler,
+    // Handlers registered here
 )
 
-processor.Start(ctx, commandChannel)
-```
-
-#### 5. Handling Events
-
-```go
-// Event handler 1 - send confirmation email
-handleOrderCreatedEmail := cqrs.NewEventHandler(
-    "OrderCreated.Email",
-    func(ctx context.Context, evt OrderCreated) error {
-        return emailService.SendOrderConfirmation(evt.CustomerID, evt.ID)
-    },
-)
-
-// Event handler 2 - update analytics
-handleOrderCreatedAnalytics := cqrs.NewEventHandler(
-    "OrderCreated.Analytics",
-    func(ctx context.Context, evt OrderCreated) error {
-        return analyticsService.TrackOrder(evt.ID, evt.Amount)
-    },
-)
-
-processor := cqrs.NewEventProcessor(
+// EventProcessor: Events → Commands (saga pattern)
+eventProcessor := cqrs.NewEventProcessor(
     message.RouterConfig{
         Concurrency: 20,
         Recover:     true,
     },
-    handleOrderCreatedEmail,
-    handleOrderCreatedAnalytics,
+    marshaler,
+    // Handlers registered here
+)
+```
+
+#### 2. Command Handlers Return Events
+
+```go
+type CreateOrder struct {
+    ID         string
+    Amount     int
+    CustomerID string
+}
+
+type OrderCreated struct {
+    ID         string
+    Amount     int
+    CustomerID string
+    CreatedAt  time.Time
+}
+
+// Command handler returns events (pure function!)
+handleCreateOrder := cqrs.NewCommandHandler(
+    "CreateOrder",
+    marshaler,
+    func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
+        // Business logic
+        saveOrder(cmd)
+
+        // Return events (don't send to bus!)
+        return []OrderCreated{{
+            ID:         cmd.ID,
+            Amount:     cmd.Amount,
+            CustomerID: cmd.CustomerID,
+            CreatedAt:  time.Now(),
+        }}, nil
+    },
+)
+```
+
+#### 3. Event Handlers Can Return Commands (Saga)
+
+```go
+type ChargePayment struct {
+    OrderID    string
+    CustomerID string
+    Amount     int
+}
+
+type PaymentCharged struct {
+    OrderID   string
+    Amount    int
+    ChargedAt time.Time
+}
+
+// Saga: OrderCreated → ChargePayment command
+orderCreatedSagaHandler := cqrs.NewEventHandler(
+    "OrderCreated",
+    marshaler,
+    func(ctx context.Context, evt OrderCreated) ([]ChargePayment, error) {
+        // Saga step: trigger next command
+        return []ChargePayment{{
+            OrderID:    evt.ID,
+            CustomerID: evt.CustomerID,
+            Amount:     evt.Amount,
+        }}, nil
+    },
 )
 
-processor.Start(ctx, eventChannel)
+// Terminal handler: doesn't return commands
+type NoOutput struct{}
+
+emailHandler := cqrs.NewEventHandler(
+    "OrderCreated",
+    marshaler,
+    func(ctx context.Context, evt OrderCreated) ([]NoOutput, error) {
+        sendEmail(evt.CustomerID, evt.ID)
+        return nil, nil // Terminal
+    },
+)
+```
+
+#### 4. Wiring: Simple Flow (No Saga)
+
+```go
+// Commands → Events (no feedback loop)
+commandProcessor := cqrs.NewCommandProcessor(
+    config,
+    marshaler,
+    handleCreateOrder,
+)
+
+eventProcessor := cqrs.NewEventProcessor(
+    config,
+    marshaler,
+    emailHandler,
+    analyticsHandler,
+)
+
+// Wire together
+commandChan := getCommandsFromQueue()
+events := commandProcessor.Start(ctx, commandChan)
+eventProcessor.Start(ctx, events) // Terminal
+```
+
+#### 5. Wiring: Saga Pattern (Feedback Loop)
+
+```go
+// Commands → Events → Commands (saga feedback loop)
+commandProcessor := cqrs.NewCommandProcessor(
+    config,
+    marshaler,
+    handleCreateOrder,
+    handleChargePayment,
+    handleShipOrder,
+)
+
+eventProcessor := cqrs.NewEventProcessor(
+    config,
+    marshaler,
+    orderCreatedSagaHandler,
+    paymentChargedSagaHandler,
+    emailHandler,
+)
+
+// Initial commands
+initialCommands := make(chan *message.Message, 10)
+
+// Saga-triggered commands
+sagaCommands := make(chan *message.Message, 100)
+
+// Merge: Creates feedback loop
+allCommands := channel.Merge(initialCommands, sagaCommands)
+
+// Commands → Events
+events := commandProcessor.Start(ctx, allCommands)
+
+// Events → Commands (saga)
+sagaOutputs := eventProcessor.Start(ctx, events)
+
+// Route saga outputs back to commands
+go func() {
+    for cmd := range sagaOutputs {
+        sagaCommands <- cmd
+    }
+}()
+
+// Send initial command
+initialCommands <- createCommand(CreateOrder{...})
 ```
 
 #### 6. Custom Marshalers
@@ -649,8 +787,18 @@ handler := cqrs.NewCommandHandler(
 
 ## References
 
+### CQRS
 - [Watermill CQRS Component](https://watermill.io/docs/cqrs/)
 - [How to use basic CQRS in Go](https://threedots.tech/post/basic-cqrs-in-go/)
 - [Watermill CQRS Examples](https://github.com/ThreeDotsLabs/watermill/blob/master/_examples/basic/5-cqrs-protobuf/main.go)
+- [Microsoft: CQRS Pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs)
+
+### Saga Pattern
+- [Saga Pattern](https://microservices.io/patterns/data/saga.html)
+- [CQRS and Saga in Microservices](https://medium.com/@ingila185/cqrs-and-saga-the-essential-patterns-for-high-performance-microservice-4f23a09889b4)
+- [Event Choreography vs Orchestration](https://www.tenupsoft.com/blog/The-importance-of-cqrs-and-saga-in-microservices-architecture.html)
+
+### gopipe
 - [ADR 0005: Remove Functional Options](./0005-remove-functional-options.md)
-- Microsoft: [CQRS Pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs)
+- [Design Analysis Document](../cqrs-design-analysis.md)
+- [Working Example: cqrs-v2](../../examples/cqrs-v2)
