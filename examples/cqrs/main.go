@@ -115,22 +115,22 @@ func (b *EventBus) Publish(ctx context.Context, evt any) error {
 func NewCommandHandler[T any](
 	name string,
 	handle func(ctx context.Context, cmd T) error,
-) *message.Handler {
+) message.Handler {
 	return message.NewHandler(
-		func(ctx context.Context, cmd T) ([]T, error) {
+		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			// Commands don't produce output messages directly
 			// They publish events via EventBus instead
+			var cmd T
+			if err := json.Unmarshal(msg.Payload, &cmd); err != nil {
+				return nil, err
+			}
 			err := handle(ctx, cmd)
 			return nil, err
 		},
-		func(prop map[string]any) bool {
-			subject, _ := message.SubjectProps(prop)
-			msgType, _ := prop["type"].(string)
+		func(prop message.Properties) bool {
+			subject, _ := prop.Subject()
+			msgType, _ := prop.String("type")
 			return subject == name && msgType == "command"
-		},
-		func(prop map[string]any) map[string]any {
-			// Commands don't transform properties
-			return nil
 		},
 	)
 }
@@ -139,19 +139,20 @@ func NewCommandHandler[T any](
 func NewEventHandler[T any](
 	name string,
 	handle func(ctx context.Context, evt T) error,
-) *message.Handler {
+) message.Handler {
 	return message.NewHandler(
-		func(ctx context.Context, evt T) ([]T, error) {
+		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+			var evt T
+			if err := json.Unmarshal(msg.Payload, &evt); err != nil {
+				return nil, err
+			}
 			err := handle(ctx, evt)
 			return nil, err
 		},
-		func(prop map[string]any) bool {
-			subject, _ := message.SubjectProps(prop)
-			msgType, _ := prop["type"].(string)
+		func(prop message.Properties) bool {
+			subject, _ := prop.Subject()
+			msgType, _ := prop.String("type")
 			return subject == name && msgType == "event"
-		},
-		func(prop map[string]any) map[string]any {
-			return nil
 		},
 	)
 }

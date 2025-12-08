@@ -16,6 +16,11 @@ type Receiver interface {
 	Receive(ctx context.Context, topic string) ([]*Message, error)
 }
 
+type Broker interface {
+	Sender
+	Receiver
+}
+
 type Publisher interface {
 	Publish(ctx context.Context, msgs <-chan *Message) <-chan struct{}
 }

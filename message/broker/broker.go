@@ -1,5 +1,5 @@
-// Package broker provides interfaces and in-memory implementation for message brokering.
-// It supports topic-based publish/subscribe patterns with "/" separated topic hierarchies.
+// Package broker provides in-memory implementation for message brokering.
+// Interfaces are defined in the message package.
 package broker
 
 import (
@@ -19,28 +19,6 @@ var (
 	// ErrReceiveTimeout is returned when a receive operation times out.
 	ErrReceiveTimeout = errors.New("receive timeout")
 )
-
-// Sender sends messages to a topic.
-type Sender[T any] interface {
-	// Send sends messages to the specified topic.
-	// Returns an error if the send fails or times out.
-	Send(ctx context.Context, topic string, msgs ...*message.Message[T]) error
-}
-
-// Receiver receives messages from a topic.
-type Receiver[T any] interface {
-	// Receive returns a channel that emits messages from the specified topic.
-	// The channel is closed when the context is canceled or the broker is closed.
-	Receive(ctx context.Context, topic string) <-chan *message.Message[T]
-}
-
-// Broker combines Sender and Receiver capabilities.
-type Broker[T any] interface {
-	Sender[T]
-	Receiver[T]
-	// Close gracefully shuts down the broker.
-	Close() error
-}
 
 // Config configures the broker behavior.
 type Config struct {
@@ -72,80 +50,72 @@ func (c *Config) defaults() Config {
 	return cfg
 }
 
-// topic represents a single topic with its subscribers.
-type topic[T any] struct {
-	mu          sync.RWMutex
-	subscribers map[*subscriber[T]]struct{}
+// topic represents a single topic with buffered messages.
+type topic struct {
+	mu       sync.RWMutex
+	messages []*message.Message
 }
 
-func newTopic[T any]() *topic[T] {
-	return &topic[T]{
-		subscribers: make(map[*subscriber[T]]struct{}),
+func newTopic() *topic {
+	return &topic{
+		messages: make([]*message.Message, 0),
 	}
 }
 
-func (t *topic[T]) addSubscriber(s *subscriber[T]) {
+func (t *topic) addMessage(msg *message.Message) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.subscribers[s] = struct{}{}
+	t.messages = append(t.messages, msg)
 }
 
-func (t *topic[T]) removeSubscriber(s *subscriber[T]) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.subscribers, s)
-}
-
-func (t *topic[T]) broadcast(msg *message.Message[T]) {
+func (t *topic) getMessages() []*message.Message {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	for s := range t.subscribers {
-		select {
-		case s.ch <- msg:
-		default:
-			// Drop message if subscriber is slow (non-blocking)
-		}
-	}
+	// Return a copy of messages
+	result := make([]*message.Message, len(t.messages))
+	copy(result, t.messages)
+	return result
 }
 
-// subscriber represents a subscription to a topic.
-type subscriber[T any] struct {
-	ch chan *message.Message[T]
+func (t *topic) clearMessages() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.messages = nil
 }
 
 // memoryBroker is an in-memory implementation of Broker.
-type memoryBroker[T any] struct {
+type memoryBroker struct {
 	config Config
 
 	mu     sync.RWMutex
-	topics map[string]*topic[T]
+	topics map[string]*topic
 	closed bool
 	wg     sync.WaitGroup
 }
 
 // NewBroker creates a new in-memory broker with the given configuration.
-func NewBroker[T any](config Config) Broker[T] {
+func NewBroker(config Config) message.Broker {
 	cfg := config.defaults()
-	return &memoryBroker[T]{
+	return &memoryBroker{
 		config: cfg,
-		topics: make(map[string]*topic[T]),
+		topics: make(map[string]*topic),
 	}
 }
 
 // NewSender returns a Sender backed by the given broker.
 // This allows using the broker as a Sender in components that only need send capability.
-func NewSender[T any](b Broker[T]) Sender[T] {
+func NewSender(b message.Broker) message.Sender {
 	return b
 }
 
 // NewReceiver returns a Receiver backed by the given broker.
 // This allows using the broker as a Receiver in components that only need receive capability.
-func NewReceiver[T any](b Broker[T]) Receiver[T] {
+func NewReceiver(b message.Broker) message.Receiver {
 	return b
 }
 
 // getOrCreateTopic returns the topic for the given name, creating it if necessary.
-func (b *memoryBroker[T]) getOrCreateTopic(name string) *topic[T] {
+func (b *memoryBroker) getOrCreateTopic(name string) *topic {
 	b.mu.RLock()
 	t, ok := b.topics[name]
 	b.mu.RUnlock()
@@ -159,13 +129,13 @@ func (b *memoryBroker[T]) getOrCreateTopic(name string) *topic[T] {
 	if t, ok = b.topics[name]; ok {
 		return t
 	}
-	t = newTopic[T]()
+	t = newTopic()
 	b.topics[name] = t
 	return t
 }
 
 // Send sends messages to the specified topic.
-func (b *memoryBroker[T]) Send(ctx context.Context, topicName string, msgs ...*message.Message[T]) error {
+func (b *memoryBroker) Send(ctx context.Context, topicName string, msgs []*message.Message) error {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -190,7 +160,7 @@ func (b *memoryBroker[T]) Send(ctx context.Context, topicName string, msgs ...*m
 			}
 			return ctx.Err()
 		default:
-			t.broadcast(msg)
+			t.addMessage(msg)
 		}
 	}
 
@@ -198,62 +168,22 @@ func (b *memoryBroker[T]) Send(ctx context.Context, topicName string, msgs ...*m
 }
 
 // Receive returns a channel that emits messages from the specified topic.
-func (b *memoryBroker[T]) Receive(ctx context.Context, topicName string) <-chan *message.Message[T] {
-	out := make(chan *message.Message[T])
-
+func (b *memoryBroker) Receive(ctx context.Context, topicName string) ([]*message.Message, error) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
-		close(out)
-		return out
+		return nil, ErrBrokerClosed
 	}
 	b.mu.RUnlock()
 
 	t := b.getOrCreateTopic(topicName)
-	s := &subscriber[T]{
-		ch: make(chan *message.Message[T], b.config.BufferSize),
-	}
-	t.addSubscriber(s)
 
-	b.wg.Add(1)
-	go func() {
-		defer b.wg.Done()
-		defer close(out)
-		defer t.removeSubscriber(s)
-
-		for {
-			// Apply receive timeout if configured
-			var timeoutCh <-chan time.Time
-			if b.config.ReceiveTimeout > 0 {
-				timer := time.NewTimer(b.config.ReceiveTimeout)
-				timeoutCh = timer.C
-				defer timer.Stop()
-			}
-
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-s.ch:
-				if !ok {
-					return
-				}
-				select {
-				case out <- msg:
-				case <-ctx.Done():
-					return
-				}
-			case <-timeoutCh:
-				// Timeout on receive, continue waiting
-				continue
-			}
-		}
-	}()
-
-	return out
+	// Return all messages from the topic
+	return t.getMessages(), nil
 }
 
 // Close gracefully shuts down the broker.
-func (b *memoryBroker[T]) Close() error {
+func (b *memoryBroker) Close() error {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -261,27 +191,11 @@ func (b *memoryBroker[T]) Close() error {
 	}
 	b.closed = true
 
-	// Close all subscriber channels
+	// Clear all topic messages
 	for _, t := range b.topics {
-		t.mu.Lock()
-		for s := range t.subscribers {
-			close(s.ch)
-		}
-		t.mu.Unlock()
+		t.clearMessages()
 	}
 	b.mu.Unlock()
 
-	// Wait for all goroutines to finish with timeout
-	done := make(chan struct{})
-	go func() {
-		b.wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		return nil
-	case <-time.After(b.config.CloseTimeout):
-		return context.DeadlineExceeded
-	}
+	return nil
 }

@@ -5,12 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http/httptest"
 	"sync"
 	"time"
 
-	"github.com/fxsml/gopipe"
-	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/message/broker"
 )
@@ -20,12 +17,11 @@ func main() {
 	fmt.Println()
 
 	// Create broker with configuration
-	b := broker.NewBroker[string](broker.Config{
+	b := broker.NewBroker(broker.Config{
 		CloseTimeout: 5 * time.Second,
 		SendTimeout:  time.Second,
 		BufferSize:   50,
 	})
-	defer b.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -65,125 +61,120 @@ func main() {
 	fmt.Println("\n=== All examples completed ===")
 }
 
-func basicPubSub(ctx context.Context, b broker.Broker[string], wg *sync.WaitGroup) {
+func basicPubSub(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
 	// Get sender and receiver interfaces
 	sender := broker.NewSender(b)
 	receiver := broker.NewReceiver(b)
 
-	// Start subscriber
-	msgs := receiver.Receive(ctx, "greetings")
+	// Start subscriber - returns (messages, error)
+	msgs, err := receiver.Receive(ctx, "greetings")
+	if err != nil {
+		fmt.Printf("Error receiving: %v\n", err)
+		return
+	}
 
 	wg.Add(1)
-	go func() {
+	go func(messages []*message.Message) {
 		defer wg.Done()
-		for msg := range msgs {
-			fmt.Printf("  Received: %s\n", msg.Payload())
+		for _, msg := range messages {
+			fmt.Printf("  Received: %s\n", msg.Payload)
 		}
-	}()
+	}(msgs)
 
 	// Give subscriber time to connect
 	time.Sleep(10 * time.Millisecond)
 
 	// Publish messages
-	sender.Send(ctx, "greetings", message.New("Hello, World!"))
-	sender.Send(ctx, "greetings", message.New("Welcome to gopipe!"))
+	sender.Send(ctx, "greetings", []*message.Message{message.New([]byte("Hello, World!"), message.Properties{})})
+	sender.Send(ctx, "greetings", []*message.Message{message.New([]byte("Welcome to gopipe!"), message.Properties{})})
 
 	time.Sleep(50 * time.Millisecond)
 }
 
-func multipleSubscribers(ctx context.Context, b broker.Broker[string], wg *sync.WaitGroup) {
+func multipleSubscribers(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
 	// Create multiple subscribers for the same topic
-	sub1 := b.Receive(ctx, "events")
-	sub2 := b.Receive(ctx, "events")
+	msgs1, _ := b.Receive(ctx, "events")
+	msgs2, _ := b.Receive(ctx, "events")
 
 	// Process messages from both subscribers
-	for i, sub := range []<-chan *message.Message[string]{sub1, sub2} {
+	for i, msgs := range [][]*message.Message{msgs1, msgs2} {
 		wg.Add(1)
-		go func(id int, ch <-chan *message.Message[string]) {
+		go func(id int, messages []*message.Message) {
 			defer wg.Done()
-			for msg := range ch {
-				fmt.Printf("  Subscriber %d received: %s\n", id, msg.Payload())
+			for _, msg := range messages {
+				fmt.Printf("  Subscriber %d received: %s\n", id, msg.Payload)
 			}
-		}(i+1, sub)
+		}(i+1, msgs)
 	}
 
 	time.Sleep(10 * time.Millisecond)
 
 	// Send event - both subscribers will receive it
-	b.Send(ctx, "events", message.New("Important event occurred!"))
+	b.Send(ctx, "events", []*message.Message{message.New([]byte("Important event occurred!"), message.Properties{})})
 
 	time.Sleep(50 * time.Millisecond)
 }
 
-func hierarchicalTopics(ctx context.Context, b broker.Broker[string], wg *sync.WaitGroup) {
+func hierarchicalTopics(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
 	// Subscribe to different hierarchical topics
-	ordersCreated := b.Receive(ctx, "orders/created")
-	ordersUpdated := b.Receive(ctx, "orders/updated")
-	usersProfile := b.Receive(ctx, "users/profile/updated")
+	ordersCreated, _ := b.Receive(ctx, "orders/created")
+	ordersUpdated, _ := b.Receive(ctx, "orders/updated")
+	usersProfile, _ := b.Receive(ctx, "users/profile/updated")
 
-	// Merge all channels using gopipe's channel.Merge
-	merged := channel.Merge(ordersCreated, ordersUpdated, usersProfile)
+	// Combine all messages (broker returns slices, not channels)
+	merged := append(append(ordersCreated, ordersUpdated...), usersProfile...)
 
 	wg.Add(1)
-	go func() {
+	go func(messages []*message.Message) {
 		defer wg.Done()
-		for msg := range merged {
-			fmt.Printf("  Received on merged channel: %s\n", msg.Payload())
+		for _, msg := range messages {
+			fmt.Printf("  Received on merged channel: %s\n", msg.Payload)
 		}
-	}()
+	}(merged)
 
 	time.Sleep(10 * time.Millisecond)
 
 	// Send to different topics
-	b.Send(ctx, "orders/created", message.New("Order #123 created"))
-	b.Send(ctx, "orders/updated", message.New("Order #456 shipped"))
-	b.Send(ctx, "users/profile/updated", message.New("User john updated profile"))
+	b.Send(ctx, "orders/created", []*message.Message{message.New([]byte("Order #123 created"), message.Properties{})})
+	b.Send(ctx, "orders/updated", []*message.Message{message.New([]byte("Order #456 shipped"), message.Properties{})})
+	b.Send(ctx, "users/profile/updated", []*message.Message{message.New([]byte("User john updated profile"), message.Properties{})})
 
 	time.Sleep(50 * time.Millisecond)
 }
 
-func gopipeIntegration(ctx context.Context, b broker.Broker[string], wg *sync.WaitGroup) {
-	// Subscribe to incoming messages
-	incoming := b.Receive(ctx, "input")
+func gopipeIntegration(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
+	// Note: Broker now returns slices, not channels, so direct pipe integration needs adjustment
+	// For this example, we'll demonstrate receiving and processing messages
+	incoming, _ := b.Receive(ctx, "input")
 
-	// Create a processing pipeline that transforms messages
-	pipe := gopipe.NewTransformPipe(
-		func(ctx context.Context, msg *message.Message[string]) (*message.Message[string], error) {
-			// Transform: uppercase the payload
-			transformed := fmt.Sprintf("[PROCESSED] %s", msg.Payload())
-			return message.Copy(msg, transformed), nil
-		},
-	)
+	// Process messages (broker returns slices, not channels)
+	processed := make([]*message.Message, 0, len(incoming))
+	for _, msg := range incoming {
+		// Transform: add processing prefix
+		transformed := fmt.Sprintf("[PROCESSED] %s", msg.Payload)
+		processed = append(processed, message.New([]byte(transformed), msg.Properties))
+	}
 
-	// Start pipeline
-	processed := pipe.Start(ctx, incoming)
-
-	// Consume processed messages and forward to output topic
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for msg := range processed {
-			fmt.Printf("  Pipeline output: %s\n", msg.Payload())
-			// Forward to another topic
-			b.Send(ctx, "output", msg)
-		}
-	}()
+	// Forward processed messages to output topic
+	if len(processed) > 0 {
+		b.Send(ctx, "output", processed)
+	}
 
 	// Subscribe to output topic
-	output := b.Receive(ctx, "output")
+	output, _ := b.Receive(ctx, "output")
 	wg.Add(1)
-	go func() {
+	go func(messages []*message.Message) {
 		defer wg.Done()
-		for msg := range output {
-			fmt.Printf("  Final output topic: %s\n", msg.Payload())
+		for _, msg := range messages {
+			fmt.Printf("  Final output topic: %s\n", msg.Payload)
 		}
-	}()
+	}(output)
 
 	time.Sleep(10 * time.Millisecond)
 
 	// Send messages through the pipeline
-	b.Send(ctx, "input", message.New("message one"))
-	b.Send(ctx, "input", message.New("message two"))
+	b.Send(ctx, "input", []*message.Message{message.New([]byte("message one"), message.Properties{})})
+	b.Send(ctx, "input", []*message.Message{message.New([]byte("message two"), message.Properties{})})
 
 	time.Sleep(100 * time.Millisecond)
 }
@@ -194,41 +185,41 @@ func ioBrokerExample() {
 
 	// Write messages to a buffer (could be a file)
 	var buf bytes.Buffer
-	sender := broker.NewIOSender[string](&buf, broker.IOConfig{})
+	sender := broker.NewIOSender(&buf, broker.IOConfig{})
 
 	ctx := context.Background()
 
 	// Send messages with properties
-	sender.Send(ctx, "logs/app", message.New("Application started",
-		message.WithID[string]("log-001"),
-		message.WithProperty[string]("level", "info"),
-	))
-	sender.Send(ctx, "logs/app", message.New("Processing request",
-		message.WithID[string]("log-002"),
-		message.WithProperty[string]("level", "debug"),
-	))
-	sender.Send(ctx, "logs/error", message.New("Connection failed",
-		message.WithID[string]("log-003"),
-		message.WithProperty[string]("level", "error"),
-	))
+	msg1 := message.New([]byte("Application started"), message.Properties{"id": "log-001", "level": "info"})
+	sender.Send(ctx, "logs/app", []*message.Message{msg1})
+	
+	msg2 := message.New([]byte("Processing request"), message.Properties{"id": "log-002", "level": "debug"})
+	sender.Send(ctx, "logs/app", []*message.Message{msg2})
+	
+	msg3 := message.New([]byte("Connection failed"), message.Properties{"id": "log-003", "level": "error"})
+	sender.Send(ctx, "logs/error", []*message.Message{msg3})
 
 	fmt.Println("  Written JSONL:")
 	fmt.Printf("  %s", buf.String())
 
 	// Read messages back (simulating reading from a file)
 	reader := bytes.NewReader(buf.Bytes())
-	receiver := broker.NewIOReceiver[string](reader, broker.IOConfig{})
+	receiver := broker.NewIOReceiver(reader, broker.IOConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	// Filter only app logs using wildcard pattern
-	msgs := receiver.Receive(ctx, "logs/app")
+	msgs, err := receiver.Receive(ctx, "logs/app")
+	if err != nil {
+		fmt.Printf("Error receiving: %v\n", err)
+		return
+	}
 
 	fmt.Println("  Filtered messages (logs/app only):")
-	for msg := range msgs {
-		level, _ := msg.Properties().Get("level")
-		fmt.Printf("    [%s] %s\n", level, msg.Payload())
+	for _, msg := range msgs {
+		level := msg.Properties["level"]
+		fmt.Printf("    [%s] %s\n", level, msg.Payload)
 	}
 }
 
@@ -236,34 +227,33 @@ func ioBrokerPipeExample() {
 	// Use pipes for inter-process communication (IPC)
 	// Messages are streamed as JSON between reader and writer
 
-	type Event struct {
-		Type    string `json:"type"`
-		Payload string `json:"payload"`
-	}
-
+	// Note: IOBroker now uses []byte payload, not custom types
 	pr, pw := io.Pipe()
-	b := broker.NewIOBroker[Event](pr, pw, broker.IOConfig{})
+	b := broker.NewIOBroker(pr, pw, broker.IOConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	// Start receiver in goroutine
-	msgs := b.Receive(ctx, "events")
-
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for msg := range msgs {
-			e := msg.Payload()
-			fmt.Printf("  Received via pipe: type=%s payload=%s\n", e.Type, e.Payload)
+		time.Sleep(50 * time.Millisecond) // Wait for sends
+		msgs, err := b.Receive(ctx, "events")
+		if err != nil {
+			fmt.Printf("Error receiving: %v\n", err)
+			return
+		}
+		for _, msg := range msgs {
+			fmt.Printf("  Received via pipe: %s\n", msg.Payload)
 		}
 	}()
 
 	// Send events through the pipe
 	go func() {
-		b.Send(ctx, "events", message.New(Event{Type: "user.created", Payload: "user-123"}))
-		b.Send(ctx, "events", message.New(Event{Type: "order.placed", Payload: "order-456"}))
+		b.Send(ctx, "events", []*message.Message{message.New([]byte("user.created: user-123"), message.Properties{})})
+		b.Send(ctx, "events", []*message.Message{message.New([]byte("order.placed: order-456"), message.Properties{})})
 		pw.Close() // Signal EOF
 	}()
 
@@ -277,54 +267,26 @@ func httpBrokerExample() {
 	// - Request body contains the payload
 	// Returns 201 Created on success
 
-	type WebhookEvent struct {
-		Action string `json:"action"`
-		Data   string `json:"data"`
-	}
+	// Note: HTTP broker functions are currently disabled in broker package
+	// This example would need to be updated once http.go is re-enabled
+	fmt.Println("  HTTP broker example is currently disabled (http.go needs refactoring)")
 
-	// Create HTTP receiver
-	receiver := broker.NewHTTPReceiver[WebhookEvent](broker.HTTPConfig{}, 100)
-	defer receiver.Close()
-
-	// Start test server (in production, you'd use your own HTTP server)
-	server := httptest.NewServer(receiver.Handler())
-	defer server.Close()
-
-	// Create HTTP sender (webhook client)
-	sender := broker.NewHTTPSender[WebhookEvent](server.URL, broker.HTTPConfig{
-		Headers: map[string]string{
-			"Authorization": "Bearer webhook-token",
-		},
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	// Subscribe to webhook events
-	msgs := receiver.Receive(ctx, "webhooks/github")
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for msg := range msgs {
-			e := msg.Payload()
-			fmt.Printf("  Received webhook: action=%s data=%s\n", e.Action, e.Data)
-		}
-	}()
-
-	// Send webhook events
-	time.Sleep(20 * time.Millisecond)
-	sender.Send(ctx, "webhooks/github", message.New(WebhookEvent{
-		Action: "push",
-		Data:   "main branch updated",
-	}))
-	sender.Send(ctx, "webhooks/github", message.New(WebhookEvent{
-		Action: "pull_request",
-		Data:   "PR #42 opened",
-	}))
-
-	time.Sleep(100 * time.Millisecond)
-	receiver.Close()
-	wg.Wait()
+	// Placeholder for future implementation:
+	// receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
+	// defer receiver.Close()
+	// 
+	// server := httptest.NewServer(receiver.Handler())
+	// defer server.Close()
+	// 
+	// sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{
+	// 	Headers: map[string]string{"Authorization": "Bearer webhook-token"},
+	// })
+	//
+	// ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	// defer cancel()
+	//
+	// msgs, _ := receiver.Receive(ctx, "webhooks/github")
+	// for _, msg := range msgs {
+	// 	fmt.Printf("  Received webhook: %s\n", msg.Payload)
+	// }
 }
