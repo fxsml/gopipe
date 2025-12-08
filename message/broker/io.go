@@ -26,10 +26,10 @@ var (
 // Envelope wraps a message for wire transmission.
 // It includes the topic, properties, and JSON-encoded payload.
 type Envelope struct {
-	Topic      string         `json:"topic"`
-	Properties map[string]any `json:"properties,omitempty"`
+	Topic      string          `json:"topic"`
+	Properties map[string]any  `json:"properties,omitempty"`
 	Payload    json.RawMessage `json:"payload"`
-	Timestamp  time.Time      `json:"timestamp"`
+	Timestamp  time.Time       `json:"timestamp"`
 }
 
 // Marshaler handles message serialization.
@@ -76,7 +76,7 @@ func (c *IOConfig) defaults() IOConfig {
 }
 
 // IOSender writes messages to an io.Writer as JSON Lines (JSONL).
-type IOSender[T any] struct {
+type IOSender struct {
 	config    IOConfig
 	mu        sync.Mutex
 	writer    io.Writer
@@ -87,9 +87,9 @@ type IOSender[T any] struct {
 
 // NewIOSender creates a sender that writes messages to the given writer.
 // Messages are encoded as JSON Lines (JSONL) - one JSON object per line.
-func NewIOSender[T any](w io.Writer, config IOConfig) *IOSender[T] {
+func NewIOSender(w io.Writer, config IOConfig) *IOSender {
 	cfg := config.defaults()
-	return &IOSender[T]{
+	return &IOSender{
 		config:    cfg,
 		writer:    w,
 		encoder:   json.NewEncoder(w),
@@ -98,7 +98,7 @@ func NewIOSender[T any](w io.Writer, config IOConfig) *IOSender[T] {
 }
 
 // Send writes messages to the underlying writer.
-func (s *IOSender[T]) Send(ctx context.Context, topic string, msgs ...*message.Message[T]) error {
+func (s *IOSender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -123,23 +123,16 @@ func (s *IOSender[T]) Send(ctx context.Context, topic string, msgs ...*message.M
 		default:
 		}
 
-		// Marshal the payload
-		payloadBytes, err := s.marshaler.Marshal(msg.Payload())
-		if err != nil {
-			return errors.Join(ErrMarshalFailed, err)
-		}
-
 		// Extract properties
 		props := make(map[string]any)
-		msg.Properties().Range(func(key string, value any) bool {
-			props[key] = value
-			return true
-		})
+		for k, v := range msg.Properties {
+			props[k] = v
+		}
 
 		env := Envelope{
 			Topic:      topic,
 			Properties: props,
-			Payload:    payloadBytes,
+			Payload:    msg.Payload,
 			Timestamp:  time.Now(),
 		}
 
@@ -152,7 +145,7 @@ func (s *IOSender[T]) Send(ctx context.Context, topic string, msgs ...*message.M
 }
 
 // Close marks the sender as closed. It does not close the underlying writer.
-func (s *IOSender[T]) Close() error {
+func (s *IOSender) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
@@ -160,7 +153,7 @@ func (s *IOSender[T]) Close() error {
 }
 
 // IOReceiver reads messages from an io.Reader.
-type IOReceiver[T any] struct {
+type IOReceiver struct {
 	config    IOConfig
 	mu        sync.Mutex
 	reader    *bufio.Reader
@@ -170,62 +163,62 @@ type IOReceiver[T any] struct {
 
 // NewIOReceiver creates a receiver that reads messages from the given reader.
 // Messages are decoded from JSON Lines (JSONL) - one JSON object per line.
-func NewIOReceiver[T any](r io.Reader, config IOConfig) *IOReceiver[T] {
+func NewIOReceiver(r io.Reader, config IOConfig) *IOReceiver {
 	cfg := config.defaults()
-	return &IOReceiver[T]{
+	return &IOReceiver{
 		config:    cfg,
 		reader:    bufio.NewReaderSize(r, cfg.BufferSize),
 		marshaler: cfg.Marshaler,
 	}
 }
 
-// Receive returns a channel that emits messages from the specified topic.
-// If topic is empty, all messages are emitted regardless of topic.
-func (r *IOReceiver[T]) Receive(ctx context.Context, topic string) <-chan *message.Message[T] {
-	out := make(chan *message.Message[T])
+// Receive reads messages from the reader that match the specified topic.
+// If topic is empty, all messages are returned.
+func (r *IOReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
+	var matcher *TopicMatcher
+	if topic != "" {
+		matcher = NewTopicMatcher(topic)
+	}
 
-	go func() {
-		defer close(out)
+	var result []*message.Message
+	timeout := r.config.ReceiveTimeout
+	if timeout == 0 {
+		timeout = 100 * time.Millisecond
+	}
 
-		var matcher *TopicMatcher
-		if topic != "" {
-			matcher = NewTopicMatcher(topic)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return result, ctx.Err()
+		case <-timer.C:
+			return result, nil
+		default:
 		}
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
+		msg, msgTopic, err := r.readOne(ctx)
+		if err != nil {
+			if err == io.EOF || errors.Is(err, ErrReaderClosed) {
+				return result, nil
 			}
-
-			msg, msgTopic, err := r.readOne(ctx)
-			if err != nil {
-				if err == io.EOF || errors.Is(err, ErrReaderClosed) {
-					return
-				}
-				// Skip malformed messages
-				continue
-			}
-
-			// Filter by topic if specified
-			if matcher != nil && !matcher.Matches(msgTopic) {
-				continue
-			}
-
-			select {
-			case out <- msg:
-			case <-ctx.Done():
-				return
-			}
+			// Skip malformed messages
+			continue
 		}
-	}()
 
-	return out
+		// Filter by topic if specified
+		if matcher != nil && !matcher.Matches(msgTopic) {
+			continue
+		}
+
+		result = append(result, msg)
+		timer.Reset(10 * time.Millisecond)
+	}
 }
 
 // readOne reads a single message from the reader.
-func (r *IOReceiver[T]) readOne(ctx context.Context) (*message.Message[T], string, error) {
+func (r *IOReceiver) readOne(ctx context.Context) (*message.Message, string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -245,25 +238,23 @@ func (r *IOReceiver[T]) readOne(ctx context.Context) (*message.Message[T], strin
 		return nil, "", errors.Join(ErrUnmarshalFailed, err)
 	}
 
-	// Unmarshal payload
-	var payload T
-	if err := r.marshaler.Unmarshal(env.Payload, &payload); err != nil {
-		return nil, "", errors.Join(ErrUnmarshalFailed, err)
-	}
-
 	// Build message with properties
-	opts := []message.Option[T]{}
+	props := message.Properties{}
 	for key, value := range env.Properties {
-		opts = append(opts, message.WithProperty[T](key, value))
+		if strVal, ok := value.(string); ok {
+			props[key] = strVal
+		}
 	}
 
-	msg := message.New(payload, opts...)
+	// Convert json.RawMessage to []byte explicitly
+	payload := []byte(env.Payload)
+	msg := message.New(payload, props)
 
 	return msg, env.Topic, nil
 }
 
 // Close marks the receiver as closed. It does not close the underlying reader.
-func (r *IOReceiver[T]) Close() error {
+func (r *IOReceiver) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.closed = true
@@ -271,43 +262,43 @@ func (r *IOReceiver[T]) Close() error {
 }
 
 // IOBroker combines IOSender and IOReceiver for bidirectional streaming.
-type IOBroker[T any] struct {
-	sender   *IOSender[T]
-	receiver *IOReceiver[T]
+type IOBroker struct {
+	sender   *IOSender
+	receiver *IOReceiver
 }
 
 // NewIOBroker creates a broker that reads from r and writes to w.
 // This is useful for pipe-based IPC or file-based messaging.
-func NewIOBroker[T any](r io.Reader, w io.Writer, config IOConfig) *IOBroker[T] {
-	return &IOBroker[T]{
-		sender:   NewIOSender[T](w, config),
-		receiver: NewIOReceiver[T](r, config),
+func NewIOBroker(r io.Reader, w io.Writer, config IOConfig) *IOBroker {
+	return &IOBroker{
+		sender:   NewIOSender(w, config),
+		receiver: NewIOReceiver(r, config),
 	}
 }
 
 // Send writes messages to the underlying writer.
-func (b *IOBroker[T]) Send(ctx context.Context, topic string, msgs ...*message.Message[T]) error {
-	return b.sender.Send(ctx, topic, msgs...)
+func (b *IOBroker) Send(ctx context.Context, topic string, msgs []*message.Message) error {
+	return b.sender.Send(ctx, topic, msgs)
 }
 
-// Receive returns a channel that emits messages from the specified topic.
-func (b *IOBroker[T]) Receive(ctx context.Context, topic string) <-chan *message.Message[T] {
+// Receive reads messages from the underlying reader.
+func (b *IOBroker) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
 	return b.receiver.Receive(ctx, topic)
 }
 
 // Close closes both sender and receiver.
-func (b *IOBroker[T]) Close() error {
+func (b *IOBroker) Close() error {
 	err1 := b.sender.Close()
 	err2 := b.receiver.Close()
 	return errors.Join(err1, err2)
 }
 
 // Sender returns the underlying IOSender.
-func (b *IOBroker[T]) Sender() *IOSender[T] {
+func (b *IOBroker) Sender() *IOSender {
 	return b.sender
 }
 
 // Receiver returns the underlying IOReceiver.
-func (b *IOBroker[T]) Receiver() *IOReceiver[T] {
+func (b *IOBroker) Receiver() *IOReceiver {
 	return b.receiver
 }
