@@ -1,7 +1,8 @@
 # ADR 0010: Pub/Sub Package Structure
 
 **Date:** 2025-12-08
-**Status:** Proposed
+**Status:** Accepted
+**Implementation Date:** 2025-12-08
 **Related:**
 - [ADR-25: Interface Broker](../adr-25_broker.md)
 - [Critical Analysis: Message Design](../critical-analysis-message-design.md)
