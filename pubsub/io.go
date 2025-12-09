@@ -87,7 +87,7 @@ type ioSender struct {
 
 // NewIOSender creates a sender that writes messages to the given writer.
 // Messages are encoded as JSON Lines (JSONL) - one JSON object per line.
-func NewIOSender(w io.Writer, config IOConfig) message.Sender {
+func NewIOSender(w io.Writer, config IOConfig) Sender {
 	cfg := config.defaults()
 	return &ioSender{
 		config:    cfg,
@@ -163,7 +163,7 @@ type ioReceiver struct {
 
 // NewIOReceiver creates a receiver that reads messages from the given reader.
 // Messages are decoded from JSON Lines (JSONL) - one JSON object per line.
-func NewIOReceiver(r io.Reader, config IOConfig) message.Receiver {
+func NewIOReceiver(r io.Reader, config IOConfig) Receiver {
 	cfg := config.defaults()
 	return &ioReceiver{
 		config:    cfg,
@@ -269,7 +269,7 @@ type ioBroker struct {
 
 // NewIOBroker creates a broker that reads from r and writes to w.
 // This is useful for pipe-based IPC or file-based messaging.
-func NewIOBroker(r io.Reader, w io.Writer, config IOConfig) message.Broker {
+func NewIOBroker(r io.Reader, w io.Writer, config IOConfig) Broker {
 	cfg := config.defaults()
 	return &ioBroker{
 		sender:   NewIOSender(w, cfg).(*ioSender),

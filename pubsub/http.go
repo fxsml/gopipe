@@ -75,7 +75,7 @@ type httpSender struct {
 // The topic is sent in X-Gopipe-Topic header.
 // Properties are sent as X-Gopipe-Prop-* headers.
 // Payload is sent as the request body with configured content type.
-func NewHTTPSender(url string, config HTTPConfig) message.Sender {
+func NewHTTPSender(url string, config HTTPConfig) Sender {
 	cfg := config.defaults()
 	return &httpSender{
 		config: cfg,
@@ -201,7 +201,7 @@ type topicMessage struct {
 // Topic is read from X-Gopipe-Topic header.
 // Properties are read from X-Gopipe-Prop-* headers.
 // Payload is read from request body.
-func NewHTTPReceiver(config HTTPConfig, bufferSize int) message.Receiver {
+func NewHTTPReceiver(config HTTPConfig, bufferSize int) Receiver {
 	cfg := config.defaults()
 	if bufferSize <= 0 {
 		bufferSize = 100

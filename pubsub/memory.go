@@ -81,7 +81,7 @@ func (t *topic) clearMessages() {
 	t.messages = nil
 }
 
-// inMemoryBroker is an in-memory implementation of message.Broker.
+// inMemoryBroker is an in-memory implementation of Broker.
 type inMemoryBroker struct {
 	config InMemoryConfig
 
@@ -93,7 +93,7 @@ type inMemoryBroker struct {
 
 // NewInMemoryBroker creates a new in-memory broker with the given configuration.
 // This broker stores messages in memory and is suitable for testing and simple use cases.
-func NewInMemoryBroker(config InMemoryConfig) message.Broker {
+func NewInMemoryBroker(config InMemoryConfig) Broker {
 	cfg := config.defaults()
 	return &inMemoryBroker{
 		config: cfg,

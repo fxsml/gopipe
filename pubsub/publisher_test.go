@@ -1,4 +1,4 @@
-package message_test
+package pubsub_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 
 	"github.com/fxsml/gopipe"
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/pubsub"
 )
 
 // Mock sender for testing
@@ -83,10 +84,10 @@ func (m *mockReceiver) Receive(ctx context.Context, topic string) ([]*message.Me
 
 func TestPublisher_Basic(t *testing.T) {
 	sender := newMockSender()
-	publisher := message.NewPublisher(
+	publisher := pubsub.NewPublisher(
 		sender,
-		message.RouteBySubject(),
-		message.PublisherConfig{
+		pubsub.RouteBySubject(),
+		pubsub.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
 		},
@@ -135,10 +136,10 @@ func TestPublisher_Basic(t *testing.T) {
 
 func TestPublisher_Batching(t *testing.T) {
 	sender := newMockSender()
-	publisher := message.NewPublisher(
+	publisher := pubsub.NewPublisher(
 		sender,
-		message.RouteStatic("topic"),
-		message.PublisherConfig{
+		pubsub.RouteStatic("topic"),
+		pubsub.PublisherConfig{
 			MaxBatchSize: 3,
 			MaxDuration:  time.Hour,
 		},
@@ -169,10 +170,10 @@ func TestPublisher_ErrorHandling(t *testing.T) {
 	sender := newMockSender()
 	sender.sendErr = testErr
 
-	publisher := message.NewPublisher(
+	publisher := pubsub.NewPublisher(
 		sender,
-		message.RouteStatic("topic"),
-		message.PublisherConfig{
+		pubsub.RouteStatic("topic"),
+		pubsub.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
 			Retry: &gopipe.RetryConfig{
@@ -208,10 +209,10 @@ func TestPublisher_Concurrency(t *testing.T) {
 		return nil
 	}
 
-	publisher := message.NewPublisher(
+	publisher := pubsub.NewPublisher(
 		sender,
-		message.RouteBySubject(),
-		message.PublisherConfig{
+		pubsub.RouteBySubject(),
+		pubsub.PublisherConfig{
 			MaxBatchSize: 1,
 			MaxDuration:  time.Hour,
 			Concurrency:  3,
@@ -254,9 +255,9 @@ func TestSubscriber_Basic(t *testing.T) {
 		return nil, ctx.Err()
 	}
 
-	subscriber := message.NewSubscriber(
+	subscriber := pubsub.NewSubscriber(
 		receiver,
-		message.SubscriberConfig{},
+		pubsub.SubscriberConfig{},
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -282,9 +283,9 @@ func TestSubscriber_ErrorHandling(t *testing.T) {
 	receiver := newMockReceiver()
 	receiver.receiveErr = testErr
 
-	subscriber := message.NewSubscriber(
+	subscriber := pubsub.NewSubscriber(
 		receiver,
-		message.SubscriberConfig{
+		pubsub.SubscriberConfig{
 			Retry: &gopipe.RetryConfig{
 				MaxAttempts: 3,
 				Backoff:     gopipe.ConstantBackoff(time.Millisecond, 0),
@@ -320,9 +321,9 @@ func TestSubscriber_MultipleReceives(t *testing.T) {
 		}
 	}
 
-	subscriber := message.NewSubscriber(
+	subscriber := pubsub.NewSubscriber(
 		receiver,
-		message.SubscriberConfig{},
+		pubsub.SubscriberConfig{},
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -349,10 +350,10 @@ func TestPublisher_WithRecover(t *testing.T) {
 		panic("send panic")
 	}
 
-	publisher := message.NewPublisher(
+	publisher := pubsub.NewPublisher(
 		sender,
-		message.RouteStatic("topic"),
-		message.PublisherConfig{
+		pubsub.RouteStatic("topic"),
+		pubsub.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
 			Recover:      true,
@@ -378,9 +379,9 @@ func TestSubscriber_WithRecover(t *testing.T) {
 		panic("receive panic")
 	}
 
-	subscriber := message.NewSubscriber(
+	subscriber := pubsub.NewSubscriber(
 		receiver,
-		message.SubscriberConfig{
+		pubsub.SubscriberConfig{
 			Recover: true,
 		},
 	)
@@ -401,7 +402,7 @@ func TestSubscriber_WithRecover(t *testing.T) {
 // ============================================================================
 
 func TestRouteBySubject(t *testing.T) {
-	route := message.RouteBySubject()
+	route := pubsub.RouteBySubject()
 
 	tests := []struct {
 		name       string
@@ -431,7 +432,7 @@ func TestRouteBySubject(t *testing.T) {
 }
 
 func TestRouteByProperty(t *testing.T) {
-	route := message.RouteByProperty("tenant-id")
+	route := pubsub.RouteByProperty("tenant-id")
 
 	tests := []struct {
 		name       string
@@ -466,7 +467,7 @@ func TestRouteByProperty(t *testing.T) {
 }
 
 func TestRouteStatic(t *testing.T) {
-	route := message.RouteStatic("fixed-topic")
+	route := pubsub.RouteStatic("fixed-topic")
 
 	tests := []struct {
 		name       string
@@ -496,7 +497,7 @@ func TestRouteStatic(t *testing.T) {
 }
 
 func TestRouteByFormat(t *testing.T) {
-	route := message.RouteByFormat("tenant-%s-events", "tenant-id")
+	route := pubsub.RouteByFormat("tenant-%s-events", "tenant-id")
 
 	tests := []struct {
 		name       string
@@ -526,7 +527,7 @@ func TestRouteByFormat(t *testing.T) {
 }
 
 func TestRouteByFormat_MultipleProperties(t *testing.T) {
-	route := message.RouteByFormat("env-%s-tenant-%s-events", "environment", "tenant-id")
+	route := pubsub.RouteByFormat("env-%s-tenant-%s-events", "environment", "tenant-id")
 
 	result := route(message.Properties{
 		"environment": "prod",
