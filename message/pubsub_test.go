@@ -85,10 +85,7 @@ func TestPublisher_Basic(t *testing.T) {
 	sender := newMockSender()
 	publisher := message.NewPublisher(
 		sender,
-		func(msg *message.Message) string {
-			subject, _ := msg.Properties.Subject()
-			return subject
-		},
+		message.RouteBySubject(),
 		message.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
@@ -140,7 +137,7 @@ func TestPublisher_Batching(t *testing.T) {
 	sender := newMockSender()
 	publisher := message.NewPublisher(
 		sender,
-		func(msg *message.Message) string { return "topic" },
+		message.RouteStatic("topic"),
 		message.PublisherConfig{
 			MaxBatchSize: 3,
 			MaxDuration:  time.Hour,
@@ -174,7 +171,7 @@ func TestPublisher_ErrorHandling(t *testing.T) {
 
 	publisher := message.NewPublisher(
 		sender,
-		func(msg *message.Message) string { return "topic" },
+		message.RouteStatic("topic"),
 		message.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
@@ -213,10 +210,7 @@ func TestPublisher_Concurrency(t *testing.T) {
 
 	publisher := message.NewPublisher(
 		sender,
-		func(msg *message.Message) string {
-			subject, _ := msg.Properties.Subject()
-			return subject
-		},
+		message.RouteBySubject(),
 		message.PublisherConfig{
 			MaxBatchSize: 1,
 			MaxDuration:  time.Hour,
@@ -357,7 +351,7 @@ func TestPublisher_WithRecover(t *testing.T) {
 
 	publisher := message.NewPublisher(
 		sender,
-		func(msg *message.Message) string { return "topic" },
+		message.RouteStatic("topic"),
 		message.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
@@ -399,5 +393,148 @@ func TestSubscriber_WithRecover(t *testing.T) {
 	// Should not panic due to Recover option
 	for range msgs {
 		t.Error("Expected no messages due to panic")
+	}
+}
+
+// ============================================================================
+// Routing Key Helper Tests
+// ============================================================================
+
+func TestRouteBySubject(t *testing.T) {
+	route := message.RouteBySubject()
+
+	tests := []struct {
+		name       string
+		properties message.Properties
+		expected   string
+	}{
+		{
+			name:       "with subject",
+			properties: message.Properties{message.PropSubject: "orders"},
+			expected:   "orders",
+		},
+		{
+			name:       "without subject",
+			properties: message.Properties{},
+			expected:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := route(tt.properties)
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestRouteByProperty(t *testing.T) {
+	route := message.RouteByProperty("tenant-id")
+
+	tests := []struct {
+		name       string
+		properties message.Properties
+		expected   string
+	}{
+		{
+			name:       "with property",
+			properties: message.Properties{"tenant-id": "tenant-123"},
+			expected:   "tenant-123",
+		},
+		{
+			name:       "without property",
+			properties: message.Properties{},
+			expected:   "",
+		},
+		{
+			name:       "with non-string property",
+			properties: message.Properties{"tenant-id": 123},
+			expected:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := route(tt.properties)
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestRouteStatic(t *testing.T) {
+	route := message.RouteStatic("fixed-topic")
+
+	tests := []struct {
+		name       string
+		properties message.Properties
+		expected   string
+	}{
+		{
+			name:       "empty properties",
+			properties: message.Properties{},
+			expected:   "fixed-topic",
+		},
+		{
+			name:       "with properties",
+			properties: message.Properties{"key": "value"},
+			expected:   "fixed-topic",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := route(tt.properties)
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestRouteByFormat(t *testing.T) {
+	route := message.RouteByFormat("tenant-%s-events", "tenant-id")
+
+	tests := []struct {
+		name       string
+		properties message.Properties
+		expected   string
+	}{
+		{
+			name:       "with property",
+			properties: message.Properties{"tenant-id": "123"},
+			expected:   "tenant-123-events",
+		},
+		{
+			name:       "without property",
+			properties: message.Properties{},
+			expected:   "tenant-%!s(<nil>)-events",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := route(tt.properties)
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestRouteByFormat_MultipleProperties(t *testing.T) {
+	route := message.RouteByFormat("env-%s-tenant-%s-events", "environment", "tenant-id")
+
+	result := route(message.Properties{
+		"environment": "prod",
+		"tenant-id":   "abc",
+	})
+
+	expected := "env-prod-tenant-abc-events"
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
 	}
 }
