@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -22,8 +23,49 @@ type OrderConfirmed struct {
 	ConfirmedAt time.Time
 }
 
+// testJSONHandler is a test helper that creates a handler with JSON marshaling.
+// This is only used in tests; production code should use cqrs.NewCommandHandler.
+func testJSONHandler[In, Out any](
+	handle func(ctx context.Context, payload In) ([]Out, error),
+	match func(prop message.Properties) bool,
+	props func(prop message.Properties) message.Properties,
+) message.Handler {
+	h := func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+		var payload In
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			err = fmt.Errorf("unmarshal message: %w: %w", message.ErrInvalidMessagePayload, err)
+			msg.Nack(err)
+			return nil, err
+		}
+
+		out, err := handle(ctx, payload)
+		if err != nil {
+			err = fmt.Errorf("handle message: %w", err)
+			msg.Nack(err)
+			return nil, err
+		}
+
+		var msgs []*message.Message
+		for _, o := range out {
+			data, err := json.Marshal(o)
+			if err != nil {
+				err = fmt.Errorf("marshal message: %w: %w", message.ErrInvalidMessagePayload, err)
+				msg.Nack(err)
+				return nil, err
+			}
+			outMsg := message.Copy(msg, data)
+			outMsg.Properties = props(msg.Properties)
+			msgs = append(msgs, outMsg)
+		}
+
+		msg.Ack()
+		return msgs, nil
+	}
+	return message.NewHandler(h, match)
+}
+
 func TestRouter_BasicRouting(t *testing.T) {
-	orderHandler := message.NewJSONHandler(
+	orderHandler := testJSONHandler(
 		func(ctx context.Context, order Order) ([]OrderConfirmed, error) {
 			return []OrderConfirmed{{
 				ID:          order.ID,
@@ -77,7 +119,7 @@ func TestRouter_BasicRouting(t *testing.T) {
 }
 
 func TestRouter_MultipleHandlers(t *testing.T) {
-	orderHandler := message.NewJSONHandler(
+	orderHandler := testJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			order.Amount *= 2
 			return []Order{order}, nil
@@ -93,7 +135,7 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 		},
 	)
 
-	confirmHandler := message.NewJSONHandler(
+	confirmHandler := testJSONHandler(
 		func(ctx context.Context, order Order) ([]OrderConfirmed, error) {
 			return []OrderConfirmed{{ID: order.ID}}, nil
 		},
@@ -138,7 +180,7 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 }
 
 func TestRouter_NoMatchingHandler(t *testing.T) {
-	orderHandler := message.NewJSONHandler(
+	orderHandler := testJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
@@ -193,7 +235,7 @@ func TestRouter_NoMatchingHandler(t *testing.T) {
 
 func TestRouter_HandlerError(t *testing.T) {
 	testErr := errors.New("handler error")
-	handler := message.NewJSONHandler(
+	handler := testJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return nil, testErr
 		},
@@ -243,7 +285,7 @@ func TestRouter_HandlerError(t *testing.T) {
 }
 
 func TestRouter_UnmarshalError(t *testing.T) {
-	handler := message.NewJSONHandler(
+	handler := testJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
@@ -286,7 +328,7 @@ func TestRouter_UnmarshalError(t *testing.T) {
 }
 
 func TestRouter_AckOnSuccess(t *testing.T) {
-	handler := message.NewJSONHandler(
+	handler := testJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
@@ -328,7 +370,7 @@ func TestRouter_Concurrency(t *testing.T) {
 	var mu sync.Mutex
 	var processedIDs []string
 
-	handler := message.NewJSONHandler(
+	handler := testJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			time.Sleep(10 * time.Millisecond)
 			mu.Lock()
@@ -377,7 +419,7 @@ func TestRouter_Concurrency(t *testing.T) {
 }
 
 func TestRouter_WithRecover(t *testing.T) {
-	handler := message.NewJSONHandler(
+	handler := testJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			panic("handler panic")
 		},
@@ -407,7 +449,7 @@ func TestRouter_WithRecover(t *testing.T) {
 }
 
 func TestRouter_MultipleOutputMessages(t *testing.T) {
-	handler := message.NewJSONHandler(
+	handler := testJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			// Return multiple messages
 			return []Order{
@@ -444,7 +486,7 @@ func TestRouter_MultipleOutputMessages(t *testing.T) {
 }
 
 func TestRouter_PreservesProperties(t *testing.T) {
-	handler := message.NewJSONHandler(
+	handler := testJSONHandler(
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
