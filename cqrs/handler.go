@@ -6,6 +6,36 @@ import (
 	"github.com/fxsml/gopipe/message"
 )
 
+// Handler processes messages matching specific properties.
+type Handler interface {
+	Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error)
+	Match(prop message.Properties) bool
+}
+
+type handler struct {
+	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error)
+	match  func(prop message.Properties) bool
+}
+
+func (h *handler) Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+	return h.handle(ctx, msg)
+}
+
+func (h *handler) Match(prop message.Properties) bool {
+	return h.match(prop)
+}
+
+// NewHandler creates a handler from message processing and matching functions.
+func NewHandler(
+	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error),
+	match func(prop message.Properties) bool,
+) Handler {
+	return &handler{
+		handle: handle,
+		match:  match,
+	}
+}
+
 // NewCommandHandler creates a Handler that processes commands and returns events.
 //
 // Command handlers follow the pattern: Command → Business Logic → Events
