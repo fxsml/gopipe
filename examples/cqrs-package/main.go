@@ -210,39 +210,43 @@ func main() {
 	// ========================================================================
 
 	createOrderHandler := cqrs.NewCommandHandler(
-		"CreateOrder",
-		marshaler,
 		func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
 			log.Printf("📝 Command: CreateOrder")
 			return handleCreateOrder(ctx, cmd)
 		},
+		marshaler,
+		message.MatchSubjectAndType("CreateOrder", "command"),
+		message.PropagateCorrelationWithTypeAndName[OrderCreated]("event"),
 	)
 
 	chargePaymentHandler := cqrs.NewCommandHandler(
-		"ChargePayment",
-		marshaler,
 		func(ctx context.Context, cmd ChargePayment) ([]PaymentCharged, error) {
 			log.Printf("📝 Command: ChargePayment")
 			return handleChargePayment(ctx, cmd)
 		},
+		marshaler,
+		message.MatchSubjectAndType("ChargePayment", "command"),
+		message.PropagateCorrelationWithTypeAndName[PaymentCharged]("event"),
 	)
 
 	reserveInventoryHandler := cqrs.NewCommandHandler(
-		"ReserveInventory",
-		marshaler,
 		func(ctx context.Context, cmd ReserveInventory) ([]InventoryReserved, error) {
 			log.Printf("📝 Command: ReserveInventory")
 			return handleReserveInventory(ctx, cmd)
 		},
+		marshaler,
+		message.MatchSubjectAndType("ReserveInventory", "command"),
+		message.PropagateCorrelationWithTypeAndName[InventoryReserved]("event"),
 	)
 
 	shipOrderHandler := cqrs.NewCommandHandler(
-		"ShipOrder",
-		marshaler,
 		func(ctx context.Context, cmd ShipOrder) ([]OrderShipped, error) {
 			log.Printf("📝 Command: ShipOrder")
 			return handleShipOrder(ctx, cmd)
 		},
+		marshaler,
+		message.MatchSubjectAndType("ShipOrder", "command"),
+		message.PropagateCorrelationWithTypeAndName[OrderShipped]("event"),
 	)
 
 	commandRouter := message.NewRouter(
@@ -265,10 +269,10 @@ func main() {
 			Concurrency: 20,
 			Recover:     true,
 		},
-		cqrs.NewEventHandler("OrderCreated", marshaler, handleOrderCreatedEmail),
-		cqrs.NewEventHandler("OrderCreated", marshaler, handleOrderCreatedAnalytics),
-		cqrs.NewEventHandler("PaymentCharged", marshaler, handlePaymentChargedAnalytics),
-		cqrs.NewEventHandler("OrderShipped", marshaler, handleOrderShippedEmail),
+		cqrs.NewEventHandler(handleOrderCreatedEmail, marshaler, message.MatchSubjectAndType("OrderCreated", "event")),
+		cqrs.NewEventHandler(handleOrderCreatedAnalytics, marshaler, message.MatchSubjectAndType("OrderCreated", "event")),
+		cqrs.NewEventHandler(handlePaymentChargedAnalytics, marshaler, message.MatchSubjectAndType("PaymentCharged", "event")),
+		cqrs.NewEventHandler(handleOrderShippedEmail, marshaler, message.MatchSubjectAndType("OrderShipped", "event")),
 	)
 
 	// ========================================================================

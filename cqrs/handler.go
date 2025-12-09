@@ -15,23 +15,22 @@ import (
 //   - Evt: The event struct type that results from the command (e.g., OrderCreated)
 //
 // Parameters:
-//   - cmdName: The command name for routing (should match Marshaler.Name(Cmd))
-//   - marshaler: Used to serialize/deserialize commands and events
 //   - handle: Business logic function that processes the command and returns events
+//   - marshaler: Used to serialize/deserialize commands and events
+//   - match: Function to match incoming messages (e.g., by subject and type)
+//   - props: Function to transform input properties into output properties
 //
 // The returned handler:
 //   - Unmarshals the command from message payload
 //   - Calls the business logic function
 //   - Marshals resulting events into output messages
-//   - Propagates correlation IDs for tracing
+//   - Applies property transformation for output messages
 //   - Acks the input message when complete
 //   - Nacks the input message on error
 //
 // Example:
 //
 //	createOrderHandler := NewCommandHandler(
-//	    "CreateOrder",
-//	    marshaler,
 //	    func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
 //	        // Save to database
 //	        if err := saveOrder(cmd); err != nil {
@@ -46,11 +45,15 @@ import (
 //	            CreatedAt:  time.Now(),
 //	        }}, nil
 //	    },
+//	    marshaler,
+//	    message.MatchSubjectAndType("CreateOrder", "command"),
+//	    message.PropagateCorrelationWithType("event"),
 //	)
 func NewCommandHandler[Cmd, Evt any](
-	cmdName string,
-	marshaler Marshaler,
 	handle func(ctx context.Context, cmd Cmd) ([]Evt, error),
+	marshaler Marshaler,
+	match func(prop message.Properties) bool,
+	props func(inProp message.Properties, evt Evt) message.Properties,
 ) message.Handler {
 	return message.NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
@@ -71,36 +74,21 @@ func NewCommandHandler[Cmd, Evt any](
 			// Marshal events into output messages
 			var outMsgs []*message.Message
 			for _, evt := range events {
-				evtName := marshaler.Name(evt)
 				payload, err := marshaler.Marshal(evt)
 				if err != nil {
 					msg.Nack(err)
 					return nil, err
 				}
 
-				props := message.Properties{
-					message.PropSubject: evtName,
-					"type":              "event",
-				}
-
-				// Propagate correlation ID for tracing
-				if corrID, ok := msg.Properties.CorrelationID(); ok {
-					props[message.PropCorrelationID] = corrID
-				}
-
-				outMsgs = append(outMsgs, message.New(payload, props))
+				outProps := props(msg.Properties, evt)
+				outMsgs = append(outMsgs, message.New(payload, outProps))
 			}
 
 			// Ack when complete
 			msg.Ack()
 			return outMsgs, nil
 		},
-		func(prop message.Properties) bool {
-			// Route by subject and type
-			subject, _ := prop.Subject()
-			msgType, _ := prop["type"].(string)
-			return subject == cmdName && msgType == "command"
-		},
+		match,
 	)
 }
 
@@ -117,9 +105,9 @@ func NewCommandHandler[Cmd, Evt any](
 //   - Evt: The event struct type (e.g., OrderCreated)
 //
 // Parameters:
-//   - evtName: The event name for routing (should match Marshaler.Name(Evt))
-//   - marshaler: Used to deserialize events
 //   - handle: Side effect function that processes the event
+//   - marshaler: Used to deserialize events
+//   - match: Function to match incoming messages (e.g., by subject and type)
 //
 // The returned handler:
 //   - Unmarshals the event from message payload
@@ -131,17 +119,17 @@ func NewCommandHandler[Cmd, Evt any](
 // Example:
 //
 //	emailHandler := NewEventHandler(
-//	    "OrderCreated",
-//	    marshaler,
 //	    func(ctx context.Context, evt OrderCreated) error {
 //	        // Side effect: send email
 //	        return emailService.SendOrderConfirmation(evt.CustomerID, evt.ID)
 //	    },
+//	    marshaler,
+//	    message.MatchSubjectAndType("OrderCreated", "event"),
 //	)
 func NewEventHandler[Evt any](
-	evtName string,
-	marshaler Marshaler,
 	handle func(ctx context.Context, evt Evt) error,
+	marshaler Marshaler,
+	match func(prop message.Properties) bool,
 ) message.Handler {
 	return message.NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
@@ -162,11 +150,6 @@ func NewEventHandler[Evt any](
 			msg.Ack()
 			return nil, nil // No output messages
 		},
-		func(prop message.Properties) bool {
-			// Route by subject and type
-			subject, _ := prop.Subject()
-			msgType, _ := prop["type"].(string)
-			return subject == evtName && msgType == "event"
-		},
+		match,
 	)
 }

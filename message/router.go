@@ -2,7 +2,6 @@ package message
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -117,45 +116,3 @@ func NewHandler(
 	}
 }
 
-// NewJSONHandler creates a handler that unmarshals JSON input and marshals JSON output.
-func NewJSONHandler[In, Out any](
-	handle func(ctx context.Context, payload In) ([]Out, error),
-	match func(prop Properties) bool,
-	props func(prop Properties) Properties,
-) Handler {
-	h := func(ctx context.Context, msg *Message) ([]*Message, error) {
-		var payload In
-		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-			err = fmt.Errorf("unmarshal message: %w: %w", ErrInvalidMessagePayload, err)
-			msg.Nack(err)
-			return nil, err
-		}
-
-		out, err := handle(ctx, payload)
-		if err != nil {
-			err = fmt.Errorf("handle message: %w", err)
-			msg.Nack(err)
-			return nil, err
-		}
-
-		var msgs []*Message
-		for _, o := range out {
-			data, err := json.Marshal(o)
-			if err != nil {
-				err = fmt.Errorf("marshal message: %w: %w", ErrInvalidMessagePayload, err)
-				msg.Nack(err)
-				return nil, err
-			}
-			outMsg := Copy(msg, data)
-			outMsg.Properties = props(msg.Properties)
-			msgs = append(msgs, outMsg)
-		}
-
-		msg.Ack()
-		return msgs, nil
-	}
-	return &handler{
-		handle: h,
-		match:  match,
-	}
-}
