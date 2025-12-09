@@ -23,30 +23,25 @@ import (
 //	    handlers...,
 //	)
 func MessageCorrelation() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-	return func(proc gopipe.Processor[*message.Message, *message.Message]) gopipe.Processor[*message.Message, *message.Message] {
-		return gopipe.NewProcessor(
-			func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-				results, err := proc.Process(ctx, msg)
-				if err != nil {
-					return results, err
-				}
-
-				// Propagate correlation ID to all output messages
-				if corrID, ok := msg.Properties.CorrelationID(); ok {
-					for _, outMsg := range results {
-						if outMsg.Properties == nil {
-							outMsg.Properties = make(message.Properties)
-						}
-						// Always overwrite correlation ID
-						outMsg.Properties[message.PropCorrelationID] = corrID
-					}
-				}
-
+	return NewMessageMiddleware(
+		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
+			results, err := next()
+			if err != nil {
 				return results, err
-			},
-			func(msg *message.Message, err error) {
-				proc.Cancel(msg, err)
-			},
-		)
-	}
+			}
+
+			// Propagate correlation ID to all output messages
+			if corrID, ok := msg.Properties.CorrelationID(); ok {
+				for _, outMsg := range results {
+					if outMsg.Properties == nil {
+						outMsg.Properties = make(message.Properties)
+					}
+					// Always overwrite correlation ID
+					outMsg.Properties[message.PropCorrelationID] = corrID
+				}
+			}
+
+			return results, nil
+		},
+	)
 }

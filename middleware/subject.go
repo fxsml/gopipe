@@ -22,26 +22,21 @@ import (
 //	    handlers...,
 //	)
 func MessageSubject(subject string) gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-	return func(proc gopipe.Processor[*message.Message, *message.Message]) gopipe.Processor[*message.Message, *message.Message] {
-		return gopipe.NewProcessor(
-			func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-				results, err := proc.Process(ctx, msg)
-				if err != nil {
-					return results, err
-				}
-
-				for _, outMsg := range results {
-					if outMsg.Properties == nil {
-						outMsg.Properties = make(message.Properties)
-					}
-					outMsg.Properties[message.PropSubject] = subject
-				}
-
+	return NewMessageMiddleware(
+		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
+			results, err := next()
+			if err != nil {
 				return results, err
-			},
-			func(msg *message.Message, err error) {
-				proc.Cancel(msg, err)
-			},
-		)
-	}
+			}
+
+			for _, outMsg := range results {
+				if outMsg.Properties == nil {
+					outMsg.Properties = make(message.Properties)
+				}
+				outMsg.Properties[message.PropSubject] = subject
+			}
+
+			return results, nil
+		},
+	)
 }
