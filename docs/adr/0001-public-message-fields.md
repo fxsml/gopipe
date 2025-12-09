@@ -1,7 +1,7 @@
 # ADR 0001: Public Message Fields
 
-## Status
-Accepted
+**Date:** 2024-11-01
+**Status:** Implemented
 
 ## Context
 Message[T] had private `payload` and `properties` fields with accessor methods. This created unnecessary indirection and verbosity for simple field access.
