@@ -46,8 +46,8 @@ import (
 //	        }}, nil
 //	    },
 //	    marshaler,
-//	    message.MatchSubjectAndType("CreateOrder", "command"),
-//	    message.PropagateCorrelationWithType("event"),
+//	    Match(MatchSubject("CreateOrder"), MatchType("command")),
+//	    WithTypeAndName[OrderCreated]("event"),
 //	)
 func NewCommandHandler[Cmd, Evt any](
 	handle func(ctx context.Context, cmd Cmd) ([]Evt, error),
@@ -124,7 +124,7 @@ func NewCommandHandler[Cmd, Evt any](
 //	        return emailService.SendOrderConfirmation(evt.CustomerID, evt.ID)
 //	    },
 //	    marshaler,
-//	    message.MatchSubjectAndType("OrderCreated", "event"),
+//	    Match(MatchSubject("OrderCreated"), MatchType("event")),
 //	)
 func NewEventHandler[Evt any](
 	handle func(ctx context.Context, evt Evt) error,

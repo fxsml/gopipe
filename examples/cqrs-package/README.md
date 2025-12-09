@@ -54,8 +54,6 @@ import "github.com/fxsml/gopipe/cqrs"
 marshaler := cqrs.NewJSONMarshaler()
 
 createOrderHandler := cqrs.NewCommandHandler(
-    "CreateOrder",
-    marshaler,
     func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
         // ✅ Type-safe! cmd is CreateOrder struct
         // ✅ Pure function: no dependencies on buses
@@ -69,6 +67,9 @@ createOrderHandler := cqrs.NewCommandHandler(
             CreatedAt:  time.Now(),
         }}, nil
     },
+    marshaler,
+    cqrs.Match(cqrs.MatchSubject("CreateOrder"), cqrs.MatchType("command")),
+    cqrs.WithTypeAndName[OrderCreated]("event"),
 )
 ```
 
@@ -76,8 +77,6 @@ createOrderHandler := cqrs.NewCommandHandler(
 
 ```go
 emailHandler := cqrs.NewEventHandler(
-    "OrderCreated",
-    marshaler,
     func(ctx context.Context, evt OrderCreated) error {
         // ✅ Type-safe! evt is OrderCreated struct
         // ✅ Pure side effect: no commands returned
@@ -85,6 +84,8 @@ emailHandler := cqrs.NewEventHandler(
 
         return emailService.Send(evt.CustomerID, "Order created!")
     },
+    marshaler,
+    cqrs.Match(cqrs.MatchSubject("OrderCreated"), cqrs.MatchType("event")),
 )
 ```
 
@@ -139,8 +140,8 @@ commandRouter := message.NewRouter(
 // Event processors
 sideEffectsRouter := message.NewRouter(
     message.RouterConfig{Concurrency: 20, Recover: true},
-    cqrs.NewEventHandler("OrderCreated", marshaler, handleEmail),
-    cqrs.NewEventHandler("OrderCreated", marshaler, handleAnalytics),
+    cqrs.NewEventHandler(handleEmail, marshaler, cqrs.Match(cqrs.MatchSubject("OrderCreated"), cqrs.MatchType("event"))),
+    cqrs.NewEventHandler(handleAnalytics, marshaler, cqrs.Match(cqrs.MatchSubject("OrderCreated"), cqrs.MatchType("event"))),
 )
 
 sagaCoordinator := &OrderSagaCoordinator{marshaler: marshaler}
@@ -251,11 +252,12 @@ func handler(ctx context.Context, msg *message.Message) ([]*message.Message, err
 
 // ✅ With cqrs package: Type-safe
 cqrs.NewCommandHandler(
-    "CreateOrder",
-    marshaler,
     func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
         // cmd is already typed!
     },
+    marshaler,
+    cqrs.Match(cqrs.MatchSubject("CreateOrder"), cqrs.MatchType("command")),
+    cqrs.WithTypeAndName[OrderCreated]("event"),
 )
 ```
 
