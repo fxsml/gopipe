@@ -81,6 +81,11 @@ func NewCommandHandler[Cmd, Evt any](
 				}
 
 				outProps := props(msg.Properties, evt)
+				// Set the specific type name from marshaler
+				if outProps == nil {
+					outProps = make(message.Properties)
+				}
+				outProps[message.PropType] = marshaler.Name(evt)
 				outMsgs = append(outMsgs, message.New(payload, outProps))
 			}
 

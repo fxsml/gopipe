@@ -21,6 +21,10 @@ const (
 
 	// PropContentType indicates the content type of the message.
 	PropContentType = "content_type"
+
+	// PropType is the specific type name of the message payload (e.g., "OrderCreated", "CreateOrder").
+	// This is different from the generic message type ("command", "event", "query").
+	PropType = "message_type"
 )
 
 // String retrieves a string property by key.
@@ -71,4 +75,9 @@ func (p Properties) ContentType() (string, bool) {
 // Deadline returns the deadline for processing this message.
 func (p Properties) Deadline() (time.Time, bool) {
 	return p.Time(PropDeadline)
+}
+
+// Type returns the specific type name as string from properties.
+func (p Properties) Type() (string, bool) {
+	return p.String(PropType)
 }
