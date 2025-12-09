@@ -149,14 +149,15 @@ func main() {
 	)
 
 	// Create router with configuration
-	// Middleware execution order: Validation → CorrelationID → Logging → Metrics → Handler
+	// Middleware execution order: Validation → CorrelationID → MessageCorrelation → Logging → Metrics → Handler
 	router := message.NewRouter(
 		message.RouterConfig{
 			Concurrency: 2,
 			Recover:     true,
 			Middleware: []gopipe.MiddlewareFunc[*message.Message, *message.Message]{
 				ValidationMiddleware(),
-				CorrelationIDMiddleware(),
+				CorrelationIDMiddleware(),   // Generate correlation ID if missing
+				middleware.MessageCorrelation(), // Propagate correlation ID to output messages
 				LoggingMiddleware(),
 				MetricsMiddleware(),
 			},

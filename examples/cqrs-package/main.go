@@ -137,7 +137,7 @@ func handleOrderShippedEmail(ctx context.Context, evt OrderShipped) error {
 // ============================================================================
 
 type OrderSagaCoordinator struct {
-	marshaler cqrs.Marshaler
+	marshaler cqrs.CommandMarshaler
 }
 
 func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
@@ -198,7 +198,10 @@ func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message
 
 func main() {
 	ctx := context.Background()
-	marshaler := cqrs.NewJSONMarshaler()
+	marshaler := cqrs.NewJSONCommandMarshaler(
+		cqrs.WithType("event"),
+		cqrs.WithSubjectFromTypeName(),
+	)
 
 	log.Println(strings.Repeat("=", 70))
 	log.Println("CQRS Package Example - Order Processing Saga")
@@ -216,7 +219,6 @@ func main() {
 		},
 		marshaler,
 		cqrs.Match(cqrs.MatchSubject("CreateOrder"), cqrs.MatchType("command")),
-		cqrs.WithTypeAndName[OrderCreated]("event"),
 	)
 
 	chargePaymentHandler := cqrs.NewCommandHandler(
@@ -226,7 +228,6 @@ func main() {
 		},
 		marshaler,
 		cqrs.Match(cqrs.MatchSubject("ChargePayment"), cqrs.MatchType("command")),
-		cqrs.WithTypeAndName[PaymentCharged]("event"),
 	)
 
 	reserveInventoryHandler := cqrs.NewCommandHandler(
@@ -236,7 +237,6 @@ func main() {
 		},
 		marshaler,
 		cqrs.Match(cqrs.MatchSubject("ReserveInventory"), cqrs.MatchType("command")),
-		cqrs.WithTypeAndName[InventoryReserved]("event"),
 	)
 
 	shipOrderHandler := cqrs.NewCommandHandler(
@@ -246,7 +246,6 @@ func main() {
 		},
 		marshaler,
 		cqrs.Match(cqrs.MatchSubject("ShipOrder"), cqrs.MatchType("command")),
-		cqrs.WithTypeAndName[OrderShipped]("event"),
 	)
 
 	commandRouter := message.NewRouter(
