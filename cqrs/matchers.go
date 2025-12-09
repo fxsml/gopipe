@@ -81,21 +81,22 @@ func MatchProperty(key string, value any) Matcher {
 	}
 }
 
-// MatchTypeName returns a matcher that matches messages where the "type" property
+// MatchTypeName returns a matcher that matches messages where the message_type property
 // equals the reflected type name of T.
 //
-// This is useful for automatic type-based routing.
+// This is useful for automatic type-based routing using the specific type name
+// (e.g., "OrderCreated", "CreateOrder") rather than generic types ("command", "event").
 //
 // Example:
 //
 //	type CreateOrder struct { ... }
 //
 //	matcher := cqrs.MatchTypeName[CreateOrder]()
-//	// Matches messages with type="CreateOrder"
+//	// Matches messages with message_type="CreateOrder"
 func MatchTypeName[T any]() Matcher {
 	typeName := typeNameOf[T]()
 	return func(prop message.Properties) bool {
-		propType, _ := prop["type"].(string)
+		propType, _ := prop.Type()
 		return propType == typeName
 	}
 }
