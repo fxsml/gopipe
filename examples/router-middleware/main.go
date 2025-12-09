@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/fxsml/gopipe"
 	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/cqrs"
 	"github.com/fxsml/gopipe/message"
@@ -27,82 +28,90 @@ type OrderCreated struct {
 }
 
 // Logging middleware - logs message processing
-func LoggingMiddleware(next message.HandlerFunc) message.HandlerFunc {
-	return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-		subject, _ := msg.Properties.Subject()
-		log.Printf("[INFO] Processing message: subject=%s", subject)
+func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
+	return message.NewMiddleware(
+		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
+			subject, _ := msg.Properties.Subject()
+			log.Printf("[INFO] Processing message: subject=%s", subject)
 
-		start := time.Now()
-		result, err := next(ctx, msg)
-		duration := time.Since(start)
+			start := time.Now()
+			result, err := next()
+			duration := time.Since(start)
 
-		if err != nil {
-			log.Printf("[ERROR] Failed to process message: subject=%s, error=%v, duration=%v",
-				subject, err, duration)
-		} else {
-			log.Printf("[INFO] Successfully processed message: subject=%s, output_count=%d, duration=%v",
-				subject, len(result), duration)
-		}
+			if err != nil {
+				log.Printf("[ERROR] Failed to process message: subject=%s, error=%v, duration=%v",
+					subject, err, duration)
+			} else {
+				log.Printf("[INFO] Successfully processed message: subject=%s, output_count=%d, duration=%v",
+					subject, len(result), duration)
+			}
 
-		return result, err
-	}
+			return result, err
+		},
+	)
 }
 
 // Metrics middleware - simulates recording metrics
-func MetricsMiddleware(next message.HandlerFunc) message.HandlerFunc {
-	return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-		start := time.Now()
-		result, err := next(ctx, msg)
-		duration := time.Since(start)
+func MetricsMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
+	return message.NewMiddleware(
+		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
+			start := time.Now()
+			result, err := next()
+			duration := time.Since(start)
 
-		subject, _ := msg.Properties.Subject()
-		status := "success"
-		if err != nil {
-			status = "error"
-		}
+			subject, _ := msg.Properties.Subject()
+			status := "success"
+			if err != nil {
+				status = "error"
+			}
 
-		log.Printf("[METRICS] subject=%s status=%s duration=%v output_count=%d",
-			subject, status, duration, len(result))
+			log.Printf("[METRICS] subject=%s status=%s duration=%v output_count=%d",
+				subject, status, duration, len(result))
 
-		return result, err
-	}
+			return result, err
+		},
+	)
 }
 
 // Correlation ID middleware - ensures all messages have correlation IDs
-func CorrelationIDMiddleware(next message.HandlerFunc) message.HandlerFunc {
-	return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-		// Ensure correlation ID exists
-		if _, ok := msg.Properties.CorrelationID(); !ok {
-			corrID := fmt.Sprintf("corr-%d", time.Now().UnixNano())
-			msg.Properties[message.PropCorrelationID] = corrID
-			log.Printf("[CORRELATION] Generated correlation ID: %s", corrID)
-		}
+func CorrelationIDMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
+	return message.NewMiddleware(
+		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
+			// Ensure correlation ID exists
+			if _, ok := msg.Properties.CorrelationID(); !ok {
+				corrID := fmt.Sprintf("corr-%d", time.Now().UnixNano())
+				msg.Properties[message.PropCorrelationID] = corrID
+				log.Printf("[CORRELATION] Generated correlation ID: %s", corrID)
+			}
 
-		return next(ctx, msg)
-	}
+			return next()
+		},
+	)
 }
 
 // Validation middleware - validates message properties
-func ValidationMiddleware(next message.HandlerFunc) message.HandlerFunc {
-	return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-		// Validate required properties
-		if _, ok := msg.Properties.Subject(); !ok {
-			err := fmt.Errorf("validation error: missing subject")
-			log.Printf("[VALIDATION] %v", err)
-			msg.Nack(err)
-			return nil, err
-		}
+func ValidationMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
+	return message.NewMiddleware(
+		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
+			// Validate required properties
+			if _, ok := msg.Properties.Subject(); !ok {
+				err := fmt.Errorf("validation error: missing subject")
+				log.Printf("[VALIDATION] %v", err)
+				msg.Nack(err)
+				return nil, err
+			}
 
-		if len(msg.Payload) == 0 {
-			err := fmt.Errorf("validation error: empty payload")
-			log.Printf("[VALIDATION] %v", err)
-			msg.Nack(err)
-			return nil, err
-		}
+			if len(msg.Payload) == 0 {
+				err := fmt.Errorf("validation error: empty payload")
+				log.Printf("[VALIDATION] %v", err)
+				msg.Nack(err)
+				return nil, err
+			}
 
-		log.Printf("[VALIDATION] Message validated successfully")
-		return next(ctx, msg)
-	}
+			log.Printf("[VALIDATION] Message validated successfully")
+			return next()
+		},
+	)
 }
 
 func main() {
@@ -137,21 +146,19 @@ func main() {
 	)
 
 	// Create router with configuration
+	// Middleware execution order: Validation → CorrelationID → Logging → Metrics → Handler
 	router := message.NewRouter(
 		message.RouterConfig{
 			Concurrency: 2,
 			Recover:     true,
+			Middleware: []gopipe.MiddlewareFunc[*message.Message, *message.Message]{
+				ValidationMiddleware(),
+				CorrelationIDMiddleware(),
+				LoggingMiddleware(),
+				MetricsMiddleware(),
+			},
 		},
 		createOrderHandler,
-	)
-
-	// Add middleware (order matters!)
-	// Execution order: Validation → CorrelationID → Logging → Metrics → Handler
-	router.AddMiddleware(
-		ValidationMiddleware,
-		CorrelationIDMiddleware,
-		LoggingMiddleware,
-		MetricsMiddleware,
 	)
 
 	// Create test messages
