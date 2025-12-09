@@ -1,6 +1,8 @@
 package cqrs
 
 import (
+	"reflect"
+
 	"github.com/fxsml/gopipe/message"
 )
 
@@ -46,7 +48,13 @@ func CreateCommand(marshaler Marshaler, cmd any, props message.Properties) *mess
 		props = message.Properties{}
 	}
 
-	props[message.PropSubject] = marshaler.Name(cmd)
+	// Extract type name from the command
+	t := reflect.TypeOf(cmd)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	props[message.PropSubject] = t.Name()
+	props[message.PropType] = t.Name()
 	props["type"] = "command"
 
 	return message.New(payload, props)

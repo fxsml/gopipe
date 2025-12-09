@@ -116,102 +116,15 @@ func MatchHasProperty(key string) Matcher {
 }
 
 // ============================================================================
-// Property Transformers
+// Property Transformers (Deprecated)
 // ============================================================================
-
-// PropagateCorrelation returns a property transformation function that
-// propagates the correlation ID from input to output.
 //
-// Example:
-//
-//	props := cqrs.PropagateCorrelation(inProps, evt)
-//	// Output properties will have correlation ID if present in input
-func PropagateCorrelation[T any](inProp message.Properties, out T) message.Properties {
-	props := message.Properties{}
-	if corrID, ok := inProp.CorrelationID(); ok {
-		props[message.PropCorrelationID] = corrID
-	}
-	return props
-}
-
-// WithType returns a property transformation function that sets the message type.
-//
-// Example:
-//
-//	props := cqrs.WithType("event")(inProps, evt)
-//	// Output properties will have type="event"
-func WithType(msgType string) func(message.Properties, any) message.Properties {
-	return func(inProp message.Properties, out any) message.Properties {
-		props := message.Properties{
-			"type": msgType,
-		}
-		if corrID, ok := inProp.CorrelationID(); ok {
-			props[message.PropCorrelationID] = corrID
-		}
-		return props
-	}
-}
-
-// WithSubject returns a property transformation function that sets the subject.
-//
-// Example:
-//
-//	props := cqrs.WithSubject("OrderCreated")(inProps, evt)
-//	// Output properties will have subject="OrderCreated"
-func WithSubject(subject string) func(message.Properties, any) message.Properties {
-	return func(inProp message.Properties, out any) message.Properties {
-		props := message.Properties{
-			message.PropSubject: subject,
-		}
-		if corrID, ok := inProp.CorrelationID(); ok {
-			props[message.PropCorrelationID] = corrID
-		}
-		return props
-	}
-}
-
-// WithSubjectAndType returns a property transformation function that sets
-// both subject and type.
-//
-// Example:
-//
-//	props := cqrs.WithSubjectAndType("OrderCreated", "event")(inProps, evt)
-//	// Output properties will have subject="OrderCreated" and type="event"
-func WithSubjectAndType(subject, msgType string) func(message.Properties, any) message.Properties {
-	return func(inProp message.Properties, out any) message.Properties {
-		props := message.Properties{
-			message.PropSubject: subject,
-			"type":              msgType,
-		}
-		if corrID, ok := inProp.CorrelationID(); ok {
-			props[message.PropCorrelationID] = corrID
-		}
-		return props
-	}
-}
-
-// WithTypeAndName returns a property transformation function that sets the type
-// and uses the reflected type name of T as the subject.
-//
-// Example:
-//
-//	type OrderCreated struct { ... }
-//
-//	props := cqrs.WithTypeAndName[OrderCreated]("event")(inProps, evt)
-//	// Output properties will have subject="OrderCreated" and type="event"
-func WithTypeAndName[T any](msgType string) func(message.Properties, T) message.Properties {
-	typeName := typeNameOf[T]()
-	return func(inProp message.Properties, out T) message.Properties {
-		props := message.Properties{
-			message.PropSubject: typeName,
-			"type":              msgType,
-		}
-		if corrID, ok := inProp.CorrelationID(); ok {
-			props[message.PropCorrelationID] = corrID
-		}
-		return props
-	}
-}
+// These functions are deprecated. Use PropertyProvider functions instead:
+// - PropagateCorrelation() -> PropertyProvider in properties.go
+// - WithType() -> PropertyProvider in properties.go
+// - WithSubject() -> PropertyProvider in properties.go
+// - WithSubjectAndType() -> CombineProps(WithSubject(), WithType())
+// - WithTypeAndName[T]() -> CombineProps(WithTypeName(), WithType())
 
 // ============================================================================
 // Helpers

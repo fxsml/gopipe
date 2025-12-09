@@ -19,9 +19,12 @@ type TestEvent struct {
 }
 
 // TestNewCommandHandler_SetsPropType verifies that NewCommandHandler
-// automatically sets the PropType property using marshaler.Name()
+// automatically sets the PropType property using marshaler.Props()
 func TestNewCommandHandler_SetsPropType(t *testing.T) {
-	marshaler := JSONMarshaler{}
+	marshaler := NewJSONCommandMarshaler(
+		WithType("event"),
+		WithTypeName(),
+	)
 
 	// Create command handler
 	handler := NewCommandHandler(
@@ -34,7 +37,6 @@ func TestNewCommandHandler_SetsPropType(t *testing.T) {
 		},
 		marshaler,
 		Match(MatchSubject("TestCommand"), MatchType("command")),
-		PropagateCorrelation,
 	)
 
 	// Create input message
@@ -75,11 +77,8 @@ func TestNewCommandHandler_SetsPropType(t *testing.T) {
 		t.Errorf("expected PropType=%q, got %q", expectedType, propType)
 	}
 
-	// Verify correlation ID is propagated
-	corrID, ok := outMsg.Properties.CorrelationID()
-	if !ok || corrID != "corr-456" {
-		t.Errorf("correlation ID not propagated correctly: got %v", corrID)
-	}
+	// Note: Correlation ID propagation is now handled by message-level middleware,
+	// not by the marshaler. So we don't expect it to be propagated here.
 
 	// Verify payload can be unmarshaled
 	var evt TestEvent
@@ -151,7 +150,7 @@ func TestMatchTypeName_UsesPropType(t *testing.T) {
 // TestNewCommandHandler_WithMultipleEvents verifies PropType
 // is set correctly for multiple output events
 func TestNewCommandHandler_WithMultipleEvents(t *testing.T) {
-	marshaler := JSONMarshaler{}
+	marshaler := NewJSONCommandMarshaler()
 
 	// Create command handler that returns multiple events
 	handler := NewCommandHandler(
@@ -164,7 +163,6 @@ func TestNewCommandHandler_WithMultipleEvents(t *testing.T) {
 		},
 		marshaler,
 		Match(MatchSubject("TestCommand")),
-		PropagateCorrelation,
 	)
 
 	// Create input message
