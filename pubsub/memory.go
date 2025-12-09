@@ -1,6 +1,4 @@
-// Package broker provides in-memory implementation for message brokering.
-// Interfaces are defined in the message package.
-package broker
+package pubsub
 
 import (
 	"context"
@@ -20,8 +18,8 @@ var (
 	ErrReceiveTimeout = errors.New("receive timeout")
 )
 
-// Config configures the broker behavior.
-type Config struct {
+// InMemoryConfig configures the in-memory broker behavior.
+type InMemoryConfig struct {
 	// CloseTimeout is the maximum duration to wait for graceful shutdown.
 	// Default: 5 seconds.
 	CloseTimeout time.Duration
@@ -39,8 +37,8 @@ type Config struct {
 	BufferSize int
 }
 
-func (c *Config) defaults() Config {
-	cfg := *c
+func (c InMemoryConfig) defaults() InMemoryConfig {
+	cfg := c
 	if cfg.CloseTimeout == 0 {
 		cfg.CloseTimeout = 5 * time.Second
 	}
@@ -83,9 +81,9 @@ func (t *topic) clearMessages() {
 	t.messages = nil
 }
 
-// memoryBroker is an in-memory implementation of Broker.
-type memoryBroker struct {
-	config Config
+// inMemoryBroker is an in-memory implementation of message.Broker.
+type inMemoryBroker struct {
+	config InMemoryConfig
 
 	mu     sync.RWMutex
 	topics map[string]*topic
@@ -93,29 +91,18 @@ type memoryBroker struct {
 	wg     sync.WaitGroup
 }
 
-// NewBroker creates a new in-memory broker with the given configuration.
-func NewBroker(config Config) message.Broker {
+// NewInMemoryBroker creates a new in-memory broker with the given configuration.
+// This broker stores messages in memory and is suitable for testing and simple use cases.
+func NewInMemoryBroker(config InMemoryConfig) message.Broker {
 	cfg := config.defaults()
-	return &memoryBroker{
+	return &inMemoryBroker{
 		config: cfg,
 		topics: make(map[string]*topic),
 	}
 }
 
-// NewSender returns a Sender backed by the given broker.
-// This allows using the broker as a Sender in components that only need send capability.
-func NewSender(b message.Broker) message.Sender {
-	return b
-}
-
-// NewReceiver returns a Receiver backed by the given broker.
-// This allows using the broker as a Receiver in components that only need receive capability.
-func NewReceiver(b message.Broker) message.Receiver {
-	return b
-}
-
 // getOrCreateTopic returns the topic for the given name, creating it if necessary.
-func (b *memoryBroker) getOrCreateTopic(name string) *topic {
+func (b *inMemoryBroker) getOrCreateTopic(name string) *topic {
 	b.mu.RLock()
 	t, ok := b.topics[name]
 	b.mu.RUnlock()
@@ -135,7 +122,7 @@ func (b *memoryBroker) getOrCreateTopic(name string) *topic {
 }
 
 // Send sends messages to the specified topic.
-func (b *memoryBroker) Send(ctx context.Context, topicName string, msgs []*message.Message) error {
+func (b *inMemoryBroker) Send(ctx context.Context, topicName string, msgs []*message.Message) error {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -167,8 +154,8 @@ func (b *memoryBroker) Send(ctx context.Context, topicName string, msgs []*messa
 	return nil
 }
 
-// Receive returns a channel that emits messages from the specified topic.
-func (b *memoryBroker) Receive(ctx context.Context, topicName string) ([]*message.Message, error) {
+// Receive returns all messages from the specified topic.
+func (b *inMemoryBroker) Receive(ctx context.Context, topicName string) ([]*message.Message, error) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -183,7 +170,7 @@ func (b *memoryBroker) Receive(ctx context.Context, topicName string) ([]*messag
 }
 
 // Close gracefully shuts down the broker.
-func (b *memoryBroker) Close() error {
+func (b *inMemoryBroker) Close() error {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()

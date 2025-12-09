@@ -1,5 +1,4 @@
-// Package channel provides a channel-based broker for pub/sub messaging.
-package channel
+package pubsub
 
 import (
 	"context"
@@ -8,20 +7,19 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub"
 )
 
 var (
-	// ErrBrokerClosed is returned when operations are attempted on a closed broker.
-	ErrBrokerClosed = errors.New("broker is closed")
-	// ErrSendTimeout is returned when a send operation times out.
-	ErrSendTimeout = errors.New("send timeout")
-	// ErrReceiveTimeout is returned when a receive operation times out.
-	ErrReceiveTimeout = errors.New("receive timeout")
+	// ErrChannelBrokerClosed is returned when operations are attempted on a closed channel broker.
+	ErrChannelBrokerClosed = errors.New("channel broker is closed")
+	// ErrChannelSendTimeout is returned when a send operation times out.
+	ErrChannelSendTimeout = errors.New("channel send timeout")
+	// ErrChannelReceiveTimeout is returned when a receive operation times out.
+	ErrChannelReceiveTimeout = errors.New("channel receive timeout")
 )
 
-// Config configures the channel-based broker.
-type Config struct {
+// ChannelConfig configures the channel-based broker.
+type ChannelConfig struct {
 	// BufferSize is the channel buffer size for each topic.
 	// Default: 100.
 	BufferSize int
@@ -39,8 +37,8 @@ type Config struct {
 	CloseTimeout time.Duration
 }
 
-func (c *Config) defaults() Config {
-	cfg := *c
+func (c ChannelConfig) defaults() ChannelConfig {
+	cfg := c
 	if cfg.BufferSize == 0 {
 		cfg.BufferSize = 100
 	}
@@ -50,49 +48,49 @@ func (c *Config) defaults() Config {
 	return cfg
 }
 
-// topicMessage pairs a topic with a message.
-type topicMessage struct {
+// topicChannelMessage pairs a topic with a message.
+type topicChannelMessage struct {
 	topic string
 	msg   *message.Message
 }
 
-// subscription represents a single subscription to messages.
-type subscription struct {
+// channelSubscription represents a single subscription to messages.
+type channelSubscription struct {
 	pattern string
-	ch      chan topicMessage
+	ch      chan topicChannelMessage
 }
 
-// Broker implements a channel-based pub/sub broker.
+// channelBroker implements a channel-based pub/sub broker.
 // Messages are distributed to subscribers using Go channels.
-type Broker struct {
-	config Config
+type channelBroker struct {
+	config ChannelConfig
 
 	mu            sync.RWMutex
-	subscriptions []*subscription
+	subscriptions []*channelSubscription
 	closed        bool
 }
 
-// NewBroker creates a new channel-based broker.
+// NewChannelBroker creates a new channel-based broker.
 // This broker uses Go channels for message distribution,
 // making it suitable for in-process concurrent message passing.
-func NewBroker(config Config) pubsub.Broker {
+func NewChannelBroker(config ChannelConfig) message.Broker {
 	cfg := config.defaults()
-	return &Broker{
+	return &channelBroker{
 		config:        cfg,
-		subscriptions: make([]*subscription, 0),
+		subscriptions: make([]*channelSubscription, 0),
 	}
 }
 
 // Send sends messages to all subscribers whose topic patterns match.
-func (b *Broker) Send(ctx context.Context, topic string, msgs []*message.Message) error {
+func (b *channelBroker) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
-		return ErrBrokerClosed
+		return ErrChannelBrokerClosed
 	}
 
 	// Get snapshot of subscriptions
-	subs := make([]*subscription, len(b.subscriptions))
+	subs := make([]*channelSubscription, len(b.subscriptions))
 	copy(subs, b.subscriptions)
 	b.mu.RUnlock()
 
@@ -105,11 +103,11 @@ func (b *Broker) Send(ctx context.Context, topic string, msgs []*message.Message
 
 	// Send to all matching subscriptions
 	for _, msg := range msgs {
-		tm := topicMessage{topic: topic, msg: msg}
+		tm := topicChannelMessage{topic: topic, msg: msg}
 
 		for _, sub := range subs {
 			// Check if topic matches subscription pattern
-			matcher := pubsub.NewTopicMatcher(sub.pattern)
+			matcher := NewTopicMatcher(sub.pattern)
 			if !matcher.Matches(topic) {
 				continue
 			}
@@ -117,7 +115,7 @@ func (b *Broker) Send(ctx context.Context, topic string, msgs []*message.Message
 			select {
 			case <-ctx.Done():
 				if ctx.Err() == context.DeadlineExceeded {
-					return ErrSendTimeout
+					return ErrChannelSendTimeout
 				}
 				return ctx.Err()
 			case sub.ch <- tm:
@@ -127,7 +125,7 @@ func (b *Broker) Send(ctx context.Context, topic string, msgs []*message.Message
 				select {
 				case <-ctx.Done():
 					if ctx.Err() == context.DeadlineExceeded {
-						return ErrSendTimeout
+						return ErrChannelSendTimeout
 					}
 					return ctx.Err()
 				case sub.ch <- tm:
@@ -143,17 +141,17 @@ func (b *Broker) Send(ctx context.Context, topic string, msgs []*message.Message
 // Receive receives messages matching the topic pattern.
 // It creates a temporary subscription and collects messages until
 // the receive timeout or context cancellation.
-func (b *Broker) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
+func (b *channelBroker) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
-		return nil, ErrBrokerClosed
+		return nil, ErrChannelBrokerClosed
 	}
 
 	// Create a subscription channel
-	sub := &subscription{
+	sub := &channelSubscription{
 		pattern: topic,
-		ch:      make(chan topicMessage, b.config.BufferSize),
+		ch:      make(chan topicChannelMessage, b.config.BufferSize),
 	}
 	b.subscriptions = append(b.subscriptions, sub)
 	subIndex := len(b.subscriptions) - 1
@@ -197,7 +195,7 @@ func (b *Broker) Receive(ctx context.Context, topic string) ([]*message.Message,
 // Subscribe creates a long-lived subscription to messages matching the topic pattern.
 // Returns a channel that emits messages. The channel is closed when the broker closes
 // or the context is canceled.
-func (b *Broker) Subscribe(ctx context.Context, topic string) <-chan *message.Message {
+func (b *channelBroker) Subscribe(ctx context.Context, topic string) <-chan *message.Message {
 	out := make(chan *message.Message, b.config.BufferSize)
 
 	b.mu.Lock()
@@ -207,9 +205,9 @@ func (b *Broker) Subscribe(ctx context.Context, topic string) <-chan *message.Me
 		return out
 	}
 
-	sub := &subscription{
+	sub := &channelSubscription{
 		pattern: topic,
-		ch:      make(chan topicMessage, b.config.BufferSize),
+		ch:      make(chan topicChannelMessage, b.config.BufferSize),
 	}
 	b.subscriptions = append(b.subscriptions, sub)
 	subIndex := len(b.subscriptions) - 1
@@ -249,12 +247,12 @@ func (b *Broker) Subscribe(ctx context.Context, topic string) <-chan *message.Me
 }
 
 // Close gracefully shuts down the broker.
-func (b *Broker) Close() error {
+func (b *channelBroker) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.closed {
-		return ErrBrokerClosed
+		return ErrChannelBrokerClosed
 	}
 	b.closed = true
 

@@ -54,58 +54,46 @@ The current broker implementation lives in `message/broker/` with interfaces def
 
 ## Decision
 
-Create a dedicated **`pubsub` package** for pub/sub abstractions and implementations.
+Create a dedicated **`pubsub` package** for pub/sub implementations with interfaces in the **`message` package**.
 
-### New Package Structure
+### Package Structure
 
 ```
-pubsub/
-├── pubsub.go              ← Interfaces: Sender, Receiver, Broker, Publisher, Subscriber
-├── memory/
-│   ├── broker.go          ← NewBroker() - in-memory implementation
-│   └── broker_test.go
-├── http/
-│   ├── sender.go          ← NewSender() - HTTP POST sender
-│   ├── receiver.go        ← NewReceiver() - HTTP POST receiver
-│   ├── http_test.go
-│   └── README.md
-├── io/
-│   ├── sender.go          ← NewSender() - Stream writer
-│   ├── receiver.go        ← NewReceiver() - Stream reader
-│   ├── broker.go          ← NewBroker() - Combined IO broker
-│   ├── io_test.go
-│   └── README.md
-└── channel/               ← NEW: Zero-copy channel-based broker
-    ├── broker.go          ← NewBroker() - Pure Go channels
-    ├── broker_test.go
-    └── README.md
-
 message/
-├── message.go             ← Unchanged: TypedMessage[T], Message
-├── properties.go          ← Unchanged: Properties helpers
-├── router.go              ← Unchanged: Router, Handler
-├── pubsub.go              ← DEPRECATED: Aliases to pubsub package
-└── broker/                ← DEPRECATED: Moved to pubsub/memory/, pubsub/http/, etc.
+├── message.go             ← Core: TypedMessage[T], Message
+├── properties.go          ← Core: Properties helpers
+├── router.go              ← Core: Router, Handler
+└── pubsub.go              ← Interfaces: Sender, Receiver, Broker, Publisher, Subscriber
+
+pubsub/
+├── pubsub.go              ← Topic matching utilities (TopicMatcher, etc.)
+├── memory.go              ← In-memory broker: NewInMemoryBroker()
+├── http.go                ← HTTP impl: NewHTTPSender(), NewHTTPReceiver()
+├── io.go                  ← Stream impl: NewIOSender(), NewIOReceiver(), NewIOBroker()
+└── channel.go             ← Channel-based broker: NewChannelBroker()
 ```
 
-### Core Interfaces (pubsub/pubsub.go)
+**Key design decisions:**
+- **Interfaces in `message` package**: `message.Sender`, `message.Receiver`, `message.Broker` read well and belong with core messaging concepts
+- **Implementations in flat `pubsub` package**: Avoid nested package names like `pubsub/http`, `pubsub/io` that conflict with standard library
+- **Clear constructor names**: `pubsub.NewInMemoryBroker`, `pubsub.NewHTTPSender`, `pubsub.NewChannelBroker` are explicit and unambiguous
+- **Single package import**: Only need `import "github.com/fxsml/gopipe/pubsub"` for all implementations
+
+### Core Interfaces (message/pubsub.go)
 
 ```go
-package pubsub
+package message
 
-import (
-    "context"
-    "github.com/fxsml/gopipe/message"
-)
+import "context"
 
 // Sender sends messages to topics.
 type Sender interface {
-    Send(ctx context.Context, topic string, msgs []*message.Message) error
+    Send(ctx context.Context, topic string, msgs []*Message) error
 }
 
 // Receiver receives messages from topics.
 type Receiver interface {
-    Receive(ctx context.Context, topic string) ([]*message.Message, error)
+    Receive(ctx context.Context, topic string) ([]*Message, error)
 }
 
 // Broker combines sending and receiving capabilities.
@@ -116,110 +104,153 @@ type Broker interface {
 
 // Publisher provides channel-based message publishing with batching and grouping.
 type Publisher interface {
-    Publish(ctx context.Context, msgs <-chan *message.Message) <-chan struct{}
+    Publish(ctx context.Context, msgs <-chan *Message) <-chan struct{}
 }
 
 // Subscriber provides channel-based message subscription with polling.
 type Subscriber interface {
-    Subscribe(ctx context.Context, topic string) <-chan *message.Message
+    Subscribe(ctx context.Context, topic string) <-chan *Message
 }
 ```
 
 ### Implementation Examples
 
-#### In-Memory Broker (pubsub/memory/)
+#### In-Memory Broker
 
 ```go
-package memory
+package pubsub
 
-import "github.com/fxsml/gopipe/pubsub"
+import "github.com/fxsml/gopipe/message"
 
-// Config configures the in-memory broker.
-type Config struct {
-    CloseTimeout  time.Duration
-    SendTimeout   time.Duration
+// InMemoryConfig configures the in-memory broker.
+type InMemoryConfig struct {
+    CloseTimeout   time.Duration
+    SendTimeout    time.Duration
     ReceiveTimeout time.Duration
-    BufferSize    int
+    BufferSize     int
 }
 
-// NewBroker creates an in-memory broker.
-func NewBroker(config Config) pubsub.Broker {
+// NewInMemoryBroker creates an in-memory broker.
+func NewInMemoryBroker(config InMemoryConfig) message.Broker {
     // Implementation...
 }
 ```
 
 **Usage:**
 ```go
-import "github.com/fxsml/gopipe/pubsub/memory"
+import "github.com/fxsml/gopipe/pubsub"
 
-broker := memory.NewBroker(memory.Config{
+broker := pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{
     BufferSize: 100,
 })
 broker.Send(ctx, "orders/created", msgs)
 ```
 
-#### HTTP Sender/Receiver (pubsub/http/)
+#### HTTP Sender/Receiver
 
 ```go
-package http
+package pubsub
 
-import "github.com/fxsml/gopipe/pubsub"
+import "github.com/fxsml/gopipe/message"
 
-// NewSender creates an HTTP POST sender.
-func NewSender(url string, config Config) pubsub.Sender {
+// HTTPConfig configures HTTP-based sender/receiver.
+type HTTPConfig struct {
+    SendTimeout time.Duration
+    Client      *http.Client
+    Headers     map[string]string
+    ContentType string
+}
+
+// NewHTTPSender creates an HTTP POST sender.
+func NewHTTPSender(url string, config HTTPConfig) message.Sender {
     // Implementation...
 }
 
-// NewReceiver creates an HTTP POST receiver.
-func NewReceiver(config Config) pubsub.Receiver {
-    // Requires HTTP server setup
+// NewHTTPReceiver creates an HTTP POST receiver.
+func NewHTTPReceiver(config HTTPConfig, bufferSize int) message.Receiver {
     // Implementation...
 }
 ```
 
 **Usage:**
 ```go
-import "github.com/fxsml/gopipe/pubsub/http"
+import "github.com/fxsml/gopipe/pubsub"
 
-sender := http.NewSender("https://api.example.com/messages", http.Config{
-    Timeout: 5 * time.Second,
+sender := pubsub.NewHTTPSender("https://api.example.com/messages", pubsub.HTTPConfig{
+    SendTimeout: 5 * time.Second,
 })
 sender.Send(ctx, "orders/created", msgs)
 ```
 
-#### Channel Broker (pubsub/channel/) - NEW!
+#### IO Sender/Receiver/Broker
 
 ```go
-package channel
+package pubsub
 
+// IOConfig configures IO-based sender/receiver.
+type IOConfig struct {
+    SendTimeout    time.Duration
+    ReceiveTimeout time.Duration
+    Marshaler      Marshaler
+    BufferSize     int
+}
+
+// NewIOSender creates a sender that writes to io.Writer as JSONL.
+func NewIOSender(w io.Writer, config IOConfig) message.Sender
+
+// NewIOReceiver creates a receiver that reads from io.Reader as JSONL.
+func NewIOReceiver(r io.Reader, config IOConfig) message.Receiver
+
+// NewIOBroker creates a broker for bidirectional streaming.
+func NewIOBroker(r io.Reader, w io.Writer, config IOConfig) message.Broker
+```
+
+**Usage:**
+```go
 import "github.com/fxsml/gopipe/pubsub"
 
-// NewBroker creates a channel-based broker for in-process pub/sub.
-// Uses pure Go channels - zero-copy, leverages gopipe channel utilities.
-func NewBroker() pubsub.Broker {
-    return &channelBroker{
-        topics: make(map[string]chan *message.Message),
-    }
+// File-based messaging
+sender := pubsub.NewIOSender(file, pubsub.IOConfig{})
+
+// Pipe-based IPC
+pr, pw := io.Pipe()
+broker := pubsub.NewIOBroker(pr, pw, pubsub.IOConfig{})
+```
+
+#### Channel Broker
+
+```go
+package pubsub
+
+// ChannelConfig configures the channel-based broker.
+type ChannelConfig struct {
+    BufferSize     int
+    SendTimeout    time.Duration
+    ReceiveTimeout time.Duration
+    CloseTimeout   time.Duration
+}
+
+// NewChannelBroker creates a channel-based broker for in-process pub/sub.
+func NewChannelBroker(config ChannelConfig) message.Broker {
+    // Implementation...
 }
 ```
 
 **Usage:**
 ```go
-import "github.com/fxsml/gopipe/pubsub/channel"
+import "github.com/fxsml/gopipe/pubsub"
 
-broker := channel.NewBroker()
-
-// Zero-copy, native Go channels
+broker := pubsub.NewChannelBroker(pubsub.ChannelConfig{
+    BufferSize: 100,
+})
 broker.Send(ctx, "orders/created", msgs)
-received, _ := broker.Receive(ctx, "orders/created")
 ```
 
-**Benefits of channel broker:**
+**Benefits:**
 - ✅ Zero-copy (messages stay in memory)
 - ✅ Native concurrency (Go channels handle backpressure)
 - ✅ Simplest possible (no marshalling, no network)
-- ✅ Integrates with gopipe utilities (`channel.FanOut`, `channel.Merge`)
-- ✅ Different from memory broker (streaming vs buffering)
+- ✅ Different from memory broker (channel-based vs slice-based)
 
 ## Benefits
 
@@ -237,7 +268,7 @@ import "github.com/fxsml/gopipe/pubsub/memory"
 broker := memory.NewBroker(config)
 ```
 
-### 2. Explicit Imports
+### 2. Explicit Constructor Names
 
 ```go
 // Before (confusing)
@@ -245,8 +276,9 @@ import "github.com/fxsml/gopipe/message/broker"
 b := broker.NewBroker(...)  // Which broker?
 
 // After (clear)
-import "github.com/fxsml/gopipe/pubsub/memory"
-b := memory.NewBroker(...)  // In-memory broker, explicit!
+import "github.com/fxsml/gopipe/pubsub"
+b := pubsub.NewInMemoryBroker(...)  // In-memory broker, explicit!
+httpSender := pubsub.NewHTTPSender(...)  // HTTP sender, explicit!
 ```
 
 ### 3. Implementation Isolation

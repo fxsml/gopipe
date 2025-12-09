@@ -1,5 +1,4 @@
-// Package io provides IO stream-based sender and receiver for pub/sub messaging.
-package io
+package pubsub
 
 import (
 	"bufio"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub"
 )
 
 var (
@@ -23,8 +21,6 @@ var (
 	ErrMarshalFailed = errors.New("marshal failed")
 	// ErrUnmarshalFailed is returned when message unmarshalling fails.
 	ErrUnmarshalFailed = errors.New("unmarshal failed")
-	// ErrSendTimeout is returned when a send operation times out.
-	ErrSendTimeout = errors.New("send timeout")
 )
 
 // Envelope wraps a message for wire transmission.
@@ -53,8 +49,8 @@ func (JSONMarshaler) Unmarshal(data []byte, v any) error {
 	return json.Unmarshal(data, v)
 }
 
-// Config configures IO-based sender/receiver.
-type Config struct {
+// IOConfig configures IO-based sender/receiver.
+type IOConfig struct {
 	// SendTimeout is the maximum duration for a write operation.
 	SendTimeout time.Duration
 
@@ -68,8 +64,8 @@ type Config struct {
 	BufferSize int
 }
 
-func (c *Config) defaults() Config {
-	cfg := *c
+func (c IOConfig) defaults() IOConfig {
+	cfg := c
 	if cfg.Marshaler == nil {
 		cfg.Marshaler = JSONMarshaler{}
 	}
@@ -79,9 +75,9 @@ func (c *Config) defaults() Config {
 	return cfg
 }
 
-// Sender writes messages to an io.Writer as JSON Lines (JSONL).
-type Sender struct {
-	config    Config
+// ioSender writes messages to an io.Writer as JSON Lines (JSONL).
+type ioSender struct {
+	config    IOConfig
 	mu        sync.Mutex
 	writer    io.Writer
 	encoder   *json.Encoder
@@ -89,11 +85,11 @@ type Sender struct {
 	marshaler Marshaler
 }
 
-// NewSender creates a sender that writes messages to the given writer.
+// NewIOSender creates a sender that writes messages to the given writer.
 // Messages are encoded as JSON Lines (JSONL) - one JSON object per line.
-func NewSender(w io.Writer, config Config) pubsub.Sender {
+func NewIOSender(w io.Writer, config IOConfig) message.Sender {
 	cfg := config.defaults()
-	return &Sender{
+	return &ioSender{
 		config:    cfg,
 		writer:    w,
 		encoder:   json.NewEncoder(w),
@@ -102,7 +98,7 @@ func NewSender(w io.Writer, config Config) pubsub.Sender {
 }
 
 // Send writes messages to the underlying writer.
-func (s *Sender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
+func (s *ioSender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -149,27 +145,27 @@ func (s *Sender) Send(ctx context.Context, topic string, msgs []*message.Message
 }
 
 // Close marks the sender as closed. It does not close the underlying writer.
-func (s *Sender) Close() error {
+func (s *ioSender) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
 	return nil
 }
 
-// Receiver reads messages from an io.Reader.
-type Receiver struct {
-	config    Config
+// ioReceiver reads messages from an io.Reader.
+type ioReceiver struct {
+	config    IOConfig
 	mu        sync.Mutex
 	reader    *bufio.Reader
 	closed    bool
 	marshaler Marshaler
 }
 
-// NewReceiver creates a receiver that reads messages from the given reader.
+// NewIOReceiver creates a receiver that reads messages from the given reader.
 // Messages are decoded from JSON Lines (JSONL) - one JSON object per line.
-func NewReceiver(r io.Reader, config Config) pubsub.Receiver {
+func NewIOReceiver(r io.Reader, config IOConfig) message.Receiver {
 	cfg := config.defaults()
-	return &Receiver{
+	return &ioReceiver{
 		config:    cfg,
 		reader:    bufio.NewReaderSize(r, cfg.BufferSize),
 		marshaler: cfg.Marshaler,
@@ -178,10 +174,10 @@ func NewReceiver(r io.Reader, config Config) pubsub.Receiver {
 
 // Receive reads messages from the reader that match the specified topic.
 // If topic is empty, all messages are returned.
-func (r *Receiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
-	var matcher *pubsub.TopicMatcher
+func (r *ioReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
+	var matcher *TopicMatcher
 	if topic != "" {
-		matcher = pubsub.NewTopicMatcher(topic)
+		matcher = NewTopicMatcher(topic)
 	}
 
 	var result []*message.Message
@@ -222,7 +218,7 @@ func (r *Receiver) Receive(ctx context.Context, topic string) ([]*message.Messag
 }
 
 // readOne reads a single message from the reader.
-func (r *Receiver) readOne(ctx context.Context) (*message.Message, string, error) {
+func (r *ioReceiver) readOne(ctx context.Context) (*message.Message, string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -258,52 +254,42 @@ func (r *Receiver) readOne(ctx context.Context) (*message.Message, string, error
 }
 
 // Close marks the receiver as closed. It does not close the underlying reader.
-func (r *Receiver) Close() error {
+func (r *ioReceiver) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.closed = true
 	return nil
 }
 
-// Broker combines Sender and Receiver for bidirectional streaming.
-type Broker struct {
-	sender   *Sender
-	receiver *Receiver
+// ioBroker combines Sender and Receiver for bidirectional streaming.
+type ioBroker struct {
+	sender   *ioSender
+	receiver *ioReceiver
 }
 
-// NewBroker creates a broker that reads from r and writes to w.
+// NewIOBroker creates a broker that reads from r and writes to w.
 // This is useful for pipe-based IPC or file-based messaging.
-func NewBroker(r io.Reader, w io.Writer, config Config) pubsub.Broker {
+func NewIOBroker(r io.Reader, w io.Writer, config IOConfig) message.Broker {
 	cfg := config.defaults()
-	return &Broker{
-		sender:   NewSender(w, cfg).(*Sender),
-		receiver: NewReceiver(r, cfg).(*Receiver),
+	return &ioBroker{
+		sender:   NewIOSender(w, cfg).(*ioSender),
+		receiver: NewIOReceiver(r, cfg).(*ioReceiver),
 	}
 }
 
 // Send writes messages to the underlying writer.
-func (b *Broker) Send(ctx context.Context, topic string, msgs []*message.Message) error {
+func (b *ioBroker) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	return b.sender.Send(ctx, topic, msgs)
 }
 
 // Receive reads messages from the underlying reader.
-func (b *Broker) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
+func (b *ioBroker) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
 	return b.receiver.Receive(ctx, topic)
 }
 
 // Close closes both sender and receiver.
-func (b *Broker) Close() error {
+func (b *ioBroker) Close() error {
 	err1 := b.sender.Close()
 	err2 := b.receiver.Close()
 	return errors.Join(err1, err2)
-}
-
-// Sender returns the underlying Sender.
-func (b *Broker) Sender() pubsub.Sender {
-	return b.sender
-}
-
-// Receiver returns the underlying Receiver.
-func (b *Broker) Receiver() pubsub.Receiver {
-	return b.receiver
 }
