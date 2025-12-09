@@ -73,7 +73,7 @@ type channelBroker struct {
 // NewChannelBroker creates a new channel-based broker.
 // This broker uses Go channels for message distribution,
 // making it suitable for in-process concurrent message passing.
-func NewChannelBroker(config ChannelConfig) message.Broker {
+func NewChannelBroker(config ChannelConfig) Broker {
 	cfg := config.defaults()
 	return &channelBroker{
 		config:        cfg,
