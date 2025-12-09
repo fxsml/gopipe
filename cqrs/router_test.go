@@ -1,4 +1,4 @@
-package message_test
+package cqrs_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/channel"
+	"github.com/fxsml/gopipe/cqrs"
 	"github.com/fxsml/gopipe/message"
 )
 
@@ -29,11 +30,11 @@ func testJSONHandler[In, Out any](
 	handle func(ctx context.Context, payload In) ([]Out, error),
 	match func(prop message.Properties) bool,
 	props func(prop message.Properties) message.Properties,
-) message.Handler {
+) cqrs.Handler {
 	h := func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		var payload In
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-			err = fmt.Errorf("unmarshal message: %w: %w", message.ErrInvalidMessagePayload, err)
+			err = fmt.Errorf("unmarshal message: %w: %w", cqrs.ErrInvalidMessagePayload, err)
 			msg.Nack(err)
 			return nil, err
 		}
@@ -49,7 +50,7 @@ func testJSONHandler[In, Out any](
 		for _, o := range out {
 			data, err := json.Marshal(o)
 			if err != nil {
-				err = fmt.Errorf("marshal message: %w: %w", message.ErrInvalidMessagePayload, err)
+				err = fmt.Errorf("marshal message: %w: %w", cqrs.ErrInvalidMessagePayload, err)
 				msg.Nack(err)
 				return nil, err
 			}
@@ -61,7 +62,7 @@ func testJSONHandler[In, Out any](
 		msg.Ack()
 		return msgs, nil
 	}
-	return message.NewHandler(h, match)
+	return cqrs.NewHandler(h, match)
 }
 
 func TestRouter_BasicRouting(t *testing.T) {
@@ -83,7 +84,7 @@ func TestRouter_BasicRouting(t *testing.T) {
 		},
 	)
 
-	router := message.NewRouter(message.RouterConfig{}, orderHandler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{}, orderHandler)
 
 	orderData, _ := json.Marshal(Order{ID: "order-1", Amount: 100})
 	in := channel.FromValues(
@@ -150,7 +151,7 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 		},
 	)
 
-	router := message.NewRouter(message.RouterConfig{}, orderHandler, confirmHandler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{}, orderHandler, confirmHandler)
 
 	orderData, _ := json.Marshal(Order{ID: "order-1", Amount: 50})
 	confirmData, _ := json.Marshal(Order{ID: "order-2", Amount: 75})
@@ -193,7 +194,7 @@ func TestRouter_NoMatchingHandler(t *testing.T) {
 		},
 	)
 
-	router := message.NewRouter(message.RouterConfig{}, orderHandler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{}, orderHandler)
 
 	// Message with non-matching subject
 	data, _ := json.Marshal(Order{ID: "order-1"})
@@ -247,7 +248,7 @@ func TestRouter_HandlerError(t *testing.T) {
 		},
 	)
 
-	router := message.NewRouter(message.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
 
 	data, _ := json.Marshal(Order{ID: "order-1"})
 	var nackCalled bool
@@ -297,7 +298,7 @@ func TestRouter_UnmarshalError(t *testing.T) {
 		},
 	)
 
-	router := message.NewRouter(message.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
 
 	var nackCalled bool
 	var nackErr error
@@ -322,7 +323,7 @@ func TestRouter_UnmarshalError(t *testing.T) {
 	if !nackCalled {
 		t.Error("Expected nack to be called for unmarshal error")
 	}
-	if nackErr == nil || !errors.Is(nackErr, message.ErrInvalidMessagePayload) {
+	if nackErr == nil || !errors.Is(nackErr, cqrs.ErrInvalidMessagePayload) {
 		t.Errorf("Expected ErrInvalidMessagePayload, got %v", nackErr)
 	}
 }
@@ -340,7 +341,7 @@ func TestRouter_AckOnSuccess(t *testing.T) {
 		},
 	)
 
-	router := message.NewRouter(message.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
 
 	data, _ := json.Marshal(Order{ID: "order-1"})
 	var ackCalled bool
@@ -386,7 +387,7 @@ func TestRouter_Concurrency(t *testing.T) {
 		},
 	)
 
-	router := message.NewRouter(message.RouterConfig{
+	router := cqrs.NewRouter(cqrs.RouterConfig{
 		Concurrency: 5,
 	}, handler)
 
@@ -431,7 +432,7 @@ func TestRouter_WithRecover(t *testing.T) {
 		},
 	)
 
-	router := message.NewRouter(message.RouterConfig{
+	router := cqrs.NewRouter(cqrs.RouterConfig{
 		Recover: true,
 	}, handler)
 
@@ -465,7 +466,7 @@ func TestRouter_MultipleOutputMessages(t *testing.T) {
 		},
 	)
 
-	router := message.NewRouter(message.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
 
 	data, _ := json.Marshal(Order{ID: "order", Amount: 100})
 	in := channel.FromValues(message.New(data, nil))
@@ -504,7 +505,7 @@ func TestRouter_PreservesProperties(t *testing.T) {
 		},
 	)
 
-	router := message.NewRouter(message.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
 
 	data, _ := json.Marshal(Order{ID: "order-1"})
 	in := channel.FromValues(

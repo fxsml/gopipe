@@ -248,8 +248,8 @@ func main() {
 		cqrs.Match(cqrs.MatchSubject("ShipOrder"), cqrs.MatchType("command")),
 	)
 
-	commandRouter := message.NewRouter(
-		message.RouterConfig{
+	commandRouter := cqrs.NewRouter(
+		cqrs.RouterConfig{
 			Concurrency: 10,
 			Recover:     true,
 		},
@@ -263,8 +263,8 @@ func main() {
 	// Event Handlers (Side Effects)
 	// ========================================================================
 
-	sideEffectsRouter := message.NewRouter(
-		message.RouterConfig{
+	sideEffectsRouter := cqrs.NewRouter(
+		cqrs.RouterConfig{
 			Concurrency: 20,
 			Recover:     true,
 		},
@@ -279,7 +279,7 @@ func main() {
 	// ========================================================================
 
 	sagaCoordinator := &OrderSagaCoordinator{marshaler: marshaler}
-	sagaHandler := message.NewHandler(
+	sagaHandler := cqrs.NewHandler(
 		sagaCoordinator.OnEvent,
 		func(prop message.Properties) bool {
 			msgType, _ := prop["type"].(string)
@@ -287,8 +287,8 @@ func main() {
 		},
 	)
 
-	sagaRouter := message.NewRouter(
-		message.RouterConfig{Recover: true},
+	sagaRouter := cqrs.NewRouter(
+		cqrs.RouterConfig{Recover: true},
 		sagaHandler,
 	)
 

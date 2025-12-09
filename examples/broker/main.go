@@ -61,7 +61,7 @@ func main() {
 	fmt.Println("\n=== All examples completed ===")
 }
 
-func basicPubSub(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
+func basicPubSub(ctx context.Context, b pubsub.Broker, wg *sync.WaitGroup) {
 	// Broker implements both Sender and Receiver interfaces
 	sender := b
 	receiver := b
@@ -91,7 +91,7 @@ func basicPubSub(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
 	time.Sleep(50 * time.Millisecond)
 }
 
-func multipleSubscribers(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
+func multipleSubscribers(ctx context.Context, b pubsub.Broker, wg *sync.WaitGroup) {
 	// Create multiple subscribers for the same topic
 	msgs1, _ := b.Receive(ctx, "events")
 	msgs2, _ := b.Receive(ctx, "events")
@@ -115,7 +115,7 @@ func multipleSubscribers(ctx context.Context, b message.Broker, wg *sync.WaitGro
 	time.Sleep(50 * time.Millisecond)
 }
 
-func hierarchicalTopics(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
+func hierarchicalTopics(ctx context.Context, b pubsub.Broker, wg *sync.WaitGroup) {
 	// Subscribe to different hierarchical topics
 	ordersCreated, _ := b.Receive(ctx, "orders/created")
 	ordersUpdated, _ := b.Receive(ctx, "orders/updated")
@@ -142,7 +142,7 @@ func hierarchicalTopics(ctx context.Context, b message.Broker, wg *sync.WaitGrou
 	time.Sleep(50 * time.Millisecond)
 }
 
-func gopipeIntegration(ctx context.Context, b message.Broker, wg *sync.WaitGroup) {
+func gopipeIntegration(ctx context.Context, b pubsub.Broker, wg *sync.WaitGroup) {
 	// Note: Broker now returns slices, not channels, so direct pipe integration needs adjustment
 	// For this example, we'll demonstrate receiving and processing messages
 	incoming, _ := b.Receive(ctx, "input")
