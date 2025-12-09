@@ -42,13 +42,15 @@ Middleware executes in the order added: LoggingMiddleware → MetricsMiddleware 
 
 ## Creating Middleware
 
-### Option 1: Using message.NewMiddleware Helper
+### Option 1: Using middleware.NewMessageMiddleware Helper
 
-The `message.NewMiddleware` helper simplifies middleware creation:
+The `middleware.NewMessageMiddleware` helper simplifies middleware creation:
 
 ```go
+import "github.com/fxsml/gopipe/middleware"
+
 func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-    return message.NewMiddleware(
+    return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
             log.Printf("Processing message")
             result, err := next()
@@ -88,7 +90,7 @@ func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Messag
 
 ```go
 func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-    return message.NewMiddleware(
+    return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
             subject, _ := msg.Properties.Subject()
             log.Printf("[INFO] Processing: subject=%s", subject)
@@ -113,7 +115,7 @@ func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Messag
 
 ```go
 func MetricsMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-    return message.NewMiddleware(
+    return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
             subject, _ := msg.Properties.Subject()
 
@@ -140,7 +142,7 @@ func MetricsMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Messag
 
 ```go
 func ValidationMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-    return message.NewMiddleware(
+    return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
             // Validate required properties
             if _, ok := msg.Properties.Subject(); !ok {
@@ -165,7 +167,7 @@ func ValidationMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Mes
 
 ```go
 func AuthMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-    return message.NewMiddleware(
+    return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
             // Check authentication token
             token, ok := msg.Properties["auth-token"].(string)
@@ -185,7 +187,7 @@ func AuthMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] 
 
 ```go
 func CorrelationIDMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-    return message.NewMiddleware(
+    return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
             // Ensure correlation ID exists
             if _, ok := msg.Properties.CorrelationID(); !ok {
@@ -202,7 +204,7 @@ func CorrelationIDMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.
 
 ```go
 func TracingMiddleware(tracer opentracing.Tracer) gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-    return message.NewMiddleware(
+    return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
             subject, _ := msg.Properties.Subject()
 
@@ -231,7 +233,7 @@ func TracingMiddleware(tracer opentracing.Tracer) gopipe.MiddlewareFunc[*message
 
 ```go
 func ShortCircuitMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-    return message.NewMiddleware(
+    return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
             // Skip processing for certain message types
             if msg.Properties["bypass"] == "yes" {
@@ -245,34 +247,32 @@ func ShortCircuitMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.M
 }
 ```
 
-## CQRS Middleware
+## Pre-built Middleware
 
-The `cqrs` package provides pre-built middleware for property transformation:
+The `middleware` package provides pre-built middleware for common message operations:
 
 ```go
-import "github.com/fxsml/gopipe/cqrs"
+import "github.com/fxsml/gopipe/middleware"
 
 router := message.NewRouter(
     message.RouterConfig{
         Middleware: []gopipe.MiddlewareFunc[*message.Message, *message.Message]{
-            cqrs.CorrelationMiddleware(),           // Propagate correlation IDs
-            cqrs.TypeMiddleware("event"),            // Set type on output messages
-            cqrs.SubjectMiddleware("OrderEvents"),   // Set subject on output messages
-            cqrs.SubjectAndTypeMiddleware("OrderCreated", "event"), // Set both
-            cqrs.TypeAndNameMiddleware[OrderCreated]("event"),      // Use reflected type name
+            middleware.MessageCorrelation(),         // Propagate correlation IDs
+            middleware.MessageType("event"),          // Set type on output messages
+            middleware.MessageSubject("OrderEvents"), // Set subject on output messages
+            middleware.MessageTypeName[OrderCreated](), // Set subject from type name
         },
     },
     handlers...,
 )
 ```
 
-### CQRS Middleware Functions
+### Available Middleware Functions
 
-- **`CorrelationMiddleware()`**: Propagates correlation ID from input to output messages
-- **`TypeMiddleware(msgType string)`**: Sets type property on all output messages
-- **`SubjectMiddleware(subject string)`**: Sets subject property on all output messages
-- **`SubjectAndTypeMiddleware(subject, msgType string)`**: Sets both subject and type
-- **`TypeAndNameMiddleware[T](msgType string)`**: Sets type and derives subject from T's type name
+- **`MessageCorrelation()`**: Propagates correlation ID from input to output messages
+- **`MessageType(msgType string)`**: Sets type property on all output messages
+- **`MessageSubject(subject string)`**: Sets subject property on all output messages
+- **`MessageTypeName[T]()`**: Sets subject based on T's reflected type name (combine with MessageType for both)
 
 ## Complete Example
 
@@ -287,11 +287,12 @@ import (
     "github.com/fxsml/gopipe"
     "github.com/fxsml/gopipe/cqrs"
     "github.com/fxsml/gopipe/message"
+    "github.com/fxsml/gopipe/middleware"
 )
 
 // Logging middleware
 func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-    return message.NewMiddleware(
+    return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
             subject, _ := msg.Properties.Subject()
             log.Printf("[INFO] Processing: %s", subject)
@@ -309,7 +310,7 @@ func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Messag
 
 // Metrics middleware
 func MetricsMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-    return message.NewMiddleware(
+    return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
             start := time.Now()
             result, err := next()
@@ -390,5 +391,5 @@ Middleware A (after)
 2. **Error Handling**: Always handle errors appropriately in middleware
 3. **Context Propagation**: Pass context through the chain
 4. **Performance**: Keep middleware lightweight for high-throughput scenarios
-5. **Use Helpers**: Use `message.NewMiddleware` for simpler cases
+5. **Use Helpers**: Use `middleware.NewMessageMiddleware` for simpler cases
 6. **Direct Wrapping**: Use direct Processor wrapping when you need Cancel interception

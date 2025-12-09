@@ -11,6 +11,7 @@ import (
 	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/cqrs"
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/middleware"
 )
 
 // Domain types
@@ -29,7 +30,7 @@ type OrderCreated struct {
 
 // Logging middleware - logs message processing
 func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-	return message.NewMiddleware(
+	return middleware.NewMessageMiddleware(
 		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
 			subject, _ := msg.Properties.Subject()
 			log.Printf("[INFO] Processing message: subject=%s", subject)
@@ -53,7 +54,7 @@ func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Messag
 
 // Metrics middleware - simulates recording metrics
 func MetricsMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-	return message.NewMiddleware(
+	return middleware.NewMessageMiddleware(
 		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
 			start := time.Now()
 			result, err := next()
@@ -75,7 +76,7 @@ func MetricsMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Messag
 
 // Correlation ID middleware - ensures all messages have correlation IDs
 func CorrelationIDMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-	return message.NewMiddleware(
+	return middleware.NewMessageMiddleware(
 		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
 			// Ensure correlation ID exists
 			if _, ok := msg.Properties.CorrelationID(); !ok {
@@ -91,7 +92,7 @@ func CorrelationIDMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.
 
 // Validation middleware - validates message properties
 func ValidationMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-	return message.NewMiddleware(
+	return middleware.NewMessageMiddleware(
 		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
 			// Validate required properties
 			if _, ok := msg.Properties.Subject(); !ok {
