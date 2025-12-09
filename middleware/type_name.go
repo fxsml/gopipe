@@ -31,28 +31,23 @@ import (
 // - type: "event" (from MessageType middleware)
 func MessageTypeName[T any]() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
 	typeName := typeNameOf[T]()
-	return func(proc gopipe.Processor[*message.Message, *message.Message]) gopipe.Processor[*message.Message, *message.Message] {
-		return gopipe.NewProcessor(
-			func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-				results, err := proc.Process(ctx, msg)
-				if err != nil {
-					return results, err
-				}
-
-				for _, outMsg := range results {
-					if outMsg.Properties == nil {
-						outMsg.Properties = make(message.Properties)
-					}
-					outMsg.Properties[message.PropSubject] = typeName
-				}
-
+	return NewMessageMiddleware(
+		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
+			results, err := next()
+			if err != nil {
 				return results, err
-			},
-			func(msg *message.Message, err error) {
-				proc.Cancel(msg, err)
-			},
-		)
-	}
+			}
+
+			for _, outMsg := range results {
+				if outMsg.Properties == nil {
+					outMsg.Properties = make(message.Properties)
+				}
+				outMsg.Properties[message.PropSubject] = typeName
+			}
+
+			return results, nil
+		},
+	)
 }
 
 // typeNameOf returns the type name of T, stripping pointer indirection.
