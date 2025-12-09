@@ -269,10 +269,29 @@ router := message.NewRouter(
 
 ### Available Middleware Functions
 
-- **`MessageCorrelation()`**: Propagates correlation ID from input to output messages
+- **`MessageCorrelation()`**: Propagates correlation ID from input to output messages. Use this for message-level correlation tracking. For type-level property transformation, use PropertyProviders in the marshaler.
 - **`MessageType(msgType string)`**: Sets type property on all output messages
 - **`MessageSubject(subject string)`**: Sets subject property on all output messages
 - **`MessageTypeName[T]()`**: Sets subject based on T's reflected type name (combine with MessageType for both)
+
+### Correlation ID Propagation
+
+For proper correlation ID handling, use both generation and propagation middleware:
+
+```go
+router := message.NewRouter(
+    message.RouterConfig{
+        Middleware: []gopipe.MiddlewareFunc[*message.Message, *message.Message]{
+            CorrelationIDMiddleware(),         // Generate ID if missing
+            middleware.MessageCorrelation(),   // Propagate ID to output messages
+            LoggingMiddleware(),               // Log with correlation context
+        },
+    },
+    handlers...,
+)
+```
+
+Note: Correlation ID propagation is handled at the message level by middleware, not by PropertyProviders in the marshaler. PropertyProviders work at the type level for extracting properties from the message payload.
 
 ## Complete Example
 
@@ -323,6 +342,12 @@ func MetricsMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Messag
 }
 
 func main() {
+    // Create marshaler with property providers
+    marshaler := cqrs.NewJSONCommandMarshaler(
+        cqrs.WithType("event"),
+        cqrs.WithSubjectFromTypeName(),
+    )
+
     // Create handlers
     createOrderHandler := cqrs.NewCommandHandler(
         func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
@@ -334,7 +359,6 @@ func main() {
             cqrs.MatchSubject("CreateOrder"),
             cqrs.MatchType("command"),
         ),
-        cqrs.WithTypeAndName[OrderCreated]("event"),
     )
 
     // Create router with middleware
