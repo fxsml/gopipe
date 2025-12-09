@@ -93,9 +93,10 @@ func (m JSONMarshaler) Name(v any) string {
 //   - Cmd: The command struct type (e.g., CreateOrder)
 //   - Evt: The event struct type (e.g., OrderCreated)
 func NewCommandHandler[Cmd, Evt any](
-    cmdName string,
-    marshaler Marshaler,
     handle func(ctx context.Context, cmd Cmd) ([]Evt, error),
+    marshaler Marshaler,
+    match func(prop message.Properties) bool,
+    props func(inProp message.Properties, evt Evt) message.Properties,
 ) message.Handler
 
 // NewEventHandler creates a handler that processes events and performs side effects.
@@ -103,10 +104,59 @@ func NewCommandHandler[Cmd, Evt any](
 // Type Parameters:
 //   - Evt: The event struct type (e.g., OrderCreated)
 func NewEventHandler[Evt any](
-    evtName string,
-    marshaler Marshaler,
     handle func(ctx context.Context, evt Evt) error,
+    marshaler Marshaler,
+    match func(prop message.Properties) bool,
 ) message.Handler
+```
+
+### Matcher Functions
+
+```go
+// Matcher matches message properties
+type Matcher func(message.Properties) bool
+
+// Match combines multiple matchers with AND logic
+func Match(matchers ...Matcher) Matcher
+
+// Single-responsibility matchers
+func MatchSubject(subject string) Matcher
+func MatchType(msgType string) Matcher
+func MatchProperty(key string, value any) Matcher
+func MatchTypeName[T any]() Matcher
+func MatchHasProperty(key string) Matcher
+```
+
+**Example:**
+```go
+// Match both subject AND type
+matcher := cqrs.Match(
+    cqrs.MatchSubject("CreateOrder"),
+    cqrs.MatchType("command"),
+)
+
+// Or use type name for automatic routing
+matcher := cqrs.MatchTypeName[CreateOrder]()
+```
+
+### Property Transformation Functions
+
+```go
+// Property transformers set output message properties
+func PropagateCorrelation[T any](inProp message.Properties, out T) message.Properties
+func WithType(msgType string) func(message.Properties, any) message.Properties
+func WithSubject(subject string) func(message.Properties, any) message.Properties
+func WithSubjectAndType(subject, msgType string) func(message.Properties, any) message.Properties
+func WithTypeAndName[T any](msgType string) func(message.Properties, T) message.Properties
+```
+
+**Example:**
+```go
+// Use reflected type name as subject + set type
+props := cqrs.WithTypeAndName[OrderCreated]("event")
+
+// Or manually set both
+props := cqrs.WithSubjectAndType("OrderCreated", "event")
 ```
 
 ### Utility Functions
@@ -154,8 +204,6 @@ type OrderCreated struct {
 marshaler := cqrs.NewJSONMarshaler()
 
 createOrderHandler := cqrs.NewCommandHandler(
-    "CreateOrder",
-    marshaler,
     func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
         // ✅ Pure function: Command → Events
         // ✅ Type-safe: cmd is CreateOrder struct
@@ -174,6 +222,9 @@ createOrderHandler := cqrs.NewCommandHandler(
             CreatedAt:  time.Now(),
         }}, nil
     },
+    marshaler,
+    cqrs.Match(cqrs.MatchSubject("CreateOrder"), cqrs.MatchType("command")),
+    cqrs.WithTypeAndName[OrderCreated]("event"),
 )
 ```
 
@@ -181,8 +232,6 @@ createOrderHandler := cqrs.NewCommandHandler(
 
 ```go
 emailHandler := cqrs.NewEventHandler(
-    "OrderCreated",
-    marshaler,
     func(ctx context.Context, evt OrderCreated) error {
         // ✅ Pure side effect: no commands returned
         // ✅ Type-safe: evt is OrderCreated struct
@@ -191,15 +240,17 @@ emailHandler := cqrs.NewEventHandler(
         log.Printf("📧 Sending confirmation email...")
         return emailService.Send(evt.CustomerID, "Order created!")
     },
+    marshaler,
+    cqrs.Match(cqrs.MatchSubject("OrderCreated"), cqrs.MatchType("event")),
 )
 
 analyticsHandler := cqrs.NewEventHandler(
-    "OrderCreated",
-    marshaler,
     func(ctx context.Context, evt OrderCreated) error {
         log.Printf("📊 Tracking analytics...")
         return analyticsService.Track("order_created", evt)
     },
+    marshaler,
+    cqrs.Match(cqrs.MatchSubject("OrderCreated"), cqrs.MatchType("event")),
 )
 ```
 
@@ -258,11 +309,12 @@ func handler(ctx context.Context, msg *message.Message) ([]*message.Message, err
 
 // ✅ With cqrs package: Type-safe
 cqrs.NewCommandHandler(
-    "CreateOrder",
-    marshaler,
     func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
         // cmd is already typed!
     },
+    marshaler,
+    cqrs.Match(cqrs.MatchSubject("CreateOrder"), cqrs.MatchType("command")),
+    cqrs.WithTypeAndName[OrderCreated]("event"),
 )
 ```
 
@@ -404,9 +456,10 @@ err = commandProcessor.AddHandlers(
 marshaler := cqrs.NewJSONMarshaler()
 
 handler := cqrs.NewCommandHandler(
-    "CreateOrder",
-    marshaler,
     handleCreateOrder,
+    marshaler,
+    cqrs.Match(cqrs.MatchSubject("CreateOrder"), cqrs.MatchType("command")),
+    cqrs.WithTypeAndName[OrderCreated]("event"),
 )
 
 router := message.NewRouter(
@@ -437,12 +490,13 @@ handler := message.NewHandler(
 **After (CQRS):**
 ```go
 handler := cqrs.NewCommandHandler(
-    "CreateOrder",
-    marshaler,
     func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
         // Type-safe, clean API
         return []OrderCreated{{...}}, nil
     },
+    marshaler,
+    cqrs.Match(cqrs.MatchSubject("CreateOrder"), cqrs.MatchType("command")),
+    cqrs.WithTypeAndName[OrderCreated]("event"),
 )
 ```
 
