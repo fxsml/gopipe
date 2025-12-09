@@ -16,19 +16,27 @@ import (
 //
 // Parameters:
 //   - handle: Business logic function that processes the command and returns events
-//   - marshaler: Used to serialize/deserialize commands and events
+//   - marshaler: CommandMarshaler that handles serialization and property transformation
 //   - match: Function to match incoming messages (e.g., by subject and type)
-//   - props: Function to transform input properties into output properties
 //
 // The returned handler:
 //   - Unmarshals the command from message payload
 //   - Calls the business logic function
 //   - Marshals resulting events into output messages
-//   - Applies property transformation for output messages
+//   - Uses marshaler.Props() to set output message properties
 //   - Acks the input message when complete
 //   - Nacks the input message on error
 //
+// The marshaler.Props() method provides property transformation, replacing the old
+// props parameter. Configure your marshaler with PropertyProviders:
+//
 // Example:
+//
+//	marshaler := NewJSONCommandMarshaler(
+//	    PropagateCorrelation(),
+//	    WithType("event"),
+//	    WithTypeName(),
+//	)
 //
 //	createOrderHandler := NewCommandHandler(
 //	    func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
@@ -47,13 +55,11 @@ import (
 //	    },
 //	    marshaler,
 //	    Match(MatchSubject("CreateOrder"), MatchType("command")),
-//	    WithTypeAndName[OrderCreated]("event"),
 //	)
 func NewCommandHandler[Cmd, Evt any](
 	handle func(ctx context.Context, cmd Cmd) ([]Evt, error),
-	marshaler Marshaler,
-	match func(prop message.Properties) bool,
-	props func(inProp message.Properties, evt Evt) message.Properties,
+	marshaler CommandMarshaler,
+	match Matcher,
 ) message.Handler {
 	return message.NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
@@ -80,12 +86,8 @@ func NewCommandHandler[Cmd, Evt any](
 					return nil, err
 				}
 
-				outProps := props(msg.Properties, evt)
-				// Set the specific type name from marshaler
-				if outProps == nil {
-					outProps = make(message.Properties)
-				}
-				outProps[message.PropType] = marshaler.Name(evt)
+				// Use marshaler to provide properties
+				outProps := marshaler.Props(evt)
 				outMsgs = append(outMsgs, message.New(payload, outProps))
 			}
 
@@ -111,7 +113,7 @@ func NewCommandHandler[Cmd, Evt any](
 //
 // Parameters:
 //   - handle: Side effect function that processes the event
-//   - marshaler: Used to deserialize events
+//   - marshaler: EventMarshaler used to deserialize events
 //   - match: Function to match incoming messages (e.g., by subject and type)
 //
 // The returned handler:
@@ -123,6 +125,8 @@ func NewCommandHandler[Cmd, Evt any](
 //
 // Example:
 //
+//	marshaler := NewJSONEventMarshaler()
+//
 //	emailHandler := NewEventHandler(
 //	    func(ctx context.Context, evt OrderCreated) error {
 //	        // Side effect: send email
@@ -133,8 +137,8 @@ func NewCommandHandler[Cmd, Evt any](
 //	)
 func NewEventHandler[Evt any](
 	handle func(ctx context.Context, evt Evt) error,
-	marshaler Marshaler,
-	match func(prop message.Properties) bool,
+	marshaler EventMarshaler,
+	match Matcher,
 ) message.Handler {
 	return message.NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {

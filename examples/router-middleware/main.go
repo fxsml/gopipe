@@ -119,8 +119,11 @@ func main() {
 	log.Println("=== Router Middleware Example ===")
 	log.Println()
 
-	// Create JSON marshaler
-	marshaler := cqrs.JSONMarshaler{}
+	// Create JSON marshaler with property providers
+	marshaler := cqrs.NewJSONCommandMarshaler(
+		cqrs.WithType("event"),
+		cqrs.WithSubjectFromTypeName(),
+	)
 
 	// Create command handler
 	createOrderHandler := cqrs.NewCommandHandler(
@@ -143,7 +146,6 @@ func main() {
 			cqrs.MatchSubject("CreateOrder"),
 			cqrs.MatchType("command"),
 		),
-		cqrs.WithTypeAndName[OrderCreated]("event"),
 	)
 
 	// Create router with configuration
