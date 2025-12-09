@@ -3,14 +3,93 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"reflect"
 	"strings"
 	"time"
 
+	"github.com/fxsml/gopipe"
 	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 )
+
+// ============================================================================
+// Handler and Router (local POC types)
+// ============================================================================
+
+// Handler processes messages matching specific properties (local POC type)
+type Handler interface {
+	Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error)
+	Match(prop message.Properties) bool
+}
+
+type handler struct {
+	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error)
+	match  func(prop message.Properties) bool
+}
+
+func (h *handler) Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+	return h.handle(ctx, msg)
+}
+
+func (h *handler) Match(prop message.Properties) bool {
+	return h.match(prop)
+}
+
+// NewHandler creates a new Handler (local POC function)
+func NewHandler(
+	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error),
+	match func(prop message.Properties) bool,
+) Handler {
+	return &handler{
+		handle: handle,
+		match:  match,
+	}
+}
+
+// RouterConfig configures message routing (local POC type)
+type RouterConfig struct {
+	Concurrency int
+	Recover     bool
+}
+
+// Router dispatches messages to handlers (local POC type)
+type Router struct {
+	handlers []Handler
+	config   RouterConfig
+}
+
+// NewRouter creates a new Router (local POC function)
+func NewRouter(config RouterConfig, handlers ...Handler) *Router {
+	return &Router{
+		handlers: handlers,
+		config:   config,
+	}
+}
+
+// Start begins processing messages
+func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan *message.Message {
+	handle := func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+		for _, h := range r.handlers {
+			if h.Match(msg.Properties) {
+				return h.Handle(ctx, msg)
+			}
+		}
+		err := fmt.Errorf("no handler matched")
+		msg.Nack(err)
+		return nil, err
+	}
+
+	opts := []gopipe.Option[*message.Message, *message.Message]{
+		gopipe.WithConcurrency[*message.Message, *message.Message](r.config.Concurrency),
+	}
+	if r.config.Recover {
+		opts = append(opts, gopipe.WithRecover[*message.Message, *message.Message]())
+	}
+
+	return gopipe.NewProcessPipe(handle, opts...).Start(ctx, msgs)
+}
 
 // ============================================================================
 // Marshaler
@@ -100,8 +179,8 @@ func NewCommandHandler[Cmd, Evt any](
 	cmdName string,
 	marshal Marshaler,
 	handle func(ctx context.Context, cmd Cmd) ([]Evt, error),
-) message.Handler {
-	return message.NewHandler(
+) Handler {
+	return NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			var cmd Cmd
 			if err := json.Unmarshal(msg.Payload, &cmd); err != nil {
@@ -179,8 +258,8 @@ func (h *AnalyticsHandler) HandlePaymentCharged(ctx context.Context, evt Payment
 func NewEventHandler[Evt any](
 	evtName string,
 	handle func(ctx context.Context, evt Evt) error,
-) message.Handler {
-	return message.NewHandler(
+) Handler {
+	return NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			var evt Evt
 			if err := json.Unmarshal(msg.Payload, &evt); err != nil {
@@ -378,8 +457,8 @@ func main() {
 		},
 	)
 
-	commandProcessor := message.NewRouter(
-		message.RouterConfig{
+	commandProcessor := NewRouter(
+		RouterConfig{
 			Concurrency: 10,
 			Recover:     true,
 		},
@@ -396,8 +475,8 @@ func main() {
 	emailHandler := &EmailHandler{}
 	analyticsHandler := &AnalyticsHandler{}
 
-	sideEffectsRouter := message.NewRouter(
-		message.RouterConfig{
+	sideEffectsRouter := NewRouter(
+		RouterConfig{
 			Concurrency: 20,
 			Recover:     true,
 		},
@@ -412,7 +491,7 @@ func main() {
 	// ========================================================================
 
 	sagaCoordinator := &OrderSagaCoordinator{marshaler: marshaler}
-	sagaHandler := message.NewHandler(
+	sagaHandler := NewHandler(
 		sagaCoordinator.OnEvent,
 		func(prop message.Properties) bool {
 			msgType, _ := prop["type"].(string)
@@ -420,8 +499,8 @@ func main() {
 		},
 	)
 
-	sagaRouter := message.NewRouter(
-		message.RouterConfig{Recover: true},
+	sagaRouter := NewRouter(
+		RouterConfig{Recover: true},
 		sagaHandler,
 	)
 

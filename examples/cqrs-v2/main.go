@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"reflect"
 	"strings"
 	"time"
 
+	"github.com/fxsml/gopipe"
 	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 )
@@ -18,6 +20,79 @@ import (
 // - Event handlers can RETURN commands (saga pattern)
 // - Processors return output channels (gopipe pattern)
 // ============================================================================
+
+// Handler processes messages matching specific properties (local POC type)
+type Handler interface {
+	Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error)
+	Match(prop message.Properties) bool
+}
+
+type handler struct {
+	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error)
+	match  func(prop message.Properties) bool
+}
+
+func (h *handler) Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+	return h.handle(ctx, msg)
+}
+
+func (h *handler) Match(prop message.Properties) bool {
+	return h.match(prop)
+}
+
+// NewHandler creates a new Handler (local POC function)
+func NewHandler(
+	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error),
+	match func(prop message.Properties) bool,
+) Handler {
+	return &handler{
+		handle: handle,
+		match:  match,
+	}
+}
+
+// RouterConfig configures message routing (local POC type)
+type RouterConfig struct {
+	Concurrency int
+	Recover     bool
+}
+
+// Router dispatches messages to handlers (local POC type)
+type Router struct {
+	handlers []Handler
+	config   RouterConfig
+}
+
+// NewRouter creates a new Router (local POC function)
+func NewRouter(config RouterConfig, handlers ...Handler) *Router {
+	return &Router{
+		handlers: handlers,
+		config:   config,
+	}
+}
+
+// Start begins processing messages
+func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan *message.Message {
+	handle := func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+		for _, h := range r.handlers {
+			if h.Match(msg.Properties) {
+				return h.Handle(ctx, msg)
+			}
+		}
+		err := fmt.Errorf("no handler matched")
+		msg.Nack(err)
+		return nil, err
+	}
+
+	opts := []gopipe.Option[*message.Message, *message.Message]{
+		gopipe.WithConcurrency[*message.Message, *message.Message](r.config.Concurrency),
+	}
+	if r.config.Recover {
+		opts = append(opts, gopipe.WithRecover[*message.Message, *message.Message]())
+	}
+
+	return gopipe.NewProcessPipe(handle, opts...).Start(ctx, msgs)
+}
 
 // Marshaler serializes commands/events to messages
 type Marshaler interface {
@@ -50,13 +125,13 @@ func (m JSONMarshaler) Name(v any) string {
 // ============================================================================
 
 type CommandProcessor struct {
-	router  *message.Router
+	router  *Router
 	marshal Marshaler
 }
 
-func NewCommandProcessor(config message.RouterConfig, marshal Marshaler, handlers ...message.Handler) *CommandProcessor {
+func NewCommandProcessor(config RouterConfig, marshal Marshaler, handlers ...Handler) *CommandProcessor {
 	return &CommandProcessor{
-		router:  message.NewRouter(config, handlers...),
+		router:  NewRouter(config, handlers...),
 		marshal: marshal,
 	}
 }
@@ -70,10 +145,10 @@ func NewCommandHandler[Cmd, Evt any](
 	cmdName string,
 	marshal Marshaler,
 	handle func(ctx context.Context, cmd Cmd) ([]Evt, error),
-) message.Handler {
+) Handler {
 	// We need a custom handler instead of JSONHandler because we need to set
 	// the subject based on the OUTPUT event type, not the input command
-	return message.NewHandler(
+	return NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			// Unmarshal command
 			var cmd Cmd
@@ -132,13 +207,13 @@ func NewCommandHandler[Cmd, Evt any](
 // ============================================================================
 
 type EventProcessor struct {
-	router  *message.Router
+	router  *Router
 	marshal Marshaler
 }
 
-func NewEventProcessor(config message.RouterConfig, marshal Marshaler, handlers ...message.Handler) *EventProcessor {
+func NewEventProcessor(config RouterConfig, marshal Marshaler, handlers ...Handler) *EventProcessor {
 	return &EventProcessor{
-		router:  message.NewRouter(config, handlers...),
+		router:  NewRouter(config, handlers...),
 		marshal: marshal,
 	}
 }
@@ -152,8 +227,8 @@ func NewEventHandler[Evt, Out any](
 	evtName string,
 	marshal Marshaler,
 	handle func(ctx context.Context, evt Evt) ([]Out, error),
-) message.Handler {
-	return message.NewHandler(
+) Handler {
+	return NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			// Unmarshal event
 			var evt Evt
@@ -381,7 +456,7 @@ func main() {
 	// ========================================================================
 
 	commandProcessor := NewCommandProcessor(
-		message.RouterConfig{
+		RouterConfig{
 			Concurrency: 5,
 			Recover:     true,
 		},
@@ -392,7 +467,7 @@ func main() {
 	)
 
 	eventProcessor := NewEventProcessor(
-		message.RouterConfig{
+		RouterConfig{
 			Concurrency: 10,
 			Recover:     true,
 		},

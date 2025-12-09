@@ -6,7 +6,7 @@ import (
 	"github.com/fxsml/gopipe/message"
 )
 
-// NewCommandHandler creates a message.Handler that processes commands and returns events.
+// NewCommandHandler creates a Handler that processes commands and returns events.
 //
 // Command handlers follow the pattern: Command → Business Logic → Events
 //
@@ -60,8 +60,8 @@ func NewCommandHandler[Cmd, Evt any](
 	handle func(ctx context.Context, cmd Cmd) ([]Evt, error),
 	marshaler CommandMarshaler,
 	match Matcher,
-) message.Handler {
-	return message.NewHandler(
+) Handler {
+	return NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			// Unmarshal command
 			var cmd Cmd
@@ -99,7 +99,7 @@ func NewCommandHandler[Cmd, Evt any](
 	)
 }
 
-// NewEventHandler creates a message.Handler that processes events and performs side effects.
+// NewEventHandler creates a Handler that processes events and performs side effects.
 //
 // Event handlers follow the pattern: Event → Side Effects
 //
@@ -139,8 +139,8 @@ func NewEventHandler[Evt any](
 	handle func(ctx context.Context, evt Evt) error,
 	marshaler EventMarshaler,
 	match Matcher,
-) message.Handler {
-	return message.NewHandler(
+) Handler {
+	return NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			// Unmarshal event
 			var evt Evt
