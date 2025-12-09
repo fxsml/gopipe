@@ -1,5 +1,4 @@
-// Package http provides HTTP-based sender and receiver for pub/sub messaging.
-package http
+package pubsub
 
 import (
 	"bytes"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub"
 )
 
 var (
@@ -22,8 +20,6 @@ var (
 	ErrHTTPRequestFailed = errors.New("HTTP request failed")
 	// ErrHTTPServerClosed is returned when operations are attempted on a closed server.
 	ErrHTTPServerClosed = errors.New("HTTP server is closed")
-	// ErrSendTimeout is returned when a send operation times out.
-	ErrSendTimeout = errors.New("send timeout")
 )
 
 const (
@@ -41,8 +37,8 @@ const (
 	ContentTypeOctetStream = "application/octet-stream"
 )
 
-// Config configures HTTP-based sender/receiver.
-type Config struct {
+// HTTPConfig configures HTTP-based sender/receiver.
+type HTTPConfig struct {
 	// SendTimeout is the maximum duration for sending a message.
 	SendTimeout time.Duration
 
@@ -56,8 +52,8 @@ type Config struct {
 	ContentType string
 }
 
-func (c *Config) defaults() Config {
-	cfg := *c
+func (c HTTPConfig) defaults() HTTPConfig {
+	cfg := c
 	if cfg.Client == nil {
 		cfg.Client = http.DefaultClient
 	}
@@ -67,21 +63,21 @@ func (c *Config) defaults() Config {
 	return cfg
 }
 
-// Sender sends messages via HTTP POST to a webhook URL.
+// httpSender sends messages via HTTP POST to a webhook URL.
 // Properties are sent as X-Gopipe-* headers, payload is sent as request body.
-type Sender struct {
-	config Config
+type httpSender struct {
+	config HTTPConfig
 	url    string
 	client *http.Client
 }
 
-// NewSender creates a sender that POSTs messages to the given URL.
+// NewHTTPSender creates a sender that POSTs messages to the given URL.
 // The topic is sent in X-Gopipe-Topic header.
 // Properties are sent as X-Gopipe-Prop-* headers.
 // Payload is sent as the request body with configured content type.
-func NewSender(url string, config Config) pubsub.Sender {
+func NewHTTPSender(url string, config HTTPConfig) message.Sender {
 	cfg := config.defaults()
-	return &Sender{
+	return &httpSender{
 		config: cfg,
 		url:    url,
 		client: cfg.Client,
@@ -90,7 +86,7 @@ func NewSender(url string, config Config) pubsub.Sender {
 
 // Send POSTs messages to the configured webhook URL.
 // Each message is sent as a separate HTTP request.
-func (s *Sender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
+func (s *httpSender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	// Apply timeout if configured
 	if s.config.SendTimeout > 0 {
 		var cancel context.CancelFunc
@@ -116,7 +112,7 @@ func (s *Sender) Send(ctx context.Context, topic string, msgs []*message.Message
 	return nil
 }
 
-func (s *Sender) sendOne(ctx context.Context, topic string, msg *message.Message) error {
+func (s *httpSender) sendOne(ctx context.Context, topic string, msg *message.Message) error {
 	// Payload is already []byte
 	body := msg.Payload
 	if len(body) == 0 {
@@ -185,10 +181,10 @@ func headerToProperty(header string) string {
 	return strings.ToLower(strings.ReplaceAll(prop, "-", "."))
 }
 
-// Receiver receives messages via HTTP POST requests.
+// httpReceiver receives messages via HTTP POST requests.
 // It implements an HTTP handler that accepts messages and buffers them.
-type Receiver struct {
-	config     Config
+type httpReceiver struct {
+	config     HTTPConfig
 	mu         sync.RWMutex
 	messages   []topicMessage
 	closed     bool
@@ -200,17 +196,17 @@ type topicMessage struct {
 	msg   *message.Message
 }
 
-// NewReceiver creates a receiver that accepts messages via HTTP POST.
+// NewHTTPReceiver creates a receiver that accepts messages via HTTP POST.
 // Use ServeHTTP or Handler() to integrate with an HTTP server.
 // Topic is read from X-Gopipe-Topic header.
 // Properties are read from X-Gopipe-Prop-* headers.
 // Payload is read from request body.
-func NewReceiver(config Config, bufferSize int) pubsub.Receiver {
+func NewHTTPReceiver(config HTTPConfig, bufferSize int) message.Receiver {
 	cfg := config.defaults()
 	if bufferSize <= 0 {
 		bufferSize = 100
 	}
-	return &Receiver{
+	return &httpReceiver{
 		config:     cfg,
 		messages:   make([]topicMessage, 0),
 		bufferSize: bufferSize,
@@ -218,14 +214,14 @@ func NewReceiver(config Config, bufferSize int) pubsub.Receiver {
 }
 
 // Handler returns an http.Handler for receiving messages.
-func (r *Receiver) Handler() http.Handler {
+func (r *httpReceiver) Handler() http.Handler {
 	return http.HandlerFunc(r.ServeHTTP)
 }
 
 // ServeHTTP implements http.Handler for receiving messages via POST.
 // Returns 201 Created on success, 400 Bad Request on invalid input,
 // 405 Method Not Allowed for non-POST requests.
-func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (r *httpReceiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -274,7 +270,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func (r *Receiver) broadcast(topicName string, msg *message.Message) {
+func (r *httpReceiver) broadcast(topicName string, msg *message.Message) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.messages = append(r.messages, topicMessage{topic: topicName, msg: msg})
@@ -282,7 +278,7 @@ func (r *Receiver) broadcast(topicName string, msg *message.Message) {
 
 // Receive returns all messages received for the specified topic.
 // The topic can include wildcards (+, #) for pattern matching.
-func (r *Receiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
+func (r *httpReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
 	r.mu.RLock()
 	if r.closed {
 		r.mu.RUnlock()
@@ -300,7 +296,7 @@ func (r *Receiver) Receive(ctx context.Context, topic string) ([]*message.Messag
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	matcher := pubsub.NewTopicMatcher(topic)
+	matcher := NewTopicMatcher(topic)
 	result := make([]*message.Message, 0)
 	for _, tm := range r.messages {
 		if matcher.Matches(tm.topic) {
@@ -311,7 +307,7 @@ func (r *Receiver) Receive(ctx context.Context, topic string) ([]*message.Messag
 }
 
 // Close shuts down the receiver.
-func (r *Receiver) Close() error {
+func (r *httpReceiver) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
