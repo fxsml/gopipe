@@ -8,26 +8,34 @@ import (
 	"github.com/fxsml/gopipe/message"
 )
 
+// Subscriber provides channel-based message consumption from a Receiver.
 type Subscriber interface {
+	// Subscribe returns a channel that emits messages from the specified topic.
+	// The channel is closed when the context is canceled.
 	Subscribe(ctx context.Context, topic string) <-chan *message.Message
 }
 
-type subsciber struct {
+type subscriber struct {
 	subscribe func(ctx context.Context, topic string) <-chan *message.Message
 }
 
-func (s *subsciber) Subscribe(ctx context.Context, topic string) <-chan *message.Message {
+func (s *subscriber) Subscribe(ctx context.Context, topic string) <-chan *message.Message {
 	return s.subscribe(ctx, topic)
 }
 
+// SubscriberConfig configures the Subscriber behavior.
 type SubscriberConfig struct {
+	// Concurrency is the number of concurrent receive operations. Default: 1.
 	Concurrency int
-	Timeout     time.Duration
-	Retry       *gopipe.RetryConfig
-	Recover     bool
+	// Timeout is the maximum duration for each receive operation.
+	Timeout time.Duration
+	// Retry configures automatic retry on failures.
+	Retry *gopipe.RetryConfig
+	// Recover enables panic recovery in receive operations.
+	Recover bool
 }
 
-func NewSubscriber(
+// NewSubscriber creates a Subscriber that wraps a Receiver with gopipe processing.
 	receiver Receiver,
 	config SubscriberConfig,
 ) Subscriber {
@@ -51,7 +59,7 @@ func NewSubscriber(
 		opts = append(opts, gopipe.WithRetryConfig[struct{}, *message.Message](*config.Retry))
 	}
 
-	return &subsciber{
+	return &subscriber{
 		subscribe: func(ctx context.Context, topic string) <-chan *message.Message {
 			return gopipe.NewGenerator(func(ctx context.Context) ([]*message.Message, error) {
 				return receiver.Receive(ctx, topic)

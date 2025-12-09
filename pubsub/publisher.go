@@ -10,32 +10,14 @@ import (
 	"github.com/fxsml/gopipe/message"
 )
 
-// RouteFunc is a function that determines the routing key (topic/queue) for a message
-// based on its properties. This is used by Publisher to route messages to different topics.
-//
-// Example:
-//
-//	// Route by subject
-//	route := RouteBySubject()
-//
-//	// Route by custom property
-//	route := RouteByProperty("tenant-id")
+// RouteFunc determines the routing key (topic) for a message based on its properties.
 type RouteFunc func(message.Properties) string
 
 // ============================================================================
 // Routing Key Helpers
 // ============================================================================
 
-// RouteBySubject returns a RouteFunc that routes messages by their subject property.
-// If the subject is not present, returns an empty string.
-//
-// Example:
-//
-//	publisher := pubsub.NewPublisher(
-//	    sender,
-//	    pubsub.RouteBySubject(),
-//	    config,
-//	)
+// RouteBySubject returns a RouteFunc that routes by the message subject property.
 func RouteBySubject() RouteFunc {
 	return func(props message.Properties) string {
 		subject, _ := props.Subject()
@@ -43,16 +25,7 @@ func RouteBySubject() RouteFunc {
 	}
 }
 
-// RouteByProperty returns a RouteFunc that routes messages by a specific property.
-// If the property is not present or not a string, returns an empty string.
-//
-// Example:
-//
-//	publisher := pubsub.NewPublisher(
-//	    sender,
-//	    pubsub.RouteByProperty("tenant-id"),
-//	    config,
-//	)
+// RouteByProperty returns a RouteFunc that routes by a specific message property.
 func RouteByProperty(key string) RouteFunc {
 	return func(props message.Properties) string {
 		value, ok := props[key].(string)
@@ -64,31 +37,13 @@ func RouteByProperty(key string) RouteFunc {
 }
 
 // RouteStatic returns a RouteFunc that always routes to the same topic.
-//
-// Example:
-//
-//	publisher := pubsub.NewPublisher(
-//	    sender,
-//	    pubsub.RouteStatic("events"),
-//	    config,
-//	)
 func RouteStatic(topic string) RouteFunc {
 	return func(props message.Properties) string {
 		return topic
 	}
 }
 
-// RouteByFormat returns a RouteFunc that formats the routing key using property values.
-// Use Go's fmt.Sprintf format string with property keys as arguments.
-//
-// Example:
-//
-//	// Route to "tenant-123-events"
-//	publisher := pubsub.NewPublisher(
-//	    sender,
-//	    pubsub.RouteByFormat("tenant-%s-events", "tenant-id"),
-//	    config,
-//	)
+// RouteByFormat returns a RouteFunc that formats the topic using fmt.Sprintf with property values.
 func RouteByFormat(format string, keys ...string) RouteFunc {
 	return func(props message.Properties) string {
 		values := make([]any, len(keys))
@@ -99,7 +54,10 @@ func RouteByFormat(format string, keys ...string) RouteFunc {
 	}
 }
 
+// Publisher provides channel-based message publishing with batching and routing.
 type Publisher interface {
+	// Publish consumes messages from the input channel, batches them by routing key,
+	// and sends them via the Sender. Returns a channel that closes when publishing completes.
 	Publish(ctx context.Context, msgs <-chan *message.Message) <-chan struct{}
 }
 
@@ -111,15 +69,24 @@ func (p *publisher) Publish(ctx context.Context, msgs <-chan *message.Message) <
 	return p.publish(ctx, msgs)
 }
 
+// PublisherConfig configures the Publisher behavior.
 type PublisherConfig struct {
+	// MaxBatchSize is the maximum number of messages per batch. Default: unlimited.
 	MaxBatchSize int
-	MaxDuration  time.Duration
-	Concurrency  int
-	Timeout      time.Duration
-	Retry        *gopipe.RetryConfig
-	Recover      bool
+	// MaxDuration is the maximum time to wait before flushing a batch.
+	MaxDuration time.Duration
+	// Concurrency is the number of concurrent send operations. Default: 1.
+	Concurrency int
+	// Timeout is the maximum duration for each send operation.
+	Timeout time.Duration
+	// Retry configures automatic retry on failures.
+	Retry *gopipe.RetryConfig
+	// Recover enables panic recovery in send operations.
+	Recover bool
 }
 
+// NewPublisher creates a Publisher that wraps a Sender with batching and gopipe processing.
+// Messages are grouped by the routing key returned by route, then sent in batches.
 func NewPublisher(
 	sender Sender,
 	route RouteFunc,

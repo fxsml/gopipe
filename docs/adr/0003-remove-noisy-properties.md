@@ -1,7 +1,7 @@
 # ADR 0003: Remove Noisy Properties
 
-## Status
-Accepted
+**Date:** 2024-11-01
+**Status:** Implemented
 
 ## Context
 Message had many property constants and accessors that added noise without clear use cases:

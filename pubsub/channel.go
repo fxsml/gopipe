@@ -48,20 +48,18 @@ func (c ChannelConfig) defaults() ChannelConfig {
 	return cfg
 }
 
-// topicChannelMessage pairs a topic with a message.
 type topicChannelMessage struct {
 	topic string
 	msg   *message.Message
 }
 
-// channelSubscription represents a single subscription to messages.
 type channelSubscription struct {
 	pattern string
 	ch      chan topicChannelMessage
 }
 
-// channelBroker implements a channel-based pub/sub broker.
-// Messages are distributed to subscribers using Go channels.
+// channelBroker is a channel-based broker that uses Go channels for message distribution.
+// Suitable for in-process pub/sub with pattern-based topic matching.
 type channelBroker struct {
 	config ChannelConfig
 

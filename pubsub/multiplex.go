@@ -15,27 +15,13 @@ type SenderSelector func(topic string) Sender
 // Returns the selected Receiver or nil if no match (triggers fallback).
 type ReceiverSelector func(topic string) Receiver
 
-// MultiplexSender routes Send calls to different Sender implementations
-// based on configurable selection logic.
-//
-// Example:
-//
-//	selector := pubsub.PrefixSenderSelector("internal", memoryBroker)
-//	sender := pubsub.NewMultiplexSender(selector, natsBroker)
-//	sender.Send(ctx, "internal.events", msgs) // → memoryBroker
-//	sender.Send(ctx, "external.api", msgs)    // → natsBroker (fallback)
+// MultiplexSender routes Send calls to different Senders based on topic.
 type MultiplexSender struct {
 	selector SenderSelector
 	fallback Sender
 }
 
-// NewMultiplexSender creates a multiplexing Sender that routes messages
-// to different Sender implementations based on topic.
-//
-// Parameters:
-//   - selector: function that returns the appropriate Sender for a topic
-//   - fallback: default Sender when selector returns nil (required)
-//
+// NewMultiplexSender creates a multiplexing Sender.
 // Panics if fallback is nil.
 func NewMultiplexSender(selector SenderSelector, fallback Sender) *MultiplexSender {
 	if fallback == nil {
@@ -56,27 +42,13 @@ func (m *MultiplexSender) Send(ctx context.Context, topic string, msgs []*messag
 	return sender.Send(ctx, topic, msgs)
 }
 
-// MultiplexReceiver routes Receive calls to different Receiver implementations
-// based on configurable selection logic.
-//
-// Example:
-//
-//	selector := pubsub.PrefixReceiverSelector("internal", memoryBroker)
-//	receiver := pubsub.NewMultiplexReceiver(selector, natsBroker)
-//	msgs, _ := receiver.Receive(ctx, "internal.events") // → memoryBroker
-//	msgs, _ = receiver.Receive(ctx, "external.api")     // → natsBroker (fallback)
+// MultiplexReceiver routes Receive calls to different Receivers based on topic.
 type MultiplexReceiver struct {
 	selector ReceiverSelector
 	fallback Receiver
 }
 
-// NewMultiplexReceiver creates a multiplexing Receiver that routes subscriptions
-// to different Receiver implementations based on topic.
-//
-// Parameters:
-//   - selector: function that returns the appropriate Receiver for a topic
-//   - fallback: default Receiver when selector returns nil (required)
-//
+// NewMultiplexReceiver creates a multiplexing Receiver.
 // Panics if fallback is nil.
 func NewMultiplexReceiver(selector ReceiverSelector, fallback Receiver) *MultiplexReceiver {
 	if fallback == nil {
@@ -107,21 +79,8 @@ type TopicSenderRoute struct {
 	Sender  Sender
 }
 
-// NewTopicSenderSelector creates a selector that matches topics against patterns.
-// Patterns are evaluated in order; first match wins.
-//
-// Pattern syntax:
-//   - "*" matches a single segment (e.g., "orders.*" matches "orders.created")
-//   - "**" matches multiple segments (e.g., "orders.**" matches "orders.us.created")
-//   - Exact match when no wildcards
-//
-// Example:
-//
-//	selector := pubsub.NewTopicSenderSelector([]pubsub.TopicSenderRoute{
-//	    {Pattern: "internal.*", Sender: memoryBroker},
-//	    {Pattern: "audit.**", Sender: auditBroker},
-//	    {Pattern: "events.us.*", Sender: natsBroker},
-//	})
+// NewTopicSenderSelector creates a selector that matches topics against dot-separated patterns.
+// Patterns: "*" matches one segment, "**" matches multiple. First match wins.
 func NewTopicSenderSelector(routes []TopicSenderRoute) SenderSelector {
 	return func(topic string) Sender {
 		for _, route := range routes {
@@ -152,12 +111,7 @@ func NewTopicReceiverSelector(routes []TopicReceiverRoute) ReceiverSelector {
 	}
 }
 
-// PrefixSenderSelector creates a selector based on topic prefix.
-//
-// Example:
-//
-//	selector := pubsub.PrefixSenderSelector("internal", memoryBroker)
-//	// Topics starting with "internal" → memoryBroker
+// PrefixSenderSelector creates a selector that routes topics starting with prefix.
 func PrefixSenderSelector(prefix string, sender Sender) SenderSelector {
 	return func(topic string) Sender {
 		if strings.HasPrefix(topic, prefix) {
@@ -177,14 +131,7 @@ func PrefixReceiverSelector(prefix string, receiver Receiver) ReceiverSelector {
 	}
 }
 
-// ChainSenderSelectors combines multiple selectors (first match wins).
-//
-// Example:
-//
-//	selector := pubsub.ChainSenderSelectors(
-//	    pubsub.PrefixSenderSelector("audit", auditBroker),
-//	    pubsub.PrefixSenderSelector("internal", memoryBroker),
-//	)
+// ChainSenderSelectors combines multiple selectors; first match wins.
 func ChainSenderSelectors(selectors ...SenderSelector) SenderSelector {
 	return func(topic string) Sender {
 		for _, sel := range selectors {
@@ -212,19 +159,8 @@ func ChainReceiverSelectors(selectors ...ReceiverSelector) ReceiverSelector {
 // Pattern Matching
 // ============================================================================
 
-// matchTopicPattern matches a topic against a pattern with wildcards.
-//
-// Pattern syntax:
-//   - "*" matches a single segment (e.g., "orders.*" matches "orders.created")
-//   - "**" matches multiple segments (e.g., "orders.**" matches "orders.us.created")
-//   - Exact match when no wildcards
-//
-// Examples:
-//   - "orders.*" matches "orders.created", "orders.updated"
-//   - "orders.**" matches "orders.created", "orders.us.created", "orders.us.2024.created"
-//   - "*.created" matches "orders.created", "users.created"
-//   - "**.created" matches "orders.created", "orders.us.created"
-//   - "orders.*.created" matches "orders.us.created", "orders.eu.created"
+// matchTopicPattern matches a topic against a dot-separated pattern.
+// "*" matches one segment, "**" matches zero or more segments.
 func matchTopicPattern(pattern, topic string) bool {
 	// Fast path: exact match
 	if pattern == topic {

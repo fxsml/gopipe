@@ -1,7 +1,7 @@
 # ADR 0002: Remove Properties Thread-Safety
 
-## Status
-Accepted
+**Date:** 2024-11-01
+**Status:** Implemented
 
 ## Context
 Properties was a struct with `sync.RWMutex` and methods `Get/Set/Delete/Range`. This added complexity and overhead for most use cases where messages are not shared across goroutines.
