@@ -99,7 +99,6 @@ func RouteByFormat(format string, keys ...string) RouteFunc {
 	}
 }
 
-
 type Publisher interface {
 	Publish(ctx context.Context, msgs <-chan *message.Message) <-chan struct{}
 }
@@ -111,6 +110,7 @@ type publisher struct {
 func (p *publisher) Publish(ctx context.Context, msgs <-chan *message.Message) <-chan struct{} {
 	return p.publish(ctx, msgs)
 }
+
 type PublisherConfig struct {
 	MaxBatchSize int
 	MaxDuration  time.Duration
