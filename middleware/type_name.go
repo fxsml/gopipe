@@ -2,35 +2,16 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 
 	"github.com/fxsml/gopipe"
 	"github.com/fxsml/gopipe/message"
 )
 
-// MessageTypeName returns middleware that sets the subject property based on the reflected type name of T.
-//
-// This middleware uses reflection to extract the type name from the generic parameter T
-// and uses it as the subject for all output messages. This is useful for automatic routing
-// based on message types.
-//
-// Combine with MessageType() to set both subject and type:
-//
-//	router := message.NewRouter(
-//	    message.RouterConfig{
-//	        Middleware: []gopipe.MiddlewareFunc[*message.Message, *message.Message]{
-//	            middleware.MessageTypeName[OrderCreated](),
-//	            middleware.MessageType("event"),
-//	        },
-//	    },
-//	    handlers...,
-//	)
-//
-// Output messages will have:
-// - subject: "OrderCreated" (from type name)
-// - type: "event" (from MessageType middleware)
-func MessageTypeName[T any]() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
-	typeName := typeNameOf[T]()
+// MessageType returns middleware that sets the type attribute on output messages
+// based on the concrete type of each message's data payload.
+func MessageType() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
 	return NewMessageMiddleware(
 		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
 			results, err := next()
@@ -39,10 +20,16 @@ func MessageTypeName[T any]() gopipe.MiddlewareFunc[*message.Message, *message.M
 			}
 
 			for _, outMsg := range results {
+				// Determine type from message data
+				typeName := determineType(outMsg.Data)
+				if typeName == "" {
+					continue
+				}
+
 				if outMsg.Attributes == nil {
 					outMsg.Attributes = make(message.Attributes)
 				}
-				outMsg.Attributes[message.AttrSubject] = typeName
+				outMsg.Attributes[message.AttrType] = typeName
 			}
 
 			return results, nil
@@ -50,15 +37,39 @@ func MessageTypeName[T any]() gopipe.MiddlewareFunc[*message.Message, *message.M
 	)
 }
 
-// typeNameOf returns the type name of T, stripping pointer indirection.
-func typeNameOf[T any]() string {
-	var zero T
-	t := reflect.TypeOf(zero)
-	if t == nil {
-		return ""
+// determineType extracts the type name from the JSON data payload.
+func determineType(data []byte) string {
+	var v any
+	if err := json.Unmarshal(data, &v); err == nil {
+		t := reflect.TypeOf(v)
+		if t == nil {
+			return ""
+		}
+		if t.Kind() == reflect.Ptr {
+			t = t.Elem()
+		}
+
+		// Return named types if available
+		if name := t.Name(); name != "" {
+			return name
+		}
+
+		// For unnamed types, return the kind
+		switch t.Kind() {
+		case reflect.Map:
+			return "map"
+		case reflect.Slice:
+			return "slice"
+		case reflect.String:
+			return "string"
+		case reflect.Bool:
+			return "bool"
+		case reflect.Float64, reflect.Float32:
+			return "number"
+		default:
+			return t.Kind().String()
+		}
 	}
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-	return t.Name()
+
+	return ""
 }

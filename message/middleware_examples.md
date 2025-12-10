@@ -258,9 +258,8 @@ router := message.NewRouter(
     message.RouterConfig{
         Middleware: []gopipe.MiddlewareFunc[*message.Message, *message.Message]{
             middleware.MessageCorrelation(),         // Propagate correlation IDs
-            middleware.MessageType("event"),          // Set type on output messages
+            middleware.MessageType(),                 // Set type from message data
             middleware.MessageSubject("OrderEvents"), // Set subject on output messages
-            middleware.MessageTypeName[OrderCreated](), // Set subject from type name
         },
     },
     handlers...,
@@ -269,10 +268,9 @@ router := message.NewRouter(
 
 ### Available Middleware Functions
 
-- **`MessageCorrelation()`**: Propagates correlation ID from input to output messages. Use this for message-level correlation tracking. For type-level property transformation, use AttributeProviders in the marshaler.
-- **`MessageType(msgType string)`**: Sets type property on all output messages
+- **`MessageCorrelation()`**: Propagates correlation ID from input to output messages
+- **`MessageType()`**: Sets type based on each message's data payload type
 - **`MessageSubject(subject string)`**: Sets subject property on all output messages
-- **`MessageTypeName[T]()`**: Sets subject based on T's reflected type name (combine with MessageType for both)
 
 ### Correlation ID Propagation
 
