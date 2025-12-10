@@ -206,12 +206,15 @@ func receivePollingMode(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.W
 }
 
 func ioBrokerExample() {
-	// IO broker writes messages as JSON Lines (JSONL)
+	// IO broker writes messages as CloudEvents JSON Lines (JSONL)
+	// Each line is a complete CloudEvent per CloudEvents JSON format spec
 	// This can be used for file-based persistence or log streaming
 
 	// Write messages to a buffer (could be a file)
 	var buf bytes.Buffer
-	sender := pubsub.NewIOSender(&buf, pubsub.IOConfig{})
+	sender := pubsub.NewIOSender(&buf, pubsub.IOConfig{
+		Source: "gopipe://examples/broker", // CloudEvents source identifier
+	})
 
 	ctx := context.Background()
 
@@ -225,7 +228,7 @@ func ioBrokerExample() {
 	msg3 := message.New([]byte(`"Connection failed"`), message.Attributes{"id": "log-003", "level": "error"})
 	sender.Send(ctx, "logs/error", []*message.Message{msg3})
 
-	fmt.Println("  Written JSONL:")
+	fmt.Println("  Written CloudEvents JSONL:")
 	fmt.Printf("  %s", buf.String())
 
 	// Read messages back (simulating reading from a file)
@@ -251,10 +254,12 @@ func ioBrokerExample() {
 
 func ioBrokerPipeExample() {
 	// Use pipes for inter-process communication (IPC)
-	// Messages are streamed as JSON between reader and writer
+	// Messages are streamed as CloudEvents JSONL between reader and writer
 
 	pr, pw := io.Pipe()
-	b := pubsub.NewIOBroker(pr, pw, pubsub.IOConfig{})
+	b := pubsub.NewIOBroker(pr, pw, pubsub.IOConfig{
+		Source: "gopipe://ipc/sender", // CloudEvents source identifier
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -290,27 +295,37 @@ func ioBrokerPipeExample() {
 }
 
 func httpBrokerExample() {
-	// HTTP broker uses POST requests with:
-	// - X-Gopipe-Topic header for the topic
-	// - X-Gopipe-Prop-* headers for message properties
-	// - Request body contains the payload ([]byte)
+	// HTTP broker uses CloudEvents format with POST requests:
+	// - Binary mode (default): ce- prefixed headers for CloudEvents attributes
+	// - Structured mode: application/cloudevents+json Content-Type
+	// - Batch mode: application/cloudevents-batch+json Content-Type
 	// Returns 201 Created on success (or 200 if WaitForAck is true)
 
 	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 100)
 	defer receiver.Close()
 
-	// The receiver implements http.Handler, so you can use it directly
-	fmt.Println("  HTTP Receiver created and ready to accept webhook POSTs")
-	fmt.Println("  Example curl command:")
+	// The receiver implements http.Handler and auto-detects CloudEvents mode
+	fmt.Println("  HTTP Receiver created and ready to accept CloudEvents webhook POSTs")
+	fmt.Println("  Example curl commands:")
+	fmt.Println()
+	fmt.Println("  Binary mode (ce- headers):")
 	fmt.Println(`    curl -X POST http://localhost:8080/webhook \`)
-	fmt.Println(`      -H "X-Gopipe-Topic: webhooks/github" \`)
-	fmt.Println(`      -H "X-Gopipe-Prop-event: push" \`)
-	fmt.Println(`      -H "X-Gopipe-Prop-repo: gopipe" \`)
+	fmt.Println(`      -H "Ce-Id: evt-001" \`)
+	fmt.Println(`      -H "Ce-Source: github.com/fxsml/gopipe" \`)
+	fmt.Println(`      -H "Ce-Type: github.push" \`)
+	fmt.Println(`      -H "Ce-Specversion: 1.0" \`)
+	fmt.Println(`      -H "Ce-Topic: webhooks/github" \`)
+	fmt.Println(`      -H "Content-Type: application/json" \`)
 	fmt.Println(`      -d '{"commits": 3, "branch": "main"}'`)
+	fmt.Println()
+	fmt.Println("  Structured mode (CloudEvents JSON):")
+	fmt.Println(`    curl -X POST http://localhost:8080/webhook \`)
+	fmt.Println(`      -H "Content-Type: application/cloudevents+json" \`)
+	fmt.Println(`      -d '{"id":"evt-002","source":"github.com","specversion":"1.0","type":"github.push","topic":"webhooks/github","data":{"commits":3}}'`)
 	fmt.Println()
 
 	// Use Handler() to get http.Handler (for http.ListenAndServe)
 	_ = receiver.Handler()
 
-	fmt.Println("  HTTP broker is fully functional with []byte payloads")
+	fmt.Println("  HTTP broker supports all CloudEvents content modes")
 }
