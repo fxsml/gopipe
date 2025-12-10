@@ -1,4 +1,4 @@
-# ADR 0003: Remove Noisy Properties
+# ADR 0003: Remove Noisy Attributes
 
 **Date:** 2024-11-01
 **Status:** Implemented
@@ -12,24 +12,24 @@ Message had many property constants and accessors that added noise without clear
 - `PropPartitionOffset` / `PartitionOffset()`
 - `PropTTL` / `TTL()`
 
-These can be added by users as custom properties if needed.
+These can be added by users as custom attributes if needed.
 
 ## Decision
-Remove the above properties and their accessors.
+Remove the above attributes and their accessors.
 
-Keep only essential properties:
-- `PropID` - unique identifier
-- `PropCorrelationID` - request tracing
+Keep only essential attributes:
+- `AttrID` - unique identifier
+- `AttrCorrelationID` - request tracing
 - `PropCreatedAt` - timestamp
 - `PropDeadline` - processing deadline
-- `PropSubject` - topic/subject
-- `PropContentType` - payload format
+- `AttrSubject` - topic/subject
+- `PropContentType` - data format
 
 ## Consequences
 
 **Breaking Changes:**
 - Removed 6 property constants and accessors
-- Users needing these must add as custom properties
+- Users needing these must add as custom attributes
 
 **Benefits:**
 - Simpler, focused API
@@ -37,5 +37,5 @@ Keep only essential properties:
 - Easier to understand core functionality
 
 **Drawbacks:**
-- Users need slightly more code for removed properties
-- Migration effort for existing code using these properties
+- Users need slightly more code for removed attributes
+- Migration effort for existing code using these attributes

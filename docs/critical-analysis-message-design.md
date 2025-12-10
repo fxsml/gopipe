@@ -35,14 +35,14 @@ This document provides a critical analysis of gopipe's current message design an
 // Non-generic handler (pub/sub pattern)
 type Handler interface {
     Handle(ctx context.Context, msg *Message) ([]*Message, error)
-    Match(prop Properties) bool
+    Match(prop Attributes) bool
 }
 
 // Generic handler helper (type-safe)
 func NewJSONHandler[In, Out any](
-    handle func(ctx context.Context, payload In) ([]Out, error),
-    match func(prop Properties) bool,
-    props func(prop Properties) Properties,
+    handle func(ctx context.Context, data In) ([]Out, error),
+    match func(prop Attributes) bool,
+    props func(prop Attributes) Attributes,
 ) Handler
 ```
 
@@ -63,7 +63,7 @@ func NewJSONHandler[In, Out any](
 - ✅ **No type parameters in signatures**: Easier to store in slices, pass around
 
 **Cons:**
-- ⚠️ **Manual marshalling**: User code must unmarshal payloads
+- ⚠️ **Manual marshalling**: User code must unmarshal datas
 - ⚠️ **No compile-time type safety**: Unmarsh al failures at runtime
 - ⚠️ **Boilerplate**: Repeated unmarshal/marshal code
 
@@ -85,8 +85,8 @@ handler := message.NewJSONHandler[CreateOrder, OrderCreated](
 ```go
 // Hypothetical generic handler
 type Handler[In, Out any] interface {
-    Handle(ctx context.Context, payload In) ([]Out, error)
-    Match(prop Properties) bool
+    Handle(ctx context.Context, data In) ([]Out, error)
+    Match(prop Attributes) bool
 }
 ```
 
@@ -97,7 +97,7 @@ type Handler[In, Out any] interface {
 **Cons:**
 - ❌ **Interface generics complexity**: `[]Handler[?, ?]` impossible
 - ❌ **Broker incompatibility**: Can't connect to `Sender`/`Receiver` easily
-- ❌ **Dynamic routing impossible**: Can't inspect payload without unmarshalling
+- ❌ **Dynamic routing impossible**: Can't inspect data without unmarshalling
 - ❌ **Storage limitations**: Can't store different `Handler[A,B]` and `Handler[C,D]` in same slice
 - ❌ **Breaking change**: Would require redesigning Router
 - ❌ **Type parameter explosion**: Every consumer needs type params
@@ -122,10 +122,10 @@ router := message.NewRouter(
 ```go
 func NewJSONHandler[In, Out any](...) Handler {
     h := func(ctx context.Context, msg *Message) ([]*Message, error) {
-        var payload In
-        json.Unmarshal(msg.Payload, &payload)  // ← In handler
+        var data In
+        json.Unmarshal(msg.Data, &data)  // ← In handler
 
-        out, err := handle(ctx, payload)
+        out, err := handle(ctx, data)
 
         json.Marshal(out)  // ← In handler
         return msgs, nil
@@ -150,7 +150,7 @@ func NewJSONHandler[In, Out any](...) Handler {
 ```go
 // Hypothetical
 type TypedSender[T any] interface {
-    Send(ctx context.Context, topic string, payloads []T) error
+    Send(ctx context.Context, topic string, datas []T) error
 }
 
 type TypedReceiver[T any] interface {
@@ -192,7 +192,7 @@ type TypedReceiver[T any] interface {
 ```
 message/
 ├── message.go           ← TypedMessage[T], Message
-├── properties.go        ← Properties helpers
+├── attributes.go        ← Attributes helpers
 ├── router.go            ← Router, Handler, NewHandler, NewJSONHandler
 ├── pubsub.go            ← Sender, Receiver, Broker, Publisher, Subscriber
 └── broker/
@@ -210,7 +210,7 @@ message/
 
 2. **Package organization**: `pubsub.go` in `message/` feels misplaced
    - Interfaces like `Sender`, `Receiver`, `Broker` are pub/sub-specific
-   - They're not core message concepts (like `Message`, `Properties`)
+   - They're not core message concepts (like `Message`, `Attributes`)
 
 3. **Import paths**: Users must import both `message` and `message/broker`
    ```go
@@ -240,7 +240,7 @@ pubsub/
 
 message/
 ├── message.go           ← TypedMessage[T], Message (unchanged)
-├── properties.go        ← Properties helpers (unchanged)
+├── attributes.go        ← Attributes helpers (unchanged)
 └── router.go            ← Router, Handler (unchanged)
 ```
 
@@ -363,15 +363,15 @@ b := memory.NewBroker(cfg)
 - `dataschema` - Schema URI
 - `subject` - Event subject (for filtering)
 - `time` - RFC 3339 timestamp
-- `data` - Event payload
+- `data` - Event data
 
 ### Current gopipe Message vs CloudEvents
 
 ```go
 // Current gopipe Message
 type Message struct {
-    Payload    []byte                 // ← data
-    Properties map[string]any         // ← attributes?
+    Data    []byte                 // ← data
+    Attributes map[string]any         // ← attributes?
 }
 
 // CloudEvents
@@ -382,7 +382,7 @@ type Message struct {
     "type": "...",                     // Required
     "datacontenttype": "...",          // Optional
     "time": "...",                     // Optional
-    "data": {...}                      // Payload
+    "data": {...}                      // Data
 }
 ```
 
@@ -398,7 +398,7 @@ type Message struct {
     Type        string    // Required
     ContentType string    // Optional
     Time        time.Time // Optional
-    Data        []byte    // Payload
+    Data        []byte    // Data
     Extensions  map[string]any
 }
 ```
@@ -415,11 +415,11 @@ type Message struct {
 
 **Verdict:** ❌ **Reject** - Too opinionated, breaks existing code
 
-#### Option B: CloudEvents as Properties Convention (✅ Recommended)
+#### Option B: CloudEvents as Attributes Convention (✅ Recommended)
 
 ```go
-// Use existing Properties with CloudEvents keys
-msg := message.New(payload, message.Properties{
+// Use existing Attributes with CloudEvents keys
+msg := message.New(data, message.Attributes{
     "id":          "uuid-123",
     "source":      "orders-service",
     "specversion": "1.0",
@@ -429,15 +429,15 @@ msg := message.New(payload, message.Properties{
 ```
 
 **Pros:**
-- ✅ **No breaking changes**: Uses existing `Properties`
+- ✅ **No breaking changes**: Uses existing `Attributes`
 - ✅ **Optional**: Users opt-in to CloudEvents
-- ✅ **Flexible**: Can mix CloudEvents and custom properties
+- ✅ **Flexible**: Can mix CloudEvents and custom attributes
 - ✅ **Simple**: No new types
 
 **Cons:**
-- ⚠️ **No type safety**: Properties are `map[string]any`
+- ⚠️ **No type safety**: Attributes are `map[string]any`
 - ⚠️ **No validation**: Can create invalid CloudEvents
-- ⚠️ **No discovery**: Hard to know which properties are CloudEvents
+- ⚠️ **No discovery**: Hard to know which attributes are CloudEvents
 
 #### Option C: CloudEvents Compatibility Layer (✅ Recommended)
 
@@ -478,7 +478,7 @@ func NewEvent(
     data []byte,
     opts ...Option,
 ) *Event {
-    props := message.Properties{
+    props := message.Attributes{
         AttrID:          id,
         AttrSource:      source,
         AttrSpecVersion: "1.0",
@@ -491,22 +491,22 @@ func NewEvent(
 }
 
 // Option configures optional CloudEvents attributes
-type Option func(props message.Properties)
+type Option func(props message.Attributes)
 
 func WithContentType(ct string) Option {
-    return func(props message.Properties) {
+    return func(props message.Attributes) {
         props[AttrDataContentType] = ct
     }
 }
 
 func WithSubject(subject string) Option {
-    return func(props message.Properties) {
+    return func(props message.Attributes) {
         props[AttrSubject] = subject
     }
 }
 
 func WithTime(t time.Time) Option {
-    return func(props message.Properties) {
+    return func(props message.Attributes) {
         props[AttrTime] = t.Format(time.RFC3339)
     }
 }
@@ -530,37 +530,37 @@ func (e *Event) Validate() error {
 
 // Getters for CloudEvents attributes
 func (e *Event) ID() string {
-    v, _ := e.Properties[AttrID].(string)
+    v, _ := e.Attributes[AttrID].(string)
     return v
 }
 
 func (e *Event) Source() string {
-    v, _ := e.Properties[AttrSource].(string)
+    v, _ := e.Attributes[AttrSource].(string)
     return v
 }
 
 func (e *Event) SpecVersion() string {
-    v, _ := e.Properties[AttrSpecVersion].(string)
+    v, _ := e.Attributes[AttrSpecVersion].(string)
     return v
 }
 
 func (e *Event) Type() string {
-    v, _ := e.Properties[AttrType].(string)
+    v, _ := e.Attributes[AttrType].(string)
     return v
 }
 
 func (e *Event) ContentType() string {
-    v, _ := e.Properties[AttrDataContentType].(string)
+    v, _ := e.Attributes[AttrDataContentType].(string)
     return v
 }
 
 func (e *Event) Subject() string {
-    v, _ := e.Properties[AttrSubject].(string)
+    v, _ := e.Attributes[AttrSubject].(string)
     return v
 }
 
 func (e *Event) Time() time.Time {
-    v, _ := e.Properties[AttrTime].(string)
+    v, _ := e.Attributes[AttrTime].(string)
     t, _ := time.Parse(time.RFC3339, v)
     return t
 }
@@ -585,7 +585,7 @@ event := cloudevents.NewEvent(
     "order-123",
     "orders-service",
     "com.example.order.created",
-    payload,
+    data,
     cloudevents.WithContentType("application/json"),
     cloudevents.WithSubject("order-123"),
     cloudevents.WithTime(time.Now()),

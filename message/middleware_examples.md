@@ -92,7 +92,7 @@ func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Messag
 func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
     return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
-            subject, _ := msg.Properties.Subject()
+            subject, _ := msg.Attributes.Subject()
             log.Printf("[INFO] Processing: subject=%s", subject)
 
             start := time.Now()
@@ -117,7 +117,7 @@ func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Messag
 func MetricsMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
     return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
-            subject, _ := msg.Properties.Subject()
+            subject, _ := msg.Attributes.Subject()
 
             start := time.Now()
             result, err := next()
@@ -144,15 +144,15 @@ func MetricsMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Messag
 func ValidationMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
     return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
-            // Validate required properties
-            if _, ok := msg.Properties.Subject(); !ok {
+            // Validate required attributes
+            if _, ok := msg.Attributes.Subject(); !ok {
                 err := fmt.Errorf("validation error: missing subject")
                 msg.Nack(err)
                 return nil, err
             }
 
-            if len(msg.Payload) == 0 {
-                err := fmt.Errorf("validation error: empty payload")
+            if len(msg.Data) == 0 {
+                err := fmt.Errorf("validation error: empty data")
                 msg.Nack(err)
                 return nil, err
             }
@@ -170,7 +170,7 @@ func AuthMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] 
     return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
             // Check authentication token
-            token, ok := msg.Properties["auth-token"].(string)
+            token, ok := msg.Attributes["auth-token"].(string)
             if !ok || !isValidToken(token) {
                 err := fmt.Errorf("unauthorized: invalid or missing auth token")
                 msg.Nack(err)
@@ -190,8 +190,8 @@ func CorrelationIDMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.
     return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
             // Ensure correlation ID exists
-            if _, ok := msg.Properties.CorrelationID(); !ok {
-                msg.Properties[message.PropCorrelationID] = uuid.New().String()
+            if _, ok := msg.Attributes.CorrelationID(); !ok {
+                msg.Attributes[message.AttrCorrelationID] = uuid.New().String()
             }
 
             return next()
@@ -206,13 +206,13 @@ func CorrelationIDMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.
 func TracingMiddleware(tracer opentracing.Tracer) gopipe.MiddlewareFunc[*message.Message, *message.Message] {
     return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
-            subject, _ := msg.Properties.Subject()
+            subject, _ := msg.Attributes.Subject()
 
             span, ctx := opentracing.StartSpanFromContext(ctx, "process-message")
             defer span.Finish()
 
             span.SetTag("subject", subject)
-            if corrID, ok := msg.Properties.CorrelationID(); ok {
+            if corrID, ok := msg.Attributes.CorrelationID(); ok {
                 span.SetTag("correlation-id", corrID)
             }
 
@@ -236,7 +236,7 @@ func ShortCircuitMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.M
     return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
             // Skip processing for certain message types
-            if msg.Properties["bypass"] == "yes" {
+            if msg.Attributes["bypass"] == "yes" {
                 msg.Ack()
                 return nil, nil
             }
@@ -269,7 +269,7 @@ router := message.NewRouter(
 
 ### Available Middleware Functions
 
-- **`MessageCorrelation()`**: Propagates correlation ID from input to output messages. Use this for message-level correlation tracking. For type-level property transformation, use PropertyProviders in the marshaler.
+- **`MessageCorrelation()`**: Propagates correlation ID from input to output messages. Use this for message-level correlation tracking. For type-level property transformation, use AttributeProviders in the marshaler.
 - **`MessageType(msgType string)`**: Sets type property on all output messages
 - **`MessageSubject(subject string)`**: Sets subject property on all output messages
 - **`MessageTypeName[T]()`**: Sets subject based on T's reflected type name (combine with MessageType for both)
@@ -291,7 +291,7 @@ router := message.NewRouter(
 )
 ```
 
-Note: Correlation ID propagation is handled at the message level by middleware, not by PropertyProviders in the marshaler. PropertyProviders work at the type level for extracting properties from the message payload.
+Note: Correlation ID propagation is handled at the message level by middleware, not by AttributeProviders in the marshaler. AttributeProviders work at the type level for extracting attributes from the message data.
 
 ## Complete Example
 
@@ -313,7 +313,7 @@ import (
 func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
     return middleware.NewMessageMiddleware(
         func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
-            subject, _ := msg.Properties.Subject()
+            subject, _ := msg.Attributes.Subject()
             log.Printf("[INFO] Processing: %s", subject)
 
             start := time.Now()

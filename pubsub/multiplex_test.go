@@ -23,7 +23,7 @@ func TestMultiplexSender_Basic(t *testing.T) {
 	multiplex := pubsub.NewMultiplexSender(selector, fallbackSender)
 
 	ctx := context.Background()
-	msg := message.New([]byte("test"), message.Properties{})
+	msg := message.New([]byte("test"), message.Attributes{})
 
 	tests := []struct {
 		topic          string
@@ -82,7 +82,7 @@ func TestMultiplexSender_ErrorPropagation(t *testing.T) {
 	multiplex := pubsub.NewMultiplexSender(selector, fallbackSender)
 
 	ctx := context.Background()
-	msg := message.New([]byte("test"), message.Properties{})
+	msg := message.New([]byte("test"), message.Attributes{})
 
 	err := multiplex.Send(ctx, "fail/topic", []*message.Message{msg})
 	if err != expectedErr {
@@ -116,7 +116,7 @@ func TestMultiplexReceiver_Basic(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.topic, func(t *testing.T) {
 			// Add message to expected receiver
-			expectedMsg := message.New([]byte("test-msg"), message.Properties{})
+			expectedMsg := message.New([]byte("test-msg"), message.Attributes{})
 			tt.expectedReceiver.addMessages(tt.topic, expectedMsg)
 
 			msgs, err := multiplex.Receive(ctx, tt.topic)
@@ -177,7 +177,7 @@ func TestTopicExactMatch(t *testing.T) {
 			multiplex := pubsub.NewMultiplexSender(selector, fallback)
 
 			ctx := context.Background()
-			msg := message.New([]byte("test"), message.Properties{})
+			msg := message.New([]byte("test"), message.Attributes{})
 
 			err := multiplex.Send(ctx, tt.topic, []*message.Message{msg})
 			if err != nil {
@@ -210,7 +210,7 @@ func TestExactMatch_FirstMatchWins(t *testing.T) {
 	multiplex := pubsub.NewMultiplexSender(selector, fallback)
 
 	ctx := context.Background()
-	msg := message.New([]byte("test"), message.Properties{})
+	msg := message.New([]byte("test"), message.Attributes{})
 
 	err := multiplex.Send(ctx, "orders/created", []*message.Message{msg})
 	if err != nil {
@@ -249,7 +249,7 @@ func TestPrefixSelector(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	msg := message.New([]byte("test"), message.Properties{})
+	msg := message.New([]byte("test"), message.Attributes{})
 
 	for _, tt := range tests {
 		t.Run(tt.topic, func(t *testing.T) {
@@ -298,7 +298,7 @@ func TestChainedSelectors(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	msg := message.New([]byte("test"), message.Properties{})
+	msg := message.New([]byte("test"), message.Attributes{})
 
 	for _, tt := range tests {
 		t.Run(tt.topic, func(t *testing.T) {
@@ -342,7 +342,7 @@ func TestChainedSelectors_FirstMatchWins(t *testing.T) {
 	multiplex := pubsub.NewMultiplexSender(selector, fallback)
 
 	ctx := context.Background()
-	msg := message.New([]byte("test"), message.Properties{})
+	msg := message.New([]byte("test"), message.Attributes{})
 
 	err := multiplex.Send(ctx, "internal/cache", []*message.Message{msg})
 	if err != nil {
@@ -385,11 +385,11 @@ func TestIntegration_WithPublisher(t *testing.T) {
 	done := publisher.Publish(ctx, msgs)
 
 	// Send messages with different topics
-	msgs <- message.New([]byte("internal-1"), message.Properties{
-		message.PropTopic: "internal/cache",
+	msgs <- message.New([]byte("internal-1"), message.Attributes{
+		message.AttrTopic: "internal/cache",
 	})
-	msgs <- message.New([]byte("external-1"), message.Properties{
-		message.PropTopic: "external/api",
+	msgs <- message.New([]byte("external-1"), message.Attributes{
+		message.AttrTopic: "external/api",
 	})
 
 	close(msgs)
@@ -412,10 +412,10 @@ func TestIntegration_WithSubscriber(t *testing.T) {
 
 	// Send messages to brokers
 	memoryBroker.Send(ctx, "internal/events", []*message.Message{
-		message.New([]byte("internal-msg"), message.Properties{}),
+		message.New([]byte("internal-msg"), message.Attributes{}),
 	})
 	externalBroker.Send(ctx, "external/api", []*message.Message{
-		message.New([]byte("external-msg"), message.Properties{}),
+		message.New([]byte("external-msg"), message.Attributes{}),
 	})
 
 	// Read from subscriptions with timeout

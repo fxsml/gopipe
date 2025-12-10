@@ -95,9 +95,9 @@ func TestPublisher_Basic(t *testing.T) {
 	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
-		msgs <- message.New([]byte("msg1"), message.Properties{message.PropTopic: "topic-a"})
-		msgs <- message.New([]byte("msg2"), message.Properties{message.PropTopic: "topic-a"})
-		msgs <- message.New([]byte("msg3"), message.Properties{message.PropTopic: "topic-b"})
+		msgs <- message.New([]byte("msg1"), message.Attributes{message.AttrTopic: "topic-a"})
+		msgs <- message.New([]byte("msg2"), message.Attributes{message.AttrTopic: "topic-a"})
+		msgs <- message.New([]byte("msg3"), message.Attributes{message.AttrTopic: "topic-b"})
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -147,7 +147,7 @@ func TestPublisher_Batching(t *testing.T) {
 	go func() {
 		defer close(msgs)
 		for i := 0; i < 10; i++ {
-			msgs <- message.New([]byte("msg"), message.Properties{message.PropTopic: "topic"})
+			msgs <- message.New([]byte("msg"), message.Attributes{message.AttrTopic: "topic"})
 		}
 	}()
 
@@ -183,7 +183,7 @@ func TestPublisher_ErrorHandling(t *testing.T) {
 	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
-		msgs <- message.New([]byte("msg"), message.Properties{message.PropTopic: "topic"})
+		msgs <- message.New([]byte("msg"), message.Attributes{message.AttrTopic: "topic"})
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -219,7 +219,7 @@ func TestPublisher_Concurrency(t *testing.T) {
 	go func() {
 		defer close(msgs)
 		for i := 0; i < 10; i++ {
-			msgs <- message.New([]byte("msg"), message.Properties{message.PropTopic: "topic-a"})
+			msgs <- message.New([]byte("msg"), message.Attributes{message.AttrTopic: "topic-a"})
 		}
 	}()
 
@@ -361,7 +361,7 @@ func TestPublisher_WithRecover(t *testing.T) {
 	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
-		msgs <- message.New([]byte("msg"), message.Properties{message.PropTopic: "topic"})
+		msgs <- message.New([]byte("msg"), message.Attributes{message.AttrTopic: "topic"})
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -436,7 +436,7 @@ func TestSubscriber_MultipleTopics(t *testing.T) {
 
 	var received []string
 	for msg := range msgs {
-		received = append(received, string(msg.Payload))
+		received = append(received, string(msg.Data))
 		if len(received) == 2 {
 			cancel()
 		}
@@ -498,17 +498,17 @@ func TestRouteBySubject(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		properties message.Properties
+		properties message.Attributes
 		expected   string
 	}{
 		{
 			name:       "with subject",
-			properties: message.Properties{message.PropSubject: "orders"},
+			properties: message.Attributes{message.AttrSubject: "orders"},
 			expected:   "orders",
 		},
 		{
 			name:       "without subject",
-			properties: message.Properties{},
+			properties: message.Attributes{},
 			expected:   "",
 		},
 	}
@@ -528,22 +528,22 @@ func TestRouteByProperty(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		properties message.Properties
+		properties message.Attributes
 		expected   string
 	}{
 		{
 			name:       "with property",
-			properties: message.Properties{"tenant-id": "tenant-123"},
+			properties: message.Attributes{"tenant-id": "tenant-123"},
 			expected:   "tenant-123",
 		},
 		{
 			name:       "without property",
-			properties: message.Properties{},
+			properties: message.Attributes{},
 			expected:   "",
 		},
 		{
 			name:       "with non-string property",
-			properties: message.Properties{"tenant-id": 123},
+			properties: message.Attributes{"tenant-id": 123},
 			expected:   "",
 		},
 	}
@@ -563,17 +563,17 @@ func TestRouteStatic(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		properties message.Properties
+		properties message.Attributes
 		expected   string
 	}{
 		{
 			name:       "empty properties",
-			properties: message.Properties{},
+			properties: message.Attributes{},
 			expected:   "fixed-topic",
 		},
 		{
 			name:       "with properties",
-			properties: message.Properties{"key": "value"},
+			properties: message.Attributes{"key": "value"},
 			expected:   "fixed-topic",
 		},
 	}
@@ -593,17 +593,17 @@ func TestRouteByFormat(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		properties message.Properties
+		properties message.Attributes
 		expected   string
 	}{
 		{
 			name:       "with property",
-			properties: message.Properties{"tenant-id": "123"},
+			properties: message.Attributes{"tenant-id": "123"},
 			expected:   "tenant-123-events",
 		},
 		{
 			name:       "without property",
-			properties: message.Properties{},
+			properties: message.Attributes{},
 			expected:   "tenant-%!s(<nil>)-events",
 		},
 	}
@@ -621,7 +621,7 @@ func TestRouteByFormat(t *testing.T) {
 func TestRouteByFormat_MultipleProperties(t *testing.T) {
 	route := pubsub.RouteByFormat("env-%s-tenant-%s-events", "environment", "tenant-id")
 
-	result := route(message.Properties{
+	result := route(message.Attributes{
 		"environment": "prod",
 		"tenant-id":   "abc",
 	})

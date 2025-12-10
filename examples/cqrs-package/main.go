@@ -141,13 +141,13 @@ type OrderSagaCoordinator struct {
 }
 
 func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-	subject, _ := msg.Properties.Subject()
-	corrID, _ := msg.Properties.CorrelationID()
+	subject, _ := msg.Attributes.Subject()
+	corrID, _ := msg.Attributes.CorrelationID()
 
 	switch subject {
 	case "OrderCreated":
 		var evt OrderCreated
-		s.marshaler.Unmarshal(msg.Payload, &evt)
+		s.marshaler.Unmarshal(msg.Data, &evt)
 
 		log.Printf("🔄 Saga: OrderCreated → triggering ChargePayment + ReserveInventory")
 
@@ -166,14 +166,14 @@ func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message
 
 	case "PaymentCharged":
 		var evt PaymentCharged
-		s.marshaler.Unmarshal(msg.Payload, &evt)
+		s.marshaler.Unmarshal(msg.Data, &evt)
 
 		log.Printf("🔄 Saga: PaymentCharged → waiting for InventoryReserved...")
 		return nil, nil
 
 	case "InventoryReserved":
 		var evt InventoryReserved
-		s.marshaler.Unmarshal(msg.Payload, &evt)
+		s.marshaler.Unmarshal(msg.Data, &evt)
 
 		log.Printf("🔄 Saga: InventoryReserved → triggering ShipOrder")
 
@@ -281,7 +281,7 @@ func main() {
 	sagaCoordinator := &OrderSagaCoordinator{marshaler: marshaler}
 	sagaHandler := cqrs.NewHandler(
 		sagaCoordinator.OnEvent,
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			msgType, _ := prop["type"].(string)
 			return msgType == "event" // Reacts to ALL events
 		},
@@ -364,8 +364,8 @@ func main() {
 			CustomerID: "customer-456",
 			Amount:     350,
 		},
-		message.Properties{
-			message.PropCorrelationID: "corr-123",
+		message.Attributes{
+			message.AttrCorrelationID: "corr-123",
 		},
 	)
 

@@ -1,13 +1,13 @@
-# ADR 0002: Remove Properties Thread-Safety
+# ADR 0002: Remove Attributes Thread-Safety
 
 **Date:** 2024-11-01
 **Status:** Implemented
 
 ## Context
-Properties was a struct with `sync.RWMutex` and methods `Get/Set/Delete/Range`. This added complexity and overhead for most use cases where messages are not shared across goroutines.
+Attributes was a struct with `sync.RWMutex` and methods `Get/Set/Delete/Range`. This added complexity and overhead for most use cases where messages are not shared across goroutines.
 
 ## Decision
-Change Properties from `*Properties` struct to plain `map[string]any`.
+Change Attributes from `*Attributes` struct to plain `map[string]any`.
 
 Remove all methods: `Get`, `Set`, `Delete`, `Range`, accessor methods.
 
@@ -21,11 +21,11 @@ Add simple pass-through functions with `Props` suffix:
 ## Consequences
 
 **Breaking Changes:**
-- `msg.Properties.Get("key")` → `msg.Properties["key"]`
-- `msg.Properties.Set("key", val)` → `msg.Properties["key"] = val`
-- `msg.Properties.Delete("key")` → `delete(msg.Properties, "key")`
-- `msg.Properties.Range(fn)` → `for k, v := range msg.Properties { ... }`
-- `msg.ID()` → `IDProps(msg.Properties)`
+- `msg.Attributes.Get("key")` → `msg.Attributes["key"]`
+- `msg.Attributes.Set("key", val)` → `msg.Attributes["key"] = val`
+- `msg.Attributes.Delete("key")` → `delete(msg.Attributes, "key")`
+- `msg.Attributes.Range(fn)` → `for k, v := range msg.Attributes { ... }`
+- `msg.ID()` → `IDProps(msg.Attributes)`
 
 **Benefits:**
 - Zero overhead map access

@@ -197,7 +197,7 @@ type CreateOrderHandler struct {
 
 func (h *CreateOrderHandler) Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 	var cmd CreateOrderCommand
-	if err := json.Unmarshal(msg.Payload, &cmd); err != nil {
+	if err := json.Unmarshal(msg.Data, &cmd); err != nil {
 		return nil, fmt.Errorf("unmarshal CreateOrderCommand: %w", err)
 	}
 
@@ -232,18 +232,18 @@ func (h *CreateOrderHandler) Handle(ctx context.Context, msg *message.Message) (
 	}
 	payload, _ := json.Marshal(event)
 
-	eventMsg := message.New(payload, message.Properties{
-		message.PropSource:  "/orders/api",
-		message.PropType:    "OrderCreated",
-		message.PropSubject: "order/" + cmd.OrderID,
-		message.PropTopic:   "events/order/created",
+	eventMsg := message.New(payload, message.Attributes{
+		message.AttrSource:  "/orders/api",
+		message.AttrType:    "OrderCreated",
+		message.AttrSubject: "order/" + cmd.OrderID,
+		message.AttrTopic:   "events/order/created",
 	})
 
 	log.Printf("[HANDLER] Emitting OrderCreated event for %s", cmd.OrderID)
 	return []*message.Message{eventMsg}, nil
 }
 
-func (h *CreateOrderHandler) Match(props message.Properties) bool {
+func (h *CreateOrderHandler) Match(props message.Attributes) bool {
 	typ, _ := props.Type()
 	return typ == "CreateOrder"
 }
@@ -254,7 +254,7 @@ type ReserveInventoryHandler struct {
 
 func (h *ReserveInventoryHandler) Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 	var cmd ReserveInventoryCommand
-	if err := json.Unmarshal(msg.Payload, &cmd); err != nil {
+	if err := json.Unmarshal(msg.Data, &cmd); err != nil {
 		return nil, fmt.Errorf("unmarshal ReserveInventoryCommand: %w", err)
 	}
 
@@ -271,18 +271,18 @@ func (h *ReserveInventoryHandler) Handle(ctx context.Context, msg *message.Messa
 	}
 	payload, _ := json.Marshal(event)
 
-	eventMsg := message.New(payload, message.Properties{
-		message.PropSource:  "/inventory/api",
-		message.PropType:    "InventoryReserved",
-		message.PropSubject: "order/" + cmd.OrderID,
-		message.PropTopic:   "events/inventory/reserved",
+	eventMsg := message.New(payload, message.Attributes{
+		message.AttrSource:  "/inventory/api",
+		message.AttrType:    "InventoryReserved",
+		message.AttrSubject: "order/" + cmd.OrderID,
+		message.AttrTopic:   "events/inventory/reserved",
 	})
 
 	log.Printf("[HANDLER] Emitting InventoryReserved event for order %s", cmd.OrderID)
 	return []*message.Message{eventMsg}, nil
 }
 
-func (h *ReserveInventoryHandler) Match(props message.Properties) bool {
+func (h *ReserveInventoryHandler) Match(props message.Attributes) bool {
 	typ, _ := props.Type()
 	return typ == "ReserveInventory"
 }
@@ -294,7 +294,7 @@ type OrderCreatedHandler struct {
 
 func (h *OrderCreatedHandler) Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 	var event OrderCreatedEvent
-	if err := json.Unmarshal(msg.Payload, &event); err != nil {
+	if err := json.Unmarshal(msg.Data, &event); err != nil {
 		return nil, fmt.Errorf("unmarshal OrderCreatedEvent: %w", err)
 	}
 
@@ -307,18 +307,18 @@ func (h *OrderCreatedHandler) Handle(ctx context.Context, msg *message.Message) 
 	}
 	payload, _ := json.Marshal(cmd)
 
-	cmdMsg := message.New(payload, message.Properties{
-		message.PropSource:  "/orders/api",
-		message.PropType:    "ReserveInventory",
-		message.PropSubject: "order/" + event.OrderID,
-		message.PropTopic:   "internal/commands",
+	cmdMsg := message.New(payload, message.Attributes{
+		message.AttrSource:  "/orders/api",
+		message.AttrType:    "ReserveInventory",
+		message.AttrSubject: "order/" + event.OrderID,
+		message.AttrTopic:   "internal/commands",
 	})
 
 	log.Printf("[HANDLER] Emitting ReserveInventory command for order %s", event.OrderID)
 	return []*message.Message{cmdMsg}, nil
 }
 
-func (h *OrderCreatedHandler) Match(props message.Properties) bool {
+func (h *OrderCreatedHandler) Match(props message.Attributes) bool {
 	typ, _ := props.Type()
 	return typ == "OrderCreated"
 }
@@ -330,7 +330,7 @@ type InventoryReservedHandler struct {
 
 func (h *InventoryReservedHandler) Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 	var event InventoryReservedEvent
-	if err := json.Unmarshal(msg.Payload, &event); err != nil {
+	if err := json.Unmarshal(msg.Data, &event); err != nil {
 		return nil, fmt.Errorf("unmarshal InventoryReservedEvent: %w", err)
 	}
 
@@ -346,18 +346,18 @@ func (h *InventoryReservedHandler) Handle(ctx context.Context, msg *message.Mess
 	}
 	payload, _ := json.Marshal(confirmEvent)
 
-	eventMsg := message.New(payload, message.Properties{
-		message.PropSource:  "/orders/api",
-		message.PropType:    "OrderConfirmed",
-		message.PropSubject: "order/" + event.OrderID,
-		message.PropTopic:   "events/order/confirmed",
+	eventMsg := message.New(payload, message.Attributes{
+		message.AttrSource:  "/orders/api",
+		message.AttrType:    "OrderConfirmed",
+		message.AttrSubject: "order/" + event.OrderID,
+		message.AttrTopic:   "events/order/confirmed",
 	})
 
 	log.Printf("[HANDLER] Emitting OrderConfirmed event for order %s", event.OrderID)
 	return []*message.Message{eventMsg}, nil
 }
 
-func (h *InventoryReservedHandler) Match(props message.Properties) bool {
+func (h *InventoryReservedHandler) Match(props message.Attributes) bool {
 	typ, _ := props.Type()
 	return typ == "InventoryReserved"
 }
@@ -552,13 +552,13 @@ func main() {
 		if source == "" {
 			source = r.URL.Path // Use request path as source
 		}
-		props := message.Properties{
-			message.PropSource: source,
-			message.PropType:   msgType,
-			message.PropTopic:  topic,
+		props := message.Attributes{
+			message.AttrSource: source,
+			message.AttrType:   msgType,
+			message.AttrTopic:  topic,
 		}
 		if subject != "" {
-			props[message.PropSubject] = subject
+			props[message.AttrSubject] = subject
 		}
 		for key, values := range r.Header {
 			if strings.HasPrefix(key, "X-Gopipe-Prop-") && len(values) > 0 {
@@ -655,10 +655,10 @@ func main() {
 	go func() {
 		for msg := range routerOutput {
 			log.Printf("[PIPELINE] Router output: source=%s, type=%s, subject=%s, topic=%s",
-				msg.Properties[message.PropSource],
-				msg.Properties[message.PropType],
-				msg.Properties[message.PropSubject],
-				msg.Properties[message.PropTopic])
+				msg.Attributes[message.AttrSource],
+				msg.Attributes[message.AttrType],
+				msg.Attributes[message.AttrSubject],
+				msg.Attributes[message.AttrTopic])
 			pubInput <- msg
 		}
 		close(pubInput)

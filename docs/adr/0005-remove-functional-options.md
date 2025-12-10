@@ -13,22 +13,22 @@ Remove functional options and use simple constructors:
 
 ```go
 // Default constructor (no acknowledgment)
-func New[T any](payload T, props Properties) *TypedMessage[T]
+func New[T any](data T, props Attributes) *TypedMessage[T]
 
 // Constructor with acknowledgment callbacks
-func NewWithAcking[T any](payload T, props Properties, ack func(), nack func(error)) *TypedMessage[T]
+func NewWithAcking[T any](data T, props Attributes, ack func(), nack func(error)) *TypedMessage[T]
 
-// Properties type alias
-type Properties map[string]any
+// Attributes type alias
+type Attributes map[string]any
 ```
 
 ## Consequences
 
 **Positive:**
 - No type parameters on options
-- Properties visible at construction time
+- Attributes visible at construction time
 - Follows standard Go patterns
-- Properties can be built incrementally and reused
+- Attributes can be built incrementally and reused
 
 **Negative:**
 - Breaking change: all existing code must be updated

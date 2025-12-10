@@ -5,7 +5,7 @@
 
 ## Context
 
-gopipe serves two use cases: messaging/pub-sub (payloads are `[]byte`) and type-safe pipelines (compile-time safety). Using generic `Message[T]` for both created friction for pub/sub patterns with verbose type parameters.
+gopipe serves two use cases: messaging/pub-sub (datas are `[]byte`) and type-safe pipelines (compile-time safety). Using generic `Message[T]` for both created friction for pub/sub patterns with verbose type parameters.
 
 ## Decision
 
@@ -14,8 +14,8 @@ Introduce a dual-type system using a type alias:
 ```go
 // Generic typed message for type-safe pipelines
 type TypedMessage[T any] struct {
-    Payload    T
-    Properties map[string]any
+    Data    T
+    Attributes map[string]any
 }
 
 // Non-generic message alias for pub/sub
@@ -37,4 +37,4 @@ type Message = TypedMessage[[]byte]
 ## Links
 
 - ADR 0001: Public Message Fields
-- ADR 0002: Remove Properties Thread-Safety
+- ADR 0002: Remove Attributes Thread-Safety

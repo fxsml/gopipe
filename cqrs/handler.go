@@ -9,26 +9,26 @@ import (
 // Handler processes messages matching specific properties.
 type Handler interface {
 	Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error)
-	Match(prop message.Properties) bool
+	Match(prop message.Attributes) bool
 }
 
 type handler struct {
 	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error)
-	match  func(prop message.Properties) bool
+	match  func(prop message.Attributes) bool
 }
 
 func (h *handler) Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 	return h.handle(ctx, msg)
 }
 
-func (h *handler) Match(prop message.Properties) bool {
+func (h *handler) Match(prop message.Attributes) bool {
 	return h.match(prop)
 }
 
 // NewHandler creates a handler from message processing and matching functions.
 func NewHandler(
 	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error),
-	match func(prop message.Properties) bool,
+	match func(prop message.Attributes) bool,
 ) Handler {
 	return &handler{
 		handle: handle,
@@ -58,7 +58,7 @@ func NewHandler(
 //   - Nacks the input message on error
 //
 // The marshaler.Props() method provides property transformation, replacing the old
-// props parameter. Configure your marshaler with PropertyProviders:
+// props parameter. Configure your marshaler with AttributeProviders:
 //
 // Example:
 //
@@ -95,7 +95,7 @@ func NewCommandHandler[Cmd, Evt any](
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			// Unmarshal command
 			var cmd Cmd
-			if err := marshaler.Unmarshal(msg.Payload, &cmd); err != nil {
+			if err := marshaler.Unmarshal(msg.Data, &cmd); err != nil {
 				msg.Nack(err)
 				return nil, err
 			}
@@ -174,7 +174,7 @@ func NewEventHandler[Evt any](
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			// Unmarshal event
 			var evt Evt
-			if err := marshaler.Unmarshal(msg.Payload, &evt); err != nil {
+			if err := marshaler.Unmarshal(msg.Data, &evt); err != nil {
 				msg.Nack(err)
 				return nil, err
 			}

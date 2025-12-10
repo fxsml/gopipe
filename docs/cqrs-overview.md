@@ -335,8 +335,8 @@ func handleOrderCreated(ctx, evt) error {
 ✅ **Good:** Track end-to-end flows
 ```go
 cmd := cqrs.CreateCommand(marshaler, CreateOrder{...},
-    message.Properties{
-        message.PropCorrelationID: "corr-123",
+    message.Attributes{
+        message.AttrCorrelationID: "corr-123",
     },
 )
 ```

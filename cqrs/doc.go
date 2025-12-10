@@ -63,15 +63,15 @@
 //	}
 //
 //	func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-//	    subject, _ := msg.Properties.Subject()
+//	    subject, _ := msg.Attributes.Subject()
 //
 //	    switch subject {
 //	    case "OrderCreated":
 //	        var evt OrderCreated
-//	        s.marshaler.Unmarshal(msg.Payload, &evt)
+//	        s.marshaler.Unmarshal(msg.Data, &evt)
 //
 //	        // Workflow: OrderCreated → ChargePayment + ReserveInventory
-//	        corrID, _ := msg.Properties.CorrelationID()
+//	        corrID, _ := msg.Attributes.CorrelationID()
 //	        return CreateCommands(s.marshaler, corrID,
 //	            ChargePayment{OrderID: evt.ID, Amount: evt.Amount},
 //	            ReserveInventory{OrderID: evt.ID},
@@ -80,8 +80,8 @@
 //	    case "PaymentCharged":
 //	        // Workflow: PaymentCharged → ShipOrder
 //	        var evt PaymentCharged
-//	        s.marshaler.Unmarshal(msg.Payload, &evt)
-//	        corrID, _ := msg.Properties.CorrelationID()
+//	        s.marshaler.Unmarshal(msg.Data, &evt)
+//	        corrID, _ := msg.Attributes.CorrelationID()
 //	        return CreateCommands(s.marshaler, corrID,
 //	            ShipOrder{OrderID: evt.OrderID},
 //	        ), nil

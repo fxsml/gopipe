@@ -44,10 +44,10 @@ func TestNewCommandHandler_SetsPropType(t *testing.T) {
 		ID:   "test-123",
 		Name: "test command",
 	})
-	inputMsg := message.New(cmdPayload, message.Properties{
-		message.PropSubject:       "TestCommand",
+	inputMsg := message.New(cmdPayload, message.Attributes{
+		message.AttrSubject:       "TestCommand",
 		"type":                    "command",
-		message.PropCorrelationID: "corr-456",
+		message.AttrCorrelationID: "corr-456",
 	})
 
 	// Process message
@@ -67,7 +67,7 @@ func TestNewCommandHandler_SetsPropType(t *testing.T) {
 	outMsg := outputMsgs[0]
 
 	// Verify PropType is set to the event type name
-	propType, ok := outMsg.Properties.Type()
+	propType, ok := outMsg.Attributes.Type()
 	if !ok {
 		t.Fatal("PropType not set in output message")
 	}
@@ -82,7 +82,7 @@ func TestNewCommandHandler_SetsPropType(t *testing.T) {
 
 	// Verify payload can be unmarshaled
 	var evt TestEvent
-	if err := marshaler.Unmarshal(outMsg.Payload, &evt); err != nil {
+	if err := marshaler.Unmarshal(outMsg.Data, &evt); err != nil {
 		t.Fatalf("failed to unmarshal output: %v", err)
 	}
 
@@ -96,39 +96,39 @@ func TestNewCommandHandler_SetsPropType(t *testing.T) {
 func TestMatchTypeName_UsesPropType(t *testing.T) {
 	tests := []struct {
 		name       string
-		properties message.Properties
+		properties message.Attributes
 		matches    bool
 	}{
 		{
 			name: "matches when PropType equals type name",
-			properties: message.Properties{
-				message.PropType: "TestEvent",
+			properties: message.Attributes{
+				message.AttrType: "TestEvent",
 			},
 			matches: true,
 		},
 		{
 			name: "does not match when PropType differs",
-			properties: message.Properties{
-				message.PropType: "OtherEvent",
+			properties: message.Attributes{
+				message.AttrType: "OtherEvent",
 			},
 			matches: false,
 		},
 		{
 			name:       "does not match when PropType is missing",
-			properties: message.Properties{},
+			properties: message.Attributes{},
 			matches:    false,
 		},
 		{
 			name: "matches when type property equals type name",
-			properties: message.Properties{
+			properties: message.Attributes{
 				"type": "TestEvent",
 			},
 			matches: true,
 		},
 		{
 			name: "does not match when type is generic category",
-			properties: message.Properties{
-				message.PropType: "event", // Generic category, not the actual type
+			properties: message.Attributes{
+				message.AttrType: "event", // Generic category, not the actual type
 			},
 			matches: false,
 		},
@@ -166,8 +166,8 @@ func TestNewCommandHandler_WithMultipleEvents(t *testing.T) {
 
 	// Create input message
 	cmdPayload, _ := marshaler.Marshal(TestCommand{ID: "cmd-1", Name: "test"})
-	inputMsg := message.New(cmdPayload, message.Properties{
-		message.PropSubject: "TestCommand",
+	inputMsg := message.New(cmdPayload, message.Attributes{
+		message.AttrSubject: "TestCommand",
 	})
 
 	// Process message
@@ -186,7 +186,7 @@ func TestNewCommandHandler_WithMultipleEvents(t *testing.T) {
 
 	// Verify PropType is set on all output messages
 	for i, outMsg := range outputMsgs {
-		propType, ok := outMsg.Properties.Type()
+		propType, ok := outMsg.Attributes.Type()
 		if !ok {
 			t.Errorf("message %d: PropType not set", i)
 			continue

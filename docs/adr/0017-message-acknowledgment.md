@@ -5,7 +5,7 @@
 
 ## Context
 
-Integrating with message brokers (RabbitMQ, Kafka, SQS) requires explicit acknowledgment of processing outcomes for at-least-once delivery guarantees. Supporting heterogeneous payloads requires a non-generic approach.
+Integrating with message brokers (RabbitMQ, Kafka, SQS) requires explicit acknowledgment of processing outcomes for at-least-once delivery guarantees. Supporting heterogeneous datas requires a non-generic approach.
 
 ## Decision
 
@@ -13,7 +13,7 @@ Implement non-generic `Message` type with automatic acknowledgment in `message` 
 
 ```go
 type Message struct {
-    Payload any
+    Data any
 }
 
 func (m *Message) Ack() bool

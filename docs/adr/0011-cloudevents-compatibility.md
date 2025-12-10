@@ -1,7 +1,7 @@
 # ADR 0011: CloudEvents Compatibility
 
 **Date:** 2024-12-08
-**Status:** Proposed
+**Status:** Superseded by ADR 0018
 
 ## Context
 
@@ -28,7 +28,7 @@ func ToMessage(ce *CloudEvent) *message.Message
 type CloudEventsMarshaler struct{}
 ```
 
-Mapping: gopipe PropID -> id, PropSubject -> subject, PropContentType -> datacontenttype, PropCreatedAt -> time, Payload -> data.
+Mapping: gopipe AttrID -> id, AttrSubject -> subject, PropContentType -> datacontenttype, PropCreatedAt -> time, Data -> data.
 
 ## Consequences
 

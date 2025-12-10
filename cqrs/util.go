@@ -28,8 +28,8 @@ import (
 //	func (s *OrderSagaCoordinator) OnEvent(ctx, msg) ([]*message.Message, error) {
 //	    return []*message.Message{
 //	        CreateCommand(s.marshaler, ChargePayment{OrderID: "123", Amount: 100},
-//	            message.Properties{
-//	                message.PropCorrelationID: msg.Properties.CorrelationID(),
+//	            message.Attributes{
+//	                message.AttrCorrelationID: msg.Attributes.CorrelationID(),
 //	            },
 //	        ),
 //	    }, nil
@@ -37,15 +37,15 @@ import (
 //
 //	// Creating initial command
 //	cmd := CreateCommand(marshaler, CreateOrder{ID: "order-1", Amount: 100},
-//	    message.Properties{
-//	        message.PropCorrelationID: "corr-123",
+//	    message.Attributes{
+//	        message.AttrCorrelationID: "corr-123",
 //	    },
 //	)
-func CreateCommand(marshaler Marshaler, cmd any, props message.Properties) *message.Message {
+func CreateCommand(marshaler Marshaler, cmd any, props message.Attributes) *message.Message {
 	payload, _ := marshaler.Marshal(cmd)
 
 	if props == nil {
-		props = message.Properties{}
+		props = message.Attributes{}
 	}
 
 	// Extract type name from the command
@@ -53,8 +53,8 @@ func CreateCommand(marshaler Marshaler, cmd any, props message.Properties) *mess
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
-	props[message.PropSubject] = t.Name()
-	props[message.PropType] = t.Name()
+	props[message.AttrSubject] = t.Name()
+	props[message.AttrType] = t.Name()
 	props["type"] = "command"
 
 	return message.New(payload, props)
@@ -71,7 +71,7 @@ func CreateCommand(marshaler Marshaler, cmd any, props message.Properties) *mess
 // Example:
 //
 //	func (s *OrderSagaCoordinator) OnEvent(ctx, msg) ([]*message.Message, error) {
-//	    corrID, _ := msg.Properties.CorrelationID()
+//	    corrID, _ := msg.Attributes.CorrelationID()
 //
 //	    return CreateCommands(s.marshaler, corrID,
 //	        ChargePayment{OrderID: evt.ID, Amount: evt.Amount},
@@ -82,9 +82,9 @@ func CreateCommands(marshaler Marshaler, correlationID string, cmds ...any) []*m
 	msgs := make([]*message.Message, 0, len(cmds))
 
 	for _, cmd := range cmds {
-		props := message.Properties{}
+		props := message.Attributes{}
 		if correlationID != "" {
-			props[message.PropCorrelationID] = correlationID
+			props[message.AttrCorrelationID] = correlationID
 		}
 
 		msgs = append(msgs, CreateCommand(marshaler, cmd, props))

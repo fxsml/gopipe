@@ -30,10 +30,10 @@ func MessageSubject(subject string) gopipe.MiddlewareFunc[*message.Message, *mes
 			}
 
 			for _, outMsg := range results {
-				if outMsg.Properties == nil {
-					outMsg.Properties = make(message.Properties)
+				if outMsg.Attributes == nil {
+					outMsg.Attributes = make(message.Attributes)
 				}
-				outMsg.Properties[message.PropSubject] = subject
+				outMsg.Attributes[message.AttrSubject] = subject
 			}
 
 			return results, nil

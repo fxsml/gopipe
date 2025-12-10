@@ -31,13 +31,13 @@ func MessageCorrelation() gopipe.MiddlewareFunc[*message.Message, *message.Messa
 			}
 
 			// Propagate correlation ID to all output messages
-			if corrID, ok := msg.Properties.CorrelationID(); ok {
+			if corrID, ok := msg.Attributes.CorrelationID(); ok {
 				for _, outMsg := range results {
-					if outMsg.Properties == nil {
-						outMsg.Properties = make(message.Properties)
+					if outMsg.Attributes == nil {
+						outMsg.Attributes = make(message.Attributes)
 					}
 					// Always overwrite correlation ID
-					outMsg.Properties[message.PropCorrelationID] = corrID
+					outMsg.Attributes[message.AttrCorrelationID] = corrID
 				}
 			}
 

@@ -20,7 +20,7 @@ type CommandMarshaler interface {
 	// Props returns message properties for the given value.
 	// This replaces the old props parameter in NewCommandHandler.
 	// For correlation ID propagation, use message-level middleware instead.
-	Props(v any) message.Properties
+	Props(v any) message.Attributes
 }
 
 // EventMarshaler handles deserialization of events.
@@ -38,7 +38,7 @@ type EventMarshaler interface {
 
 // JSONCommandMarshaler is a JSON-based implementation of CommandMarshaler.
 type JSONCommandMarshaler struct {
-	propProviders []PropertyProvider
+	propProviders []AttributeProvider
 }
 
 // NewJSONCommandMarshaler creates a new JSON command marshaler with property providers.
@@ -54,10 +54,10 @@ type JSONCommandMarshaler struct {
 //	    WithType("event"),
 //	    WithTypeName(),
 //	)
-func NewJSONCommandMarshaler(providers ...PropertyProvider) *JSONCommandMarshaler {
+func NewJSONCommandMarshaler(providers ...AttributeProvider) *JSONCommandMarshaler {
 	// Use default providers if none specified
 	if len(providers) == 0 {
-		providers = []PropertyProvider{
+		providers = []AttributeProvider{
 			WithTypeName(),
 		}
 	}
@@ -75,8 +75,8 @@ func (m *JSONCommandMarshaler) Unmarshal(data []byte, v any) error {
 }
 
 // Props returns message properties by applying all configured property providers.
-func (m *JSONCommandMarshaler) Props(v any) message.Properties {
-	result := make(message.Properties)
+func (m *JSONCommandMarshaler) Props(v any) message.Attributes {
+	result := make(message.Attributes)
 	for _, provider := range m.propProviders {
 		for k, val := range provider(v) {
 			result[k] = val

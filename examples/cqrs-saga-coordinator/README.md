@@ -40,12 +40,12 @@ emailHandler := NewEventHandler(
 type OrderSagaCoordinator struct {}
 
 func (s *OrderSagaCoordinator) OnEvent(ctx, msg *Message) ([]*Message, error) {
-    subject, _ := msg.Properties.Subject()
+    subject, _ := msg.Attributes.Subject()
 
     switch subject {
     case "OrderCreated":
         var evt OrderCreated
-        json.Unmarshal(msg.Payload, &evt)
+        json.Unmarshal(msg.Data, &evt)
 
         // ✅ Workflow logic lives HERE, not in event handlers!
         return s.createCommands(
@@ -129,7 +129,7 @@ type OrderSagaCoordinator struct {
 }
 
 func (s *OrderSagaCoordinator) OnEvent(ctx, msg *Message) ([]*Message, error) {
-    subject, _ := msg.Properties.Subject()
+    subject, _ := msg.Attributes.Subject()
 
     switch subject {
     case "OrderCreated":

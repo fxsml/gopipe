@@ -21,26 +21,26 @@ import (
 // Handler processes messages matching specific properties (local POC type)
 type Handler interface {
 	Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error)
-	Match(prop message.Properties) bool
+	Match(prop message.Attributes) bool
 }
 
 type handler struct {
 	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error)
-	match  func(prop message.Properties) bool
+	match  func(prop message.Attributes) bool
 }
 
 func (h *handler) Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 	return h.handle(ctx, msg)
 }
 
-func (h *handler) Match(prop message.Properties) bool {
+func (h *handler) Match(prop message.Attributes) bool {
 	return h.match(prop)
 }
 
 // NewHandler creates a new Handler (local POC function)
 func NewHandler(
 	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error),
-	match func(prop message.Properties) bool,
+	match func(prop message.Attributes) bool,
 ) Handler {
 	return &handler{
 		handle: handle,
@@ -72,7 +72,7 @@ func NewRouter(config RouterConfig, handlers ...Handler) *Router {
 func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan *message.Message {
 	handle := func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		for _, h := range r.handlers {
-			if h.Match(msg.Properties) {
+			if h.Match(msg.Attributes) {
 				return h.Handle(ctx, msg)
 			}
 		}
@@ -183,7 +183,7 @@ func NewCommandHandler[Cmd, Evt any](
 	return NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			var cmd Cmd
-			if err := json.Unmarshal(msg.Payload, &cmd); err != nil {
+			if err := json.Unmarshal(msg.Data, &cmd); err != nil {
 				msg.Nack(err)
 				return nil, err
 			}
@@ -202,12 +202,12 @@ func NewCommandHandler[Cmd, Evt any](
 				log.Printf("   ✅ → Event: %s", evtName)
 
 				payload, _ := json.Marshal(evt)
-				props := message.Properties{
-					message.PropSubject: evtName,
+				props := message.Attributes{
+					message.AttrSubject: evtName,
 					"type":              "event",
 				}
-				if corrID, ok := msg.Properties.CorrelationID(); ok {
-					props[message.PropCorrelationID] = corrID
+				if corrID, ok := msg.Attributes.CorrelationID(); ok {
+					props[message.AttrCorrelationID] = corrID
 				}
 
 				outMsgs = append(outMsgs, message.New(payload, props))
@@ -216,7 +216,7 @@ func NewCommandHandler[Cmd, Evt any](
 			msg.Ack()
 			return outMsgs, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			subject, _ := prop.Subject()
 			msgType, _ := prop["type"].(string)
 			return subject == cmdName && msgType == "command"
@@ -262,7 +262,7 @@ func NewEventHandler[Evt any](
 	return NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			var evt Evt
-			if err := json.Unmarshal(msg.Payload, &evt); err != nil {
+			if err := json.Unmarshal(msg.Data, &evt); err != nil {
 				msg.Nack(err)
 				return nil, err
 			}
@@ -275,7 +275,7 @@ func NewEventHandler[Evt any](
 			msg.Ack()
 			return nil, nil  // No output messages!
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			subject, _ := prop.Subject()
 			msgType, _ := prop["type"].(string)
 			return subject == evtName && msgType == "event"
@@ -294,12 +294,12 @@ type OrderSagaCoordinator struct {
 // OnEvent handles events and returns commands to trigger next saga steps
 // ✅ This is where workflow logic lives (decoupled from event handlers!)
 func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-	subject, _ := msg.Properties.Subject()
+	subject, _ := msg.Attributes.Subject()
 
 	switch subject {
 	case "OrderCreated":
 		var evt OrderCreated
-		json.Unmarshal(msg.Payload, &evt)
+		json.Unmarshal(msg.Data, &evt)
 
 		log.Printf("🔄 Saga: OrderCreated → triggering ChargePayment + ReserveInventory")
 
@@ -318,7 +318,7 @@ func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message
 
 	case "PaymentCharged":
 		var evt PaymentCharged
-		json.Unmarshal(msg.Payload, &evt)
+		json.Unmarshal(msg.Data, &evt)
 
 		// Wait for inventory reservation too...
 		// (In real implementation, would check if both completed)
@@ -327,7 +327,7 @@ func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message
 
 	case "InventoryReserved":
 		var evt InventoryReserved
-		json.Unmarshal(msg.Payload, &evt)
+		json.Unmarshal(msg.Data, &evt)
 
 		log.Printf("🔄 Saga: InventoryReserved → triggering ShipOrder")
 
@@ -353,14 +353,14 @@ func (s *OrderSagaCoordinator) createCommands(originalMsg *message.Message, cmds
 		payload, _ := s.marshaler.Marshal(cmd)
 		name := s.marshaler.Name(cmd)
 
-		props := message.Properties{
-			message.PropSubject: name,
+		props := message.Attributes{
+			message.AttrSubject: name,
 			"type":              "command",
 		}
 
 		// Propagate correlation ID
-		if corrID, ok := originalMsg.Properties.CorrelationID(); ok {
-			props[message.PropCorrelationID] = corrID
+		if corrID, ok := originalMsg.Attributes.CorrelationID(); ok {
+			props[message.AttrCorrelationID] = corrID
 		}
 
 		msgs = append(msgs, message.New(payload, props))
@@ -375,10 +375,10 @@ func (s *OrderSagaCoordinator) createCommands(originalMsg *message.Message, cmds
 
 func createCommand(marshal Marshaler, cmd any, corrID string) *message.Message {
 	payload, _ := marshal.Marshal(cmd)
-	return message.New(payload, message.Properties{
-		message.PropSubject:       marshal.Name(cmd),
-		message.PropCorrelationID: corrID,
-		message.PropCreatedAt:     time.Now(),
+	return message.New(payload, message.Attributes{
+		message.AttrSubject:       marshal.Name(cmd),
+		message.AttrCorrelationID: corrID,
+		message.AttrTime:     time.Now(),
 		"type":                    "command",
 	})
 }
@@ -493,7 +493,7 @@ func main() {
 	sagaCoordinator := &OrderSagaCoordinator{marshaler: marshaler}
 	sagaHandler := NewHandler(
 		sagaCoordinator.OnEvent,
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			msgType, _ := prop["type"].(string)
 			return msgType == "event"  // Reacts to ALL events
 		},

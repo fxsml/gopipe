@@ -10,8 +10,8 @@ This document summarizes the research and analysis documents in this directory.
 **Key Findings:**
 - Watermill: Purpose-built event-driven messaging, non-generic `Message`
 - gopipe: General-purpose pipelining with optional messaging
-- Watermill uses `[]byte` payloads only, simple `map[string]string` metadata
-- gopipe uses generic `TypedMessage[T]` with `map[string]any` properties
+- Watermill uses `[]byte` datas only, simple `map[string]string` metadata
+- gopipe uses generic `TypedMessage[T]` with `map[string]any` attributes
 
 **Outcome:** Influenced ADR 0004 (Dual Message Types) decision.
 

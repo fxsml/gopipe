@@ -100,13 +100,13 @@ func (s *OrderSagaCoordinator) OnEvent(
     ctx context.Context,
     msg *message.Message,
 ) ([]*message.Message, error) {
-    subject, _ := msg.Properties.Subject()
-    corrID, _ := msg.Properties.CorrelationID()
+    subject, _ := msg.Attributes.Subject()
+    corrID, _ := msg.Attributes.CorrelationID()
 
     switch subject {
     case "OrderCreated":
         var evt OrderCreated
-        s.marshaler.Unmarshal(msg.Payload, &evt)
+        s.marshaler.Unmarshal(msg.Data, &evt)
 
         // Workflow: What commands to trigger?
         return cqrs.CreateCommands(s.marshaler, corrID,
@@ -120,7 +120,7 @@ func (s *OrderSagaCoordinator) OnEvent(
 
     case "InventoryReserved":
         var evt InventoryReserved
-        s.marshaler.Unmarshal(msg.Payload, &evt)
+        s.marshaler.Unmarshal(msg.Data, &evt)
 
         return cqrs.CreateCommands(s.marshaler, corrID,
             ShipOrder{OrderID: evt.OrderID},
@@ -142,7 +142,7 @@ func (s *OrderSagaCoordinator) OnEvent(
 sagaCoordinator := &OrderSagaCoordinator{marshaler: marshaler}
 sagaHandler := message.NewHandler(
     sagaCoordinator.OnEvent,
-    func(prop message.Properties) bool {
+    func(prop message.Attributes) bool {
         msgType, _ := prop["type"].(string)
         return msgType == "event"
     },
@@ -334,8 +334,8 @@ Compensate:
 ✅ **Always track sagas with correlation IDs:**
 
 ```go
-props := message.Properties{
-    message.PropCorrelationID: "saga-order-12345",
+props := message.Attributes{
+    message.AttrCorrelationID: "saga-order-12345",
 }
 cmd := cqrs.CreateCommand(marshaler, CreateOrder{...}, props)
 ```
@@ -475,8 +475,8 @@ cmd := cqrs.CreateCommand(marshaler, CreateOrder{...}, nil)
 **Solution:**
 ```go
 // ✅ Always use correlation IDs
-props := message.Properties{
-    message.PropCorrelationID: uuid.New().String(),
+props := message.Attributes{
+    message.AttrCorrelationID: uuid.New().String(),
 }
 cmd := cqrs.CreateCommand(marshaler, CreateOrder{...}, props)
 ```

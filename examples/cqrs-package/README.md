@@ -97,13 +97,13 @@ type OrderSagaCoordinator struct {
 }
 
 func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-    subject, _ := msg.Properties.Subject()
-    corrID, _ := msg.Properties.CorrelationID()
+    subject, _ := msg.Attributes.Subject()
+    corrID, _ := msg.Attributes.CorrelationID()
 
     switch subject {
     case "OrderCreated":
         var evt OrderCreated
-        s.marshaler.Unmarshal(msg.Payload, &evt)
+        s.marshaler.Unmarshal(msg.Data, &evt)
 
         // ✅ Workflow logic: what happens next?
         // ✅ One event → multiple commands
@@ -147,7 +147,7 @@ sideEffectsRouter := message.NewRouter(
 sagaCoordinator := &OrderSagaCoordinator{marshaler: marshaler}
 sagaHandler := message.NewHandler(
     sagaCoordinator.OnEvent,
-    func(prop message.Properties) bool {
+    func(prop message.Attributes) bool {
         msgType, _ := prop["type"].(string)
         return msgType == "event"
     },
@@ -246,7 +246,7 @@ Key Benefits of cqrs Package:
 // ✅ Before cqrs package: Manual casting
 func handler(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
     var cmd CreateOrder
-    json.Unmarshal(msg.Payload, &cmd) // Manual work
+    json.Unmarshal(msg.Data, &cmd) // Manual work
     // ...
 }
 

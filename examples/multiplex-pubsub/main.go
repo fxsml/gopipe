@@ -69,17 +69,17 @@ func example1_PrefixRouting() {
 	done := publisher.Publish(ctx, msgs)
 
 	// Send messages with different topics
-	msgs <- message.New([]byte("Fast cache update"), message.Properties{
-		message.PropTopic: "internal/cache/update",
+	msgs <- message.New([]byte("Fast cache update"), message.Attributes{
+		message.AttrTopic: "internal/cache/update",
 	})
-	msgs <- message.New([]byte("Internal event"), message.Properties{
-		message.PropTopic: "internal/events/user/created",
+	msgs <- message.New([]byte("Internal event"), message.Attributes{
+		message.AttrTopic: "internal/events/user/created",
 	})
-	msgs <- message.New([]byte("External API call"), message.Properties{
-		message.PropTopic: "external/api/request",
+	msgs <- message.New([]byte("External API call"), message.Attributes{
+		message.AttrTopic: "external/api/request",
 	})
-	msgs <- message.New([]byte("Order created"), message.Properties{
-		message.PropTopic: "orders/created",
+	msgs <- message.New([]byte("Order created"), message.Attributes{
+		message.AttrTopic: "orders/created",
 	})
 
 	close(msgs)
@@ -90,28 +90,28 @@ func example1_PrefixRouting() {
 
 	select {
 	case msg := <-internalCacheCh:
-		fmt.Printf("  ✓ Memory broker received message for 'internal/cache/update': %s\n", msg.Payload)
+		fmt.Printf("  ✓ Memory broker received message for 'internal/cache/update': %s\n", msg.Data)
 	case <-time.After(100 * time.Millisecond):
 		fmt.Println("  ✓ Memory broker received 0 message(s) for 'internal/cache/update'")
 	}
 
 	select {
 	case msg := <-internalEventsCh:
-		fmt.Printf("  ✓ Memory broker received message for 'internal/events/user/created': %s\n", msg.Payload)
+		fmt.Printf("  ✓ Memory broker received message for 'internal/events/user/created': %s\n", msg.Data)
 	case <-time.After(100 * time.Millisecond):
 		fmt.Println("  ✓ Memory broker received 0 message(s) for 'internal/events/user/created'")
 	}
 
 	select {
 	case msg := <-externalApiCh:
-		fmt.Printf("  ✓ External broker received message for 'external/api/request': %s\n", msg.Payload)
+		fmt.Printf("  ✓ External broker received message for 'external/api/request': %s\n", msg.Data)
 	case <-time.After(100 * time.Millisecond):
 		fmt.Println("  ✓ External broker received 0 message(s) for 'external/api/request'")
 	}
 
 	select {
 	case msg := <-ordersCh:
-		fmt.Printf("  ✓ External broker received message for 'orders/created': %s\n", msg.Payload)
+		fmt.Printf("  ✓ External broker received message for 'orders/created': %s\n", msg.Data)
 	case <-time.After(100 * time.Millisecond):
 		fmt.Println("  ✓ External broker received 0 message(s) for 'orders/created'")
 	}
@@ -168,7 +168,7 @@ func example2_ExactRouting() {
 
 	fmt.Println("Sending messages:")
 	for _, tm := range testMessages {
-		msg := message.New([]byte(tm.payload), message.Properties{})
+		msg := message.New([]byte(tm.payload), message.Attributes{})
 		if err := multiplexSender.Send(ctx, tm.topic, []*message.Message{msg}); err != nil {
 			log.Printf("Failed to send to %s: %v", tm.topic, err)
 			continue
@@ -223,7 +223,7 @@ func example3_ChainedSelectors() {
 
 	fmt.Println("Routing results:")
 	for _, tc := range testCases {
-		msg := message.New([]byte("test"), message.Properties{})
+		msg := message.New([]byte("test"), message.Attributes{})
 		if err := multiplexSender.Send(ctx, tc.topic, []*message.Message{msg}); err != nil {
 			log.Printf("Failed to send to %s: %v", tc.topic, err)
 			continue
@@ -256,12 +256,12 @@ func example4_MultiplexReceiver() {
 
 	// Send messages to brokers
 	memoryBroker.Send(ctx, "internal/events", []*message.Message{
-		message.New([]byte("Internal event 1"), message.Properties{}),
-		message.New([]byte("Internal event 2"), message.Properties{}),
+		message.New([]byte("Internal event 1"), message.Attributes{}),
+		message.New([]byte("Internal event 2"), message.Attributes{}),
 	})
 
 	externalBroker.Send(ctx, "external/api", []*message.Message{
-		message.New([]byte("External response"), message.Properties{}),
+		message.New([]byte("External response"), message.Attributes{}),
 	})
 
 	// Create multiplex receiver
@@ -279,7 +279,7 @@ func example4_MultiplexReceiver() {
 	for {
 		select {
 		case msg := <-internalCh:
-			fmt.Printf("  ← Received: %s\n", msg.Payload)
+			fmt.Printf("  ← Received: %s\n", msg.Data)
 			count++
 		case <-time.After(100 * time.Millisecond):
 			goto doneInternal
@@ -294,7 +294,7 @@ doneInternal:
 	for {
 		select {
 		case msg := <-externalCh:
-			fmt.Printf("  ← Received: %s\n", msg.Payload)
+			fmt.Printf("  ← Received: %s\n", msg.Data)
 			count++
 		case <-time.After(100 * time.Millisecond):
 			goto doneExternal

@@ -24,26 +24,26 @@ import (
 // Handler processes messages matching specific properties (local POC type)
 type Handler interface {
 	Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error)
-	Match(prop message.Properties) bool
+	Match(prop message.Attributes) bool
 }
 
 type handler struct {
 	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error)
-	match  func(prop message.Properties) bool
+	match  func(prop message.Attributes) bool
 }
 
 func (h *handler) Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 	return h.handle(ctx, msg)
 }
 
-func (h *handler) Match(prop message.Properties) bool {
+func (h *handler) Match(prop message.Attributes) bool {
 	return h.match(prop)
 }
 
 // NewHandler creates a new Handler (local POC function)
 func NewHandler(
 	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error),
-	match func(prop message.Properties) bool,
+	match func(prop message.Attributes) bool,
 ) Handler {
 	return &handler{
 		handle: handle,
@@ -75,7 +75,7 @@ func NewRouter(config RouterConfig, handlers ...Handler) *Router {
 func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan *message.Message {
 	handle := func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		for _, h := range r.handlers {
-			if h.Match(msg.Properties) {
+			if h.Match(msg.Attributes) {
 				return h.Handle(ctx, msg)
 			}
 		}
@@ -152,7 +152,7 @@ func NewCommandHandler[Cmd, Evt any](
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			// Unmarshal command
 			var cmd Cmd
-			if err := json.Unmarshal(msg.Payload, &cmd); err != nil {
+			if err := json.Unmarshal(msg.Data, &cmd); err != nil {
 				msg.Nack(err)
 				return nil, err
 			}
@@ -180,12 +180,12 @@ func NewCommandHandler[Cmd, Evt any](
 				}
 
 				// Set proper subject for event routing
-				props := message.Properties{
-					message.PropSubject: evtName,
+				props := message.Attributes{
+					message.AttrSubject: evtName,
 					"type":              "event",
 				}
-				if corrID, ok := msg.Properties.CorrelationID(); ok {
-					props[message.PropCorrelationID] = corrID
+				if corrID, ok := msg.Attributes.CorrelationID(); ok {
+					props[message.AttrCorrelationID] = corrID
 				}
 
 				outMsgs = append(outMsgs, message.New(payload, props))
@@ -194,7 +194,7 @@ func NewCommandHandler[Cmd, Evt any](
 			msg.Ack()
 			return outMsgs, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			subject, _ := prop.Subject()
 			msgType, _ := prop["type"].(string)
 			return subject == cmdName && msgType == "command"
@@ -232,7 +232,7 @@ func NewEventHandler[Evt, Out any](
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			// Unmarshal event
 			var evt Evt
-			if err := json.Unmarshal(msg.Payload, &evt); err != nil {
+			if err := json.Unmarshal(msg.Data, &evt); err != nil {
 				msg.Nack(err)
 				return nil, err
 			}
@@ -260,12 +260,12 @@ func NewEventHandler[Evt, Out any](
 				}
 
 				// Set proper subject for command routing
-				props := message.Properties{
-					message.PropSubject: outName,
+				props := message.Attributes{
+					message.AttrSubject: outName,
 					"type":              "command",
 				}
-				if corrID, ok := msg.Properties.CorrelationID(); ok {
-					props[message.PropCorrelationID] = corrID
+				if corrID, ok := msg.Attributes.CorrelationID(); ok {
+					props[message.AttrCorrelationID] = corrID
 				}
 
 				outMsgs = append(outMsgs, message.New(payload, props))
@@ -274,7 +274,7 @@ func NewEventHandler[Evt, Out any](
 			msg.Ack()
 			return outMsgs, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			subject, _ := prop.Subject()
 			msgType, _ := prop["type"].(string)
 			return subject == evtName && msgType == "event"
@@ -328,10 +328,10 @@ type OrderShipped struct {
 // Helper to create command message
 func createCommand(marshal Marshaler, cmd any, corrID string) *message.Message {
 	payload, _ := marshal.Marshal(cmd)
-	return message.New(payload, message.Properties{
-		message.PropSubject:       marshal.Name(cmd),
-		message.PropCorrelationID: corrID,
-		message.PropCreatedAt:     time.Now(),
+	return message.New(payload, message.Attributes{
+		message.AttrSubject:       marshal.Name(cmd),
+		message.AttrCorrelationID: corrID,
+		message.AttrTime:     time.Now(),
 		"type":                    "command",
 	})
 }

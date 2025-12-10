@@ -4,20 +4,20 @@
 **Status:** Implemented
 
 ## Context
-Message[T] had private `payload` and `properties` fields with accessor methods. This created unnecessary indirection and verbosity for simple field access.
+Message[T] had private `data` and `attributes` fields with accessor methods. This created unnecessary indirection and verbosity for simple field access.
 
 ## Decision
-Make `Payload` and `Properties` public fields:
-- `Payload T` - direct access to message data
-- `Properties map[string]any` - simple map for properties
+Make `Data` and `Attributes` public fields:
+- `Data T` - direct access to message data
+- `Attributes map[string]any` - simple map for attributes
 
-Remove accessor methods `Payload()` and `Properties()`.
+Remove accessor methods `Data()` and `Attributes()`.
 
 ## Consequences
 
 **Breaking Changes:**
-- `msg.Payload()` → `msg.Payload`
-- `msg.Properties()` → `msg.Properties`
+- `msg.Data()` → `msg.Data`
+- `msg.Attributes()` → `msg.Attributes`
 
 **Benefits:**
 - Direct field access

@@ -41,9 +41,9 @@ func TestCommandHandlerAcking(t *testing.T) {
 
 	inputMsg := message.NewWithAcking(
 		cmdPayload,
-		message.Properties{
-			message.PropSubject:       "CreateOrder",
-			message.PropCorrelationID: "corr-abc",
+		message.Attributes{
+			message.AttrSubject:       "CreateOrder",
+			message.AttrCorrelationID: "corr-abc",
 			"type":                    "command",
 		},
 		inputAck,
@@ -82,7 +82,7 @@ func TestCommandHandlerAcking(t *testing.T) {
 	}
 
 	// ✅ ASSERT: Correlation ID was propagated
-	outputCorrID, ok := outputMsg.Properties.CorrelationID()
+	outputCorrID, ok := outputMsg.Attributes.CorrelationID()
 	if !ok {
 		t.Error("Output message should have correlation ID")
 	}
@@ -92,12 +92,12 @@ func TestCommandHandlerAcking(t *testing.T) {
 	}
 
 	// ✅ ASSERT: Output is an event
-	msgType, _ := outputMsg.Properties["type"].(string)
+	msgType, _ := outputMsg.Attributes["type"].(string)
 	if msgType != "event" {
 		t.Errorf("Expected output type 'event', got '%s'", msgType)
 	}
 
-	subject, _ := outputMsg.Properties.Subject()
+	subject, _ := outputMsg.Attributes.Subject()
 	if subject != "OrderCreated" {
 		t.Errorf("Expected subject 'OrderCreated', got '%s'", subject)
 	}
@@ -133,8 +133,8 @@ func TestCommandHandlerNacking(t *testing.T) {
 
 	inputMsg := message.NewWithAcking(
 		cmdPayload,
-		message.Properties{
-			message.PropSubject: "CreateOrder",
+		message.Attributes{
+			message.AttrSubject: "CreateOrder",
 			"type":              "command",
 		},
 		inputAck,
@@ -186,9 +186,9 @@ func TestSagaCoordinatorDoesNotCopyAcking(t *testing.T) {
 	var ackCalled bool
 	eventMsg := message.NewWithAcking(
 		eventPayload,
-		message.Properties{
-			message.PropSubject:       "OrderCreated",
-			message.PropCorrelationID: "corr-xyz",
+		message.Attributes{
+			message.AttrSubject:       "OrderCreated",
+			message.AttrCorrelationID: "corr-xyz",
 			"type":                    "event",
 		},
 		func() { ackCalled = true },
@@ -217,7 +217,7 @@ func TestSagaCoordinatorDoesNotCopyAcking(t *testing.T) {
 
 	// ✅ ASSERT: Correlation ID propagated
 	for i, cmd := range outputCmds {
-		corrID, ok := cmd.Properties.CorrelationID()
+		corrID, ok := cmd.Attributes.CorrelationID()
 		if !ok {
 			t.Errorf("Output command %d should have correlation ID", i)
 		}

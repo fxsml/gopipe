@@ -26,7 +26,7 @@
 type Message struct {
     UUID     string           // Unique identifier
     Metadata Metadata         // map[string]string
-    Payload  Payload          // []byte
+    Data  Data          // []byte
 
     // Internal ack channels
     ack      chan struct{}
@@ -36,7 +36,7 @@ type Message struct {
 ```
 
 **Key characteristics:**
-- Non-generic, always `[]byte` payload
+- Non-generic, always `[]byte` data
 - Simple UUID string (not typed)
 - Metadata is `map[string]string` only
 - Context embedded in message
@@ -46,8 +46,8 @@ type Message struct {
 
 ```go
 type Message[T any] struct {
-    payload    T                  // Generic typed payload
-    properties *Properties        // Thread-safe map[string]any
+    data    T                  // Generic typed data
+    attributes *Attributes        // Thread-safe map[string]any
     a          *acking            // Callback-based acking
 }
 
@@ -62,9 +62,9 @@ type acking struct {
 ```
 
 **Key characteristics:**
-- Generic typed payload (any type `T`)
-- Rich properties with typed accessors (ID, CorrelationID, CreatedAt, etc.)
-- Properties are `map[string]any` (not just strings)
+- Generic typed data (any type `T`)
+- Rich attributes with typed accessors (ID, CorrelationID, CreatedAt, etc.)
+- Attributes are `map[string]any` (not just strings)
 - Callback-based ack/nack with error propagation
 - Multi-stage acknowledgment support
 - No context embedding (uses deadline instead)
@@ -159,7 +159,7 @@ publisher.Publish("topic", msg)
 // Subscriber
 messages, _ := publisher.Subscribe(context.Background(), "topic")
 for msg := range messages {
-    fmt.Println(string(msg.Payload))
+    fmt.Println(string(msg.Data))
     msg.Ack()
 }
 ```
@@ -189,7 +189,7 @@ pipe := gopipe.NewTransformPipe(
 
 results := pipe.Start(context.Background(), in)
 <-channel.Sink(results, func(msg *message.Message[[]byte]) {
-    fmt.Println(string(msg.Payload()))
+    fmt.Println(string(msg.Data()))
 })
 ```
 
@@ -231,16 +231,16 @@ router := message.NewRouter(message.RouterConfig{
 }, handlers...)
 
 handler := message.NewHandler(
-    func(ctx context.Context, payload Order) ([]OrderConfirmed, error) {
+    func(ctx context.Context, data Order) ([]OrderConfirmed, error) {
         // Type-safe processing
-        return []OrderConfirmed{{ID: payload.ID}}, nil
+        return []OrderConfirmed{{ID: data.ID}}, nil
     },
-    func(prop *message.Properties) bool {
+    func(prop *message.Attributes) bool {
         subject, _ := prop.Subject()
         return subject == "orders.new"
     },
-    func(prop *message.Properties) *message.Properties {
-        // Transform properties for output
+    func(prop *message.Attributes) *message.Attributes {
+        // Transform attributes for output
         return prop
     },
 )
@@ -267,7 +267,7 @@ handler := message.NewHandler(
 | **Pub/Sub** | ✅ Built-in | ⚠️ Removed from feat/pubsub |
 | **Router** | ✅ Built-in | ⚠️ Removed from feat/pubsub |
 | **Broker Support** | ✅ 12+ brokers | ❌ DIY |
-| **Typed Payloads** | ❌ Manual marshal | ✅ Native |
+| **Typed Datas** | ❌ Manual marshal | ✅ Native |
 | **Pipeline Composition** | ⚠️ Limited | ✅ Core strength |
 | **Middleware** | ✅ Yes | ✅ Yes |
 | **Batching** | ❌ No | ✅ Built-in |
@@ -288,7 +288,7 @@ handler := message.NewHandler(
 - Handler-based processing
 - Automatic ack/nack
 
-✅ **Simple payloads**
+✅ **Simple datas**
 - Byte arrays are sufficient
 - String metadata only
 
@@ -321,7 +321,7 @@ handler := message.NewHandler(
 1. **Type safety**: Generic messages eliminate runtime errors
 2. **Flexibility**: Callback-based acking integrates with any broker
 3. **Multi-stage support**: Coordinate acknowledgments across pipeline stages
-4. **Rich properties**: Store any type, not just strings
+4. **Rich attributes**: Store any type, not just strings
 5. **Composability**: Functional pipe composition
 6. **Batching**: First-class batch processing support
 
@@ -408,8 +408,8 @@ Users can copy/customize rather than starting from scratch.
 **Alternative**:
 ```go
 // Direct access with defaults
-msg.Properties().GetString("key", "default")
-msg.Properties().GetInt64("seq", 0)
+msg.Attributes().GetString("key", "default")
+msg.Attributes().GetInt64("seq", 0)
 ```
 
 ## Conclusion

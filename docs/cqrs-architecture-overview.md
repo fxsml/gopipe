@@ -25,7 +25,7 @@ Simple by Default ──────► Advanced Features Pluggable
 │                                                                │
 │  • Router, Handler                                            │
 │  • Message with acking                                        │
-│  • Properties (metadata)                                      │
+│  • Attributes (metadata)                                      │
 │                                                                │
 │  ✅ Everyone uses this                                        │
 │                                                                │
@@ -251,7 +251,7 @@ gopipe/
 ├── message/                    # Layer 0 (core)
 │   ├── message.go
 │   ├── router.go
-│   └── properties.go
+│   └── attributes.go
 │
 ├── cqrs/                       # Layer 1 (recommended)
 │   ├── processor.go            # CommandProcessor, EventProcessor

@@ -14,23 +14,23 @@ func TestMessage_NewMessage(t *testing.T) {
 	deadline := time.Now().Add(1 * time.Hour)
 	var ackCalled, nackCalled bool
 
-	props := message.Properties{
-		message.PropDeadline: deadline,
+	props := message.Attributes{
+		message.AttrDeadline: deadline,
 		"key":                "value",
 	}
 	msg := message.NewWithAcking("payload", props,
 		func() { ackCalled = true },
 		func(error) { nackCalled = true })
 
-	if val, ok := msg.Properties["key"]; !ok || val != "value" {
+	if val, ok := msg.Attributes["key"]; !ok || val != "value" {
 		t.Errorf("Expected properties key='value', got %v", val)
 	}
 
-	if msg.Payload != "payload" {
-		t.Errorf("Expected Payload 'payload', got %v", msg.Payload)
+	if msg.Data != "payload" {
+		t.Errorf("Expected Payload 'payload', got %v", msg.Data)
 	}
 
-	if msgDeadline, ok := msg.Properties.Deadline(); !ok || msgDeadline != deadline {
+	if msgDeadline, ok := msg.Attributes.Deadline(); !ok || msgDeadline != deadline {
 		t.Errorf("Expected deadline %v, got %v (ok=%v)", deadline, msgDeadline, ok)
 	}
 
@@ -110,8 +110,8 @@ func TestMessage_Copy(t *testing.T) {
 	deadline := time.Now().Add(1 * time.Hour)
 	var ackCalled bool
 
-	props := message.Properties{
-		message.PropDeadline: deadline,
+	props := message.Attributes{
+		message.AttrDeadline: deadline,
 		"key":                "value",
 	}
 
@@ -123,15 +123,15 @@ func TestMessage_Copy(t *testing.T) {
 	copy := message.Copy(original, "copied")
 
 	// Type assert the payload
-	if copy.Payload != "copied" {
-		t.Errorf("Expected Payload 'copied', got %v", copy.Payload)
+	if copy.Data != "copied" {
+		t.Errorf("Expected Payload 'copied', got %v", copy.Data)
 	}
 
-	if val, ok := copy.Properties["key"]; !ok || val != "value" {
+	if val, ok := copy.Attributes["key"]; !ok || val != "value" {
 		t.Errorf("Expected properties key='value', got %v", val)
 	}
 
-	if copyDeadline, ok := copy.Properties.Deadline(); !ok || copyDeadline != deadline {
+	if copyDeadline, ok := copy.Attributes.Deadline(); !ok || copyDeadline != deadline {
 		t.Errorf("Expected deadline %v, got %v (ok=%v)", deadline, copyDeadline, ok)
 	}
 
@@ -155,15 +155,15 @@ func TestMessage_PayloadTypes(t *testing.T) {
 
 	t.Run("String", func(t *testing.T) {
 		msg := message.New("string payload", nil)
-		if msg.Payload != "string payload" {
-			t.Errorf("Expected 'string payload', got %v", msg.Payload)
+		if msg.Data != "string payload" {
+			t.Errorf("Expected 'string payload', got %v", msg.Data)
 		}
 	})
 
 	t.Run("Int", func(t *testing.T) {
 		msg := message.New(42, nil)
-		if msg.Payload != 42 {
-			t.Errorf("Expected 42, got %v", msg.Payload)
+		if msg.Data != 42 {
+			t.Errorf("Expected 42, got %v", msg.Data)
 		}
 	})
 
@@ -172,8 +172,8 @@ func TestMessage_PayloadTypes(t *testing.T) {
 			Field string
 		}
 		msg := message.New(Data{Field: "test"}, nil)
-		if msg.Payload != (Data{Field: "test"}) {
-			t.Errorf("Expected Data{Field: 'test'}, got %v", msg.Payload)
+		if msg.Data != (Data{Field: "test"}) {
+			t.Errorf("Expected Data{Field: 'test'}, got %v", msg.Data)
 		}
 	})
 }
@@ -222,7 +222,7 @@ func TestMessage_PropertiesSetAfterCreation(t *testing.T) {
 		msg := message.New("payload", nil)
 
 		// Properties should exist
-		if msg.Properties == nil {
+		if msg.Attributes == nil {
 			t.Error("Expected Properties to be non-nil")
 		}
 	})
@@ -231,60 +231,60 @@ func TestMessage_PropertiesSetAfterCreation(t *testing.T) {
 		msg := message.New("payload", nil)
 
 		// Set properties after message creation
-		msg.Properties["key1"] = "value1"
-		msg.Properties["key2"] = 42
-		msg.Properties["key3"] = true
+		msg.Attributes["key1"] = "value1"
+		msg.Attributes["key2"] = 42
+		msg.Attributes["key3"] = true
 
 		// Verify all properties were set correctly
-		if val, ok := msg.Properties["key1"]; !ok || val != "value1" {
+		if val, ok := msg.Attributes["key1"]; !ok || val != "value1" {
 			t.Errorf("Expected key1='value1', got %v (ok=%v)", val, ok)
 		}
 
-		if val, ok := msg.Properties["key2"]; !ok || val != 42 {
+		if val, ok := msg.Attributes["key2"]; !ok || val != 42 {
 			t.Errorf("Expected key2=42, got %v (ok=%v)", val, ok)
 		}
 
-		if val, ok := msg.Properties["key3"]; !ok || val != true {
+		if val, ok := msg.Attributes["key3"]; !ok || val != true {
 			t.Errorf("Expected key3=true, got %v (ok=%v)", val, ok)
 		}
 	})
 
 	t.Run("MixPreAndPostCreationProperties", func(t *testing.T) {
-		props := message.Properties{
+		props := message.Attributes{
 			"initial1": "value1",
 			"initial2": "value2",
 		}
 		msg := message.New("payload", props)
 
 		// Verify initial properties exist
-		if val, ok := msg.Properties["initial1"]; !ok || val != "value1" {
+		if val, ok := msg.Attributes["initial1"]; !ok || val != "value1" {
 			t.Errorf("Expected initial1='value1', got %v (ok=%v)", val, ok)
 		}
 
 		// Add more properties after message creation
-		msg.Properties["added1"] = "new_value1"
-		msg.Properties["added2"] = 100
+		msg.Attributes["added1"] = "new_value1"
+		msg.Attributes["added2"] = 100
 
 		// Verify all properties are accessible
-		if val, ok := msg.Properties["initial1"]; !ok || val != "value1" {
+		if val, ok := msg.Attributes["initial1"]; !ok || val != "value1" {
 			t.Errorf("Expected initial1='value1', got %v", val)
 		}
 
-		if val, ok := msg.Properties["initial2"]; !ok || val != "value2" {
+		if val, ok := msg.Attributes["initial2"]; !ok || val != "value2" {
 			t.Errorf("Expected initial2='value2', got %v", val)
 		}
 
-		if val, ok := msg.Properties["added1"]; !ok || val != "new_value1" {
+		if val, ok := msg.Attributes["added1"]; !ok || val != "new_value1" {
 			t.Errorf("Expected added1='new_value1', got %v", val)
 		}
 
-		if val, ok := msg.Properties["added2"]; !ok || val != 100 {
+		if val, ok := msg.Attributes["added2"]; !ok || val != 100 {
 			t.Errorf("Expected added2=100, got %v", val)
 		}
 
 		// Verify properties count
 		count := 0
-		for range msg.Properties {
+		for range msg.Attributes {
 			count++
 		}
 
@@ -294,48 +294,48 @@ func TestMessage_PropertiesSetAfterCreation(t *testing.T) {
 	})
 
 	t.Run("UpdateExistingProperty", func(t *testing.T) {
-		props := message.Properties{
+		props := message.Attributes{
 			"key": "original",
 		}
 		msg := message.New("payload", props)
 
 		// Verify original value
-		if val, ok := msg.Properties["key"]; !ok || val != "original" {
+		if val, ok := msg.Attributes["key"]; !ok || val != "original" {
 			t.Errorf("Expected key='original', got %v", val)
 		}
 
 		// Update the property after message creation
-		msg.Properties["key"] = "updated"
+		msg.Attributes["key"] = "updated"
 
 		// Verify updated value
-		if val, ok := msg.Properties["key"]; !ok || val != "updated" {
+		if val, ok := msg.Attributes["key"]; !ok || val != "updated" {
 			t.Errorf("Expected key='updated', got %v", val)
 		}
 	})
 
 	t.Run("DeletePropertyAfterCreation", func(t *testing.T) {
-		props := message.Properties{
+		props := message.Attributes{
 			"key1": "value1",
 			"key2": "value2",
 		}
 		msg := message.New("payload", props)
 
 		// Delete a property after message creation
-		delete(msg.Properties, "key1")
+		delete(msg.Attributes, "key1")
 
 		// Verify key1 is deleted
-		if val, ok := msg.Properties["key1"]; ok {
+		if val, ok := msg.Attributes["key1"]; ok {
 			t.Errorf("Expected key1 to be deleted, but got value: %v", val)
 		}
 
 		// Verify key2 still exists
-		if val, ok := msg.Properties["key2"]; !ok || val != "value2" {
+		if val, ok := msg.Attributes["key2"]; !ok || val != "value2" {
 			t.Errorf("Expected key2='value2', got %v (ok=%v)", val, ok)
 		}
 	})
 
 	t.Run("PropertiesSharedWithCopiedMessage", func(t *testing.T) {
-		props := message.Properties{
+		props := message.Attributes{
 			"initial": "value",
 		}
 		original := message.New("original_payload", props)
@@ -344,18 +344,18 @@ func TestMessage_PropertiesSetAfterCreation(t *testing.T) {
 		copied := message.Copy(original, "copied_payload")
 
 		// Set property on original message
-		original.Properties["from_original"] = "orig_val"
+		original.Attributes["from_original"] = "orig_val"
 
 		// Verify copied message sees the same property (properties are shared)
-		if val, ok := copied.Properties["from_original"]; !ok || val != "orig_val" {
+		if val, ok := copied.Attributes["from_original"]; !ok || val != "orig_val" {
 			t.Errorf("Expected copied message to see property set on original, got %v (ok=%v)", val, ok)
 		}
 
 		// Set property on copied message
-		copied.Properties["from_copied"] = "copy_val"
+		copied.Attributes["from_copied"] = "copy_val"
 
 		// Verify original message sees the property (properties are shared)
-		if val, ok := original.Properties["from_copied"]; !ok || val != "copy_val" {
+		if val, ok := original.Attributes["from_copied"]; !ok || val != "copy_val" {
 			t.Errorf("Expected original message to see property set on copied, got %v (ok=%v)", val, ok)
 		}
 	})
@@ -367,23 +367,23 @@ func TestMessage_NewWithOptions(t *testing.T) {
 	t.Run("MinimalMessage", func(t *testing.T) {
 		msg := message.New(42, nil)
 
-		if msg.Payload != 42 {
-			t.Errorf("Expected payload 42, got %v", msg.Payload)
+		if msg.Data != 42 {
+			t.Errorf("Expected payload 42, got %v", msg.Data)
 		}
 
-		if msg.Properties == nil {
+		if msg.Attributes == nil {
 			t.Error("Expected properties to be initialized")
 		}
 	})
 
 	t.Run("WithDeadline", func(t *testing.T) {
 		deadline := time.Now().Add(1 * time.Hour)
-		props := message.Properties{
-			message.PropDeadline: deadline,
+		props := message.Attributes{
+			message.AttrDeadline: deadline,
 		}
 		msg := message.New("payload", props)
 
-		if msgDeadline, ok := msg.Properties.Deadline(); !ok || msgDeadline != deadline {
+		if msgDeadline, ok := msg.Attributes.Deadline(); !ok || msgDeadline != deadline {
 			t.Errorf("Expected deadline %v, got %v (ok=%v)", deadline, msgDeadline, ok)
 		}
 	})
@@ -408,39 +408,39 @@ func TestMessage_NewWithOptions(t *testing.T) {
 	})
 
 	t.Run("WithID", func(t *testing.T) {
-		props := message.Properties{
-			message.PropID: "msg-001",
+		props := message.Attributes{
+			message.AttrID: "msg-001",
 		}
 		msg := message.New("payload", props)
 
-		if id, ok := msg.Properties.ID(); !ok || id != "msg-001" {
+		if id, ok := msg.Attributes.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q (ok=%v)", id, ok)
 		}
 	})
 
 	t.Run("WithCorrelationID", func(t *testing.T) {
-		props := message.Properties{
-			message.PropCorrelationID: "corr-123",
+		props := message.Attributes{
+			message.AttrCorrelationID: "corr-123",
 		}
 		msg := message.New("payload", props)
 
-		if id, ok := msg.Properties.CorrelationID(); !ok || id != "corr-123" {
+		if id, ok := msg.Attributes.CorrelationID(); !ok || id != "corr-123" {
 			t.Errorf("Expected CorrelationID 'corr-123', got %q (ok=%v)", id, ok)
 		}
 	})
 
 	t.Run("WithProperty", func(t *testing.T) {
-		props := message.Properties{
+		props := message.Attributes{
 			"tenant":   "acme-corp",
 			"priority": 5,
 		}
 		msg := message.New("payload", props)
 
-		if val, ok := msg.Properties["tenant"]; !ok || val != "acme-corp" {
+		if val, ok := msg.Attributes["tenant"]; !ok || val != "acme-corp" {
 			t.Errorf("Expected tenant='acme-corp', got %v (ok=%v)", val, ok)
 		}
 
-		if val, ok := msg.Properties["priority"]; !ok || val != 5 {
+		if val, ok := msg.Attributes["priority"]; !ok || val != 5 {
 			t.Errorf("Expected priority=5, got %v (ok=%v)", val, ok)
 		}
 	})
@@ -449,10 +449,10 @@ func TestMessage_NewWithOptions(t *testing.T) {
 		deadline := time.Now().Add(1 * time.Hour)
 		var ackCalled bool
 
-		props := message.Properties{
-			message.PropDeadline:      deadline,
-			message.PropID:            "msg-001",
-			message.PropCorrelationID: "order-123",
+		props := message.Attributes{
+			message.AttrDeadline:      deadline,
+			message.AttrID:            "msg-001",
+			message.AttrCorrelationID: "order-123",
 			"tenant":                  "acme",
 			"source":                  "orders-queue",
 		}
@@ -461,31 +461,31 @@ func TestMessage_NewWithOptions(t *testing.T) {
 			func(error) {})
 
 		// Verify payload
-		if msg.Payload != "order-data" {
-			t.Errorf("Expected payload 'order-data', got %v", msg.Payload)
+		if msg.Data != "order-data" {
+			t.Errorf("Expected payload 'order-data', got %v", msg.Data)
 		}
 
 		// Verify ID
-		if id, ok := msg.Properties.ID(); !ok || id != "msg-001" {
+		if id, ok := msg.Attributes.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q", id)
 		}
 
 		// Verify CorrelationID
-		if corrID, ok := msg.Properties.CorrelationID(); !ok || corrID != "order-123" {
+		if corrID, ok := msg.Attributes.CorrelationID(); !ok || corrID != "order-123" {
 			t.Errorf("Expected CorrelationID 'order-123', got %q", corrID)
 		}
 
 		// Verify custom properties
-		if val, ok := msg.Properties["tenant"]; !ok || val != "acme" {
+		if val, ok := msg.Attributes["tenant"]; !ok || val != "acme" {
 			t.Errorf("Expected tenant='acme', got %v (ok=%v)", val, ok)
 		}
 
-		if val, ok := msg.Properties["source"]; !ok || val != "orders-queue" {
+		if val, ok := msg.Attributes["source"]; !ok || val != "orders-queue" {
 			t.Errorf("Expected source='orders-queue', got %v (ok=%v)", val, ok)
 		}
 
 		// Verify deadline
-		if msgDeadline, ok := msg.Properties.Deadline(); !ok || msgDeadline != deadline {
+		if msgDeadline, ok := msg.Attributes.Deadline(); !ok || msgDeadline != deadline {
 			t.Errorf("Expected deadline %v, got %v (ok=%v)", deadline, msgDeadline, ok)
 		}
 
@@ -500,42 +500,42 @@ func TestMessage_NewWithOptions(t *testing.T) {
 	})
 
 	t.Run("WithMultipleProperties", func(t *testing.T) {
-		props := message.Properties{
-			message.PropID:            "msg-001",
+		props := message.Attributes{
+			message.AttrID:            "msg-001",
 			"initial":                 "value",
 			"tenant":                  "acme-corp",
 			"priority":                5,
-			message.PropCorrelationID: "corr-123",
+			message.AttrCorrelationID: "corr-123",
 		}
 		msg := message.New("payload", props)
 
 		// Verify that ID is set
-		if id, ok := msg.Properties.ID(); !ok || id != "msg-001" {
+		if id, ok := msg.Attributes.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q", id)
 		}
 
 		// Verify that initial property is set
-		if val, ok := msg.Properties["initial"]; !ok || val != "value" {
+		if val, ok := msg.Attributes["initial"]; !ok || val != "value" {
 			t.Errorf("Expected initial='value', got %v (ok=%v)", val, ok)
 		}
 
 		// Verify that properties are added
-		if val, ok := msg.Properties["tenant"]; !ok || val != "acme-corp" {
+		if val, ok := msg.Attributes["tenant"]; !ok || val != "acme-corp" {
 			t.Errorf("Expected tenant='acme-corp', got %v (ok=%v)", val, ok)
 		}
 
-		if val, ok := msg.Properties["priority"]; !ok || val != 5 {
+		if val, ok := msg.Attributes["priority"]; !ok || val != 5 {
 			t.Errorf("Expected priority=5, got %v (ok=%v)", val, ok)
 		}
 
 		// Verify that CorrelationID is set
-		if corrID, ok := msg.Properties.CorrelationID(); !ok || corrID != "corr-123" {
+		if corrID, ok := msg.Attributes.CorrelationID(); !ok || corrID != "corr-123" {
 			t.Errorf("Expected CorrelationID 'corr-123', got %q", corrID)
 		}
 
 		// Count all properties
 		count := 0
-		for range msg.Properties {
+		for range msg.Attributes {
 			count++
 		}
 
@@ -551,49 +551,49 @@ func TestMessage_TypedAccessors(t *testing.T) {
 
 	t.Run("GettersViaProperties", func(t *testing.T) {
 		now := time.Now()
-		props := message.Properties{
-			message.PropID:            "msg-001",
-			message.PropCorrelationID: "corr-123",
-			message.PropCreatedAt:     now,
+		props := message.Attributes{
+			message.AttrID:            "msg-001",
+			message.AttrCorrelationID: "corr-123",
+			message.AttrTime:     now,
 		}
 		msg := message.New(42, props)
 
 		// Test ID
-		if id, ok := msg.Properties.ID(); !ok || id != "msg-001" {
+		if id, ok := msg.Attributes.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q (ok=%v)", id, ok)
 		}
 
 		// Test CorrelationID
-		if id, ok := msg.Properties.CorrelationID(); !ok || id != "corr-123" {
+		if id, ok := msg.Attributes.CorrelationID(); !ok || id != "corr-123" {
 			t.Errorf("Expected CorrelationID 'corr-123', got %q (ok=%v)", id, ok)
 		}
 
-		// Test CreatedAt
-		if ts, ok := msg.Properties.CreatedAt(); !ok || !ts.Equal(now) {
-			t.Errorf("Expected CreatedAt %v, got %v (ok=%v)", now, ts, ok)
+		// Test EventTime
+		if ts, ok := msg.Attributes.EventTime(); !ok || !ts.Equal(now) {
+			t.Errorf("Expected EventTime %v, got %v (ok=%v)", now, ts, ok)
 		}
 	})
 
-	t.Run("SetPropertiesViaMap", func(t *testing.T) {
+	t.Run("SetAttributesViaMap", func(t *testing.T) {
 		msg := message.New(42, nil)
 
-		// Set reserved properties via map access
+		// Set reserved attributes via map access
 		now := time.Now()
-		msg.Properties[message.PropID] = "msg-001"
-		msg.Properties[message.PropCorrelationID] = "corr-123"
-		msg.Properties[message.PropCreatedAt] = now
+		msg.Attributes[message.AttrID] = "msg-001"
+		msg.Attributes[message.AttrCorrelationID] = "corr-123"
+		msg.Attributes[message.AttrTime] = now
 
 		// Get via pass-through functions
-		if id, ok := msg.Properties.ID(); !ok || id != "msg-001" {
+		if id, ok := msg.Attributes.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q (ok=%v)", id, ok)
 		}
 
-		if id, ok := msg.Properties.CorrelationID(); !ok || id != "corr-123" {
+		if id, ok := msg.Attributes.CorrelationID(); !ok || id != "corr-123" {
 			t.Errorf("Expected CorrelationID 'corr-123', got %q (ok=%v)", id, ok)
 		}
 
-		if ts, ok := msg.Properties.CreatedAt(); !ok || !ts.Equal(now) {
-			t.Errorf("Expected CreatedAt %v, got %v (ok=%v)", now, ts, ok)
+		if ts, ok := msg.Attributes.EventTime(); !ok || !ts.Equal(now) {
+			t.Errorf("Expected EventTime %v, got %v (ok=%v)", now, ts, ok)
 		}
 	})
 }

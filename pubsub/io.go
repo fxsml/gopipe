@@ -23,13 +23,13 @@ var (
 	ErrUnmarshalFailed = errors.New("unmarshal failed")
 )
 
-// Envelope wraps a message for wire transmission.
-// It includes the topic, properties, and JSON-encoded payload.
+// Envelope wraps a message for wire transmission per CloudEvents structured format.
+// It includes the topic, attributes, and JSON-encoded data.
 type Envelope struct {
 	Topic      string          `json:"topic"`
-	Properties map[string]any  `json:"properties,omitempty"`
-	Payload    json.RawMessage `json:"payload"`
-	Timestamp  time.Time       `json:"timestamp"`
+	Attributes map[string]any  `json:"attributes,omitempty"`
+	Data       json.RawMessage `json:"data"`
+	Timestamp  time.Time       `json:"time"`
 }
 
 // Marshaler handles message serialization.
@@ -123,16 +123,16 @@ func (s *ioSender) Send(ctx context.Context, topic string, msgs []*message.Messa
 		default:
 		}
 
-		// Extract properties
-		props := make(map[string]any)
-		for k, v := range msg.Properties {
-			props[k] = v
+		// Extract attributes
+		attrs := make(map[string]any)
+		for k, v := range msg.Attributes {
+			attrs[k] = v
 		}
 
 		env := Envelope{
 			Topic:      topic,
-			Properties: props,
-			Payload:    msg.Payload,
+			Attributes: attrs,
+			Data:       msg.Data,
 			Timestamp:  time.Now(),
 		}
 
@@ -233,17 +233,17 @@ func (r *ioReceiver) readOne(ctx context.Context) (*message.Message, string, err
 		return nil, "", errors.Join(ErrUnmarshalFailed, err)
 	}
 
-	// Build message with properties
-	props := message.Properties{}
-	for key, value := range env.Properties {
+	// Build message with attributes
+	attrs := message.Attributes{}
+	for key, value := range env.Attributes {
 		if strVal, ok := value.(string); ok {
-			props[key] = strVal
+			attrs[key] = strVal
 		}
 	}
 
 	// Convert json.RawMessage to []byte explicitly
-	payload := []byte(env.Payload)
-	msg := message.New(payload, props)
+	data := []byte(env.Data)
+	msg := message.New(data, attrs)
 
 	return msg, env.Topic, nil
 }

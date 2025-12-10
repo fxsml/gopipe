@@ -3,7 +3,7 @@
 ## Problem Statement
 
 The current `Message[T any]` type creates friction for pub/sub messaging patterns where:
-1. All brokers use `[]byte` as the payload format (Kafka, RabbitMQ, NATS, etc.)
+1. All brokers use `[]byte` as the data format (Kafka, RabbitMQ, NATS, etc.)
 2. Generic type parameters require repetitive boilerplate in every function signature
 3. Type conversions create cognitive overhead for simple messaging use cases
 
@@ -37,19 +37,19 @@ Follow Watermill's approach with gopipe enhancements.
 ```go
 package message
 
-// Message is a non-generic message with []byte payload
+// Message is a non-generic message with []byte data
 type Message struct {
     uuid       string
-    payload    []byte
-    properties *Properties
+    data    []byte
+    attributes *Attributes
     a          *acking
 }
 
 // Constructor
-func New(payload []byte, opts ...Option) *Message {
+func New(data []byte, opts ...Option) *Message {
     m := &Message{
-        payload:    payload,
-        properties: NewProperties(nil),
+        data:    data,
+        attributes: NewAttributes(nil),
     }
     for _, opt := range opts {
         opt(m)
@@ -60,7 +60,7 @@ func New(payload []byte, opts ...Option) *Message {
 // Simplified options (no type parameters)
 func WithID(id string) Option
 func WithAcking(ack func(), nack func(error)) Option
-func WithProperty(key string, value any) Option
+func WithAttribute(key string, value any) Option
 ```
 
 ### Benefits
@@ -73,7 +73,7 @@ func WithProperty(key string, value any) Option
 
 ### Drawbacks
 
-1. **Type safety loss**: No compile-time payload type checking
+1. **Type safety loss**: No compile-time data type checking
 2. **Marshal overhead**: Always requires encoding/decoding
 3. **Breaking change**: All existing code must be updated
 4. **Generic pipeline loss**: Cannot use `Message[Order]`, `Message[int]`, etc.
@@ -88,16 +88,16 @@ Provide both generic and non-generic variants.
 // Non-generic for pub/sub
 type Message struct {
     uuid       string
-    payload    []byte
-    properties *Properties
+    data    []byte
+    attributes *Attributes
     a          *acking
 }
 
 // Generic for typed pipelines
 type TypedMessage[T any] struct {
     uuid       string
-    payload    T
-    properties *Properties
+    data    T
+    attributes *Attributes
     a          *acking
 }
 
@@ -116,15 +116,15 @@ func Untyped[T any](m *TypedMessage[T], marshal func(T) ([]byte, error)) (*Messa
 - Conversion overhead
 - API complexity
 
-### Option 2: Payload Interface
+### Option 2: Data Interface
 
-Use `interface{}` payload with type assertion helpers.
+Use `interface{}` data with type assertion helpers.
 
 ```go
 type Message struct {
     uuid       string
-    payload    interface{}  // or any
-    properties *Properties
+    data    interface{}  // or any
+    attributes *Attributes
     a          *acking
 }
 
@@ -136,7 +136,7 @@ func (m *Message) As(v interface{}) error  // json.Unmarshal style
 
 **Pros**:
 - Single type
-- Flexible payload
+- Flexible data
 - No generics
 
 **Cons**:
@@ -156,7 +156,7 @@ type Message[T any] struct { /* ... */ }
 type ByteMessage = Message[[]byte]
 
 // Simplified constructors
-func NewByteMessage(payload []byte, opts ...ByteOption) *ByteMessage
+func NewByteMessage(data []byte, opts ...ByteOption) *ByteMessage
 ```
 
 **Pros**:
@@ -196,7 +196,7 @@ msg := message.New(42,
 )
 
 func process(ctx context.Context, msg *message.Message[int]) error {
-    val := msg.Payload() // int
+    val := msg.Data() // int
     return nil
 }
 ```
@@ -211,7 +211,7 @@ msg := message.New(data,
 
 func process(ctx context.Context, msg *message.Message) error {
     var val int
-    json.Unmarshal(msg.Payload(), &val)
+    json.Unmarshal(msg.Data(), &val)
     return nil
 }
 ```
@@ -234,8 +234,8 @@ func process(ctx context.Context, msg *message.Message) error {
 // Message is a non-generic message for pub/sub use cases.
 type Message struct {
     uuid       string
-    payload    []byte
-    properties *Properties
+    data    []byte
+    attributes *Attributes
     a          *acking
 }
 
@@ -243,16 +243,16 @@ type Message struct {
 // This is the current Message[T] renamed.
 type TypedMessage[T any] struct {
     uuid       string
-    payload    T
-    properties *Properties
+    data    T
+    attributes *Attributes
     a          *acking
 }
 
 // New creates a non-generic message.
-func New(payload []byte, opts ...Option) *Message
+func New(data []byte, opts ...Option) *Message
 
 // NewTyped creates a generic typed message.
-func NewTyped[T any](payload T, opts ...TypedOption[T]) *TypedMessage[T]
+func NewTyped[T any](data T, opts ...TypedOption[T]) *TypedMessage[T]
 
 // Conversion helpers
 func (m *Message) AsTyped() *TypedMessage[[]byte]
@@ -266,7 +266,7 @@ func ToMessage[T any](m *TypedMessage[T], marshal func(T) ([]byte, error)) (*Mes
 func (p *KafkaPublisher) Publish(ctx context.Context, topic string, msg *message.Message) error {
     return p.producer.Produce(&kafka.Message{
         TopicPartition: kafka.TopicPartition{Topic: &topic},
-        Value:          msg.Payload(),
+        Value:          msg.Data(),
     })
 }
 
@@ -288,7 +288,7 @@ func (s *KafkaSubscriber) Subscribe(ctx context.Context, topic string) <-chan *m
 sub := kafka.Subscribe(ctx, "orders")
 for msg := range sub {
     var order Order
-    json.Unmarshal(msg.Payload(), &order)
+    json.Unmarshal(msg.Data(), &order)
     // process...
     msg.Ack()
 }
@@ -300,7 +300,7 @@ for msg := range sub {
 // Type-safe pipeline (existing pattern)
 pipe := gopipe.NewTransformPipe(
     func(ctx context.Context, msg *message.TypedMessage[Order]) (*message.TypedMessage[OrderConfirmed], error) {
-        confirmed := OrderConfirmed{ID: msg.Payload().ID}
+        confirmed := OrderConfirmed{ID: msg.Data().ID}
         return message.Copy(msg, confirmed), nil
     },
 )
@@ -357,7 +357,7 @@ Use non-generic `message.Message`:
 3. **UUID field naming: uuid vs ID?**
    - Watermill uses `UUID` (string field, not actual UUID type)
    - gopipe uses `ID` property (more accurate naming)
-   - Proposal: Keep `ID` in properties, add `UUID()` accessor for compatibility
+   - Proposal: Keep `ID` in attributes, add `UUID()` accessor for compatibility
 
 ## Conclusion
 

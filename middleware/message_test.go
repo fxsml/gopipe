@@ -12,7 +12,7 @@ import (
 // to the input message before calling next() are propagated to the next processor.
 func TestNewMessageMiddleware_ModificationBeforeNext(t *testing.T) {
 	// Create a test message
-	msg := message.New([]byte("original payload"), message.Properties{
+	msg := message.New([]byte("original payload"), message.Attributes{
 		"original-key": "original-value",
 	})
 
@@ -25,8 +25,8 @@ func TestNewMessageMiddleware_ModificationBeforeNext(t *testing.T) {
 	innerProc := gopipe.NewProcessor(
 		func(ctx context.Context, m *message.Message) ([]*message.Message, error) {
 			receivedMsg = m
-			receivedPayload = m.Payload
-			receivedProperty, _ = m.Properties["modified-key"].(string)
+			receivedPayload = m.Data
+			receivedProperty, _ = m.Attributes["modified-key"].(string)
 			return []*message.Message{m}, nil
 		},
 		func(m *message.Message, err error) {},
@@ -36,13 +36,13 @@ func TestNewMessageMiddleware_ModificationBeforeNext(t *testing.T) {
 	middleware := NewMessageMiddleware(
 		func(ctx context.Context, m *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
 			// Modify payload
-			m.Payload = []byte("modified payload")
+			m.Data = []byte("modified payload")
 
 			// Add a new property
-			if m.Properties == nil {
-				m.Properties = make(message.Properties)
+			if m.Attributes == nil {
+				m.Attributes = make(message.Attributes)
 			}
-			m.Properties["modified-key"] = "modified-value"
+			m.Attributes["modified-key"] = "modified-value"
 
 			// Call next with the modified message
 			return next()
@@ -85,7 +85,7 @@ func TestNewMessageMiddleware_ModificationBeforeNext(t *testing.T) {
 	}
 
 	// Verify original property is still present
-	originalValue, ok := receivedMsg.Properties["original-key"].(string)
+	originalValue, ok := receivedMsg.Attributes["original-key"].(string)
 	if !ok || originalValue != "original-value" {
 		t.Errorf("original property was lost or modified: got %v", originalValue)
 	}
@@ -95,7 +95,7 @@ func TestNewMessageMiddleware_ModificationBeforeNext(t *testing.T) {
 // middleware can each modify the message and all modifications are propagated.
 func TestNewMessageMiddleware_MultipleModifications(t *testing.T) {
 	// Create a test message
-	msg := message.New([]byte("initial"), message.Properties{})
+	msg := message.New([]byte("initial"), message.Attributes{})
 
 	// Track what the inner processor receives
 	var receivedMsg *message.Message
@@ -112,10 +112,10 @@ func TestNewMessageMiddleware_MultipleModifications(t *testing.T) {
 	// Create first middleware that adds property "step1"
 	middleware1 := NewMessageMiddleware(
 		func(ctx context.Context, m *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
-			if m.Properties == nil {
-				m.Properties = make(message.Properties)
+			if m.Attributes == nil {
+				m.Attributes = make(message.Attributes)
 			}
-			m.Properties["step1"] = "completed"
+			m.Attributes["step1"] = "completed"
 			return next()
 		},
 	)
@@ -123,10 +123,10 @@ func TestNewMessageMiddleware_MultipleModifications(t *testing.T) {
 	// Create second middleware that adds property "step2"
 	middleware2 := NewMessageMiddleware(
 		func(ctx context.Context, m *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
-			if m.Properties == nil {
-				m.Properties = make(message.Properties)
+			if m.Attributes == nil {
+				m.Attributes = make(message.Attributes)
 			}
-			m.Properties["step2"] = "completed"
+			m.Attributes["step2"] = "completed"
 			return next()
 		},
 	)
@@ -134,10 +134,10 @@ func TestNewMessageMiddleware_MultipleModifications(t *testing.T) {
 	// Create third middleware that adds property "step3"
 	middleware3 := NewMessageMiddleware(
 		func(ctx context.Context, m *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
-			if m.Properties == nil {
-				m.Properties = make(message.Properties)
+			if m.Attributes == nil {
+				m.Attributes = make(message.Attributes)
 			}
-			m.Properties["step3"] = "completed"
+			m.Attributes["step3"] = "completed"
 			return next()
 		},
 	)
@@ -167,7 +167,7 @@ func TestNewMessageMiddleware_MultipleModifications(t *testing.T) {
 	}
 
 	for key, expectedValue := range expectedProperties {
-		actualValue, ok := receivedMsg.Properties[key].(string)
+		actualValue, ok := receivedMsg.Attributes[key].(string)
 		if !ok {
 			t.Errorf("property %q was not added", key)
 			continue
@@ -182,12 +182,12 @@ func TestNewMessageMiddleware_MultipleModifications(t *testing.T) {
 // to output messages after calling next() work correctly.
 func TestNewMessageMiddleware_ModificationAfterNext(t *testing.T) {
 	// Create a test message
-	msg := message.New([]byte("input"), message.Properties{})
+	msg := message.New([]byte("input"), message.Attributes{})
 
 	// Create an inner processor that returns a message
 	innerProc := gopipe.NewProcessor(
 		func(ctx context.Context, m *message.Message) ([]*message.Message, error) {
-			outMsg := message.New([]byte("output"), message.Properties{
+			outMsg := message.New([]byte("output"), message.Attributes{
 				"inner": "value",
 			})
 			return []*message.Message{outMsg}, nil
@@ -205,10 +205,10 @@ func TestNewMessageMiddleware_ModificationAfterNext(t *testing.T) {
 
 			// Modify all output messages
 			for _, outMsg := range results {
-				if outMsg.Properties == nil {
-					outMsg.Properties = make(message.Properties)
+				if outMsg.Attributes == nil {
+					outMsg.Attributes = make(message.Attributes)
 				}
-				outMsg.Properties["middleware"] = "modified"
+				outMsg.Attributes["middleware"] = "modified"
 			}
 
 			return results, nil
@@ -235,13 +235,13 @@ func TestNewMessageMiddleware_ModificationAfterNext(t *testing.T) {
 	outMsg := results[0]
 
 	// Verify original property is present
-	innerValue, ok := outMsg.Properties["inner"].(string)
+	innerValue, ok := outMsg.Attributes["inner"].(string)
 	if !ok || innerValue != "value" {
 		t.Errorf("inner property was lost: got %v", innerValue)
 	}
 
 	// Verify middleware added property
-	middlewareValue, ok := outMsg.Properties["middleware"].(string)
+	middlewareValue, ok := outMsg.Attributes["middleware"].(string)
 	if !ok || middlewareValue != "modified" {
 		t.Errorf("middleware property was not added: got %v", middlewareValue)
 	}

@@ -20,12 +20,12 @@ import (
 //	}
 //
 //	func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-//	    subject, _ := msg.Properties.Subject()
+//	    subject, _ := msg.Attributes.Subject()
 //
 //	    switch subject {
 //	    case "OrderCreated":
 //	        var evt OrderCreated
-//	        s.marshaler.Unmarshal(msg.Payload, &evt)
+//	        s.marshaler.Unmarshal(msg.Data, &evt)
 //
 //	        // Workflow logic: what commands to trigger next?
 //	        return s.createCommands(

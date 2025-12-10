@@ -32,7 +32,7 @@ type OrderCreated struct {
 func LoggingMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
 	return middleware.NewMessageMiddleware(
 		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
-			subject, _ := msg.Properties.Subject()
+			subject, _ := msg.Attributes.Subject()
 			log.Printf("[INFO] Processing message: subject=%s", subject)
 
 			start := time.Now()
@@ -60,7 +60,7 @@ func MetricsMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Messag
 			result, err := next()
 			duration := time.Since(start)
 
-			subject, _ := msg.Properties.Subject()
+			subject, _ := msg.Attributes.Subject()
 			status := "success"
 			if err != nil {
 				status = "error"
@@ -79,9 +79,9 @@ func CorrelationIDMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.
 	return middleware.NewMessageMiddleware(
 		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
 			// Ensure correlation ID exists
-			if _, ok := msg.Properties.CorrelationID(); !ok {
+			if _, ok := msg.Attributes.CorrelationID(); !ok {
 				corrID := fmt.Sprintf("corr-%d", time.Now().UnixNano())
-				msg.Properties[message.PropCorrelationID] = corrID
+				msg.Attributes[message.AttrCorrelationID] = corrID
 				log.Printf("[CORRELATION] Generated correlation ID: %s", corrID)
 			}
 
@@ -95,14 +95,14 @@ func ValidationMiddleware() gopipe.MiddlewareFunc[*message.Message, *message.Mes
 	return middleware.NewMessageMiddleware(
 		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
 			// Validate required properties
-			if _, ok := msg.Properties.Subject(); !ok {
+			if _, ok := msg.Attributes.Subject(); !ok {
 				err := fmt.Errorf("validation error: missing subject")
 				log.Printf("[VALIDATION] %v", err)
 				msg.Nack(err)
 				return nil, err
 			}
 
-			if len(msg.Payload) == 0 {
+			if len(msg.Data) == 0 {
 				err := fmt.Errorf("validation error: empty payload")
 				log.Printf("[VALIDATION] %v", err)
 				msg.Nack(err)
@@ -176,13 +176,13 @@ func main() {
 	var inputMsgs []*message.Message
 	for i, cmd := range commands {
 		payload, _ := json.Marshal(cmd)
-		props := message.Properties{
-			message.PropSubject: "CreateOrder",
+		props := message.Attributes{
+			message.AttrSubject: "CreateOrder",
 			"type":              "command",
 		}
 		// Only add correlation ID to the first message
 		if i == 0 {
-			props[message.PropCorrelationID] = "manual-corr-123"
+			props[message.AttrCorrelationID] = "manual-corr-123"
 		}
 		inputMsgs = append(inputMsgs, message.New(payload, props))
 	}
@@ -213,11 +213,11 @@ func main() {
 
 	// Display output messages
 	for i, msg := range results {
-		subject, _ := msg.Properties.Subject()
-		corrID, _ := msg.Properties.CorrelationID()
+		subject, _ := msg.Attributes.Subject()
+		corrID, _ := msg.Attributes.CorrelationID()
 
 		var evt OrderCreated
-		json.Unmarshal(msg.Payload, &evt)
+		json.Unmarshal(msg.Data, &evt)
 
 		log.Printf("Output Message #%d:", i+1)
 		log.Printf("  Subject: %s", subject)

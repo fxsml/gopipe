@@ -335,25 +335,25 @@ func main() {
 			message.WithContext[int](ctx),
 			message.WithAcking[int](ack, nack),
 			message.WithID[int]("msg-001"),
-			message.WithProperty[int]("source", "orders-queue"),
+			message.WithAttribute[int]("source", "orders-queue"),
 		),
 		message.New(42,
 			message.WithContext[int](ctx),
 			message.WithAcking[int](ack, nack),
 			message.WithID[int]("msg-002"),
-			message.WithProperty[int]("source", "orders-queue"),
+			message.WithAttribute[int]("source", "orders-queue"),
 		),
 	)
 
 	// Create pipe with acknowledgment
 	pipe := gopipe.NewTransformPipe(
 		func(ctx context.Context, msg *message.Message[int]) (*message.Message[int], error) {
-			defer msg.Properties().Set("processed_at", time.Now().Format(time.RFC3339))
+			defer msg.Attributes().Set("processed_at", time.Now().Format(time.RFC3339))
 
 			// Simulate processing error
-			p := msg.Payload()
+			p := msg.Data()
 			if p == 12 {
-				err := fmt.Errorf("cannot process payload 12")
+				err := fmt.Errorf("cannot process data 12")
 				msg.Nack(err)
 				return nil, err
 			}
@@ -371,11 +371,11 @@ func main() {
 	// Consume results
 	<-channel.Sink(results, func(result *message.Message[int]) {
 		var sb strings.Builder
-		result.Properties().Range(func(key string, value any) bool {
+		result.Attributes().Range(func(key string, value any) bool {
 			sb.WriteString(fmt.Sprintf("  %s: %v\n", key, value))
 			return true
 		})
-		fmt.Printf("Payload: %d\nProperties:\n%s", result.Payload(), sb.String())
+		fmt.Printf("Data: %d\nAttributes:\n%s", result.Data(), sb.String())
 	})
 }
 ```

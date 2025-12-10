@@ -182,8 +182,8 @@ func (s *OrderCompensatingSaga) OnEventWithCompensation(
     ctx context.Context,
     msg *Message,
 ) (SagaStep, error) {
-    subject, _ := msg.Properties.Subject()
-    corrID, _ := msg.Properties.CorrelationID()
+    subject, _ := msg.Attributes.Subject()
+    corrID, _ := msg.Attributes.CorrelationID()
 
     // Load saga state
     sagaID := deriveSagaID(corrID)
@@ -200,7 +200,7 @@ func (s *OrderCompensatingSaga) OnEventWithCompensation(
     switch subject {
     case "OrderCreated":
         var evt OrderCreated
-        json.Unmarshal(msg.Payload, &evt)
+        json.Unmarshal(msg.Data, &evt)
 
         // Forward: Charge payment
         forwardCmds := s.createCommands(
@@ -252,7 +252,7 @@ func (s *OrderCompensatingSaga) OnEventWithCompensation(
     case "PaymentFailed":
         // ❌ Failure! Trigger compensations
         var evt PaymentFailed
-        json.Unmarshal(msg.Payload, &evt)
+        json.Unmarshal(msg.Data, &evt)
 
         log.Printf("⚠️  Payment failed for order %s, starting compensation...", evt.OrderID)
 
@@ -452,8 +452,8 @@ type OutboxStore interface {
 
 type OutboxMessage struct {
     ID          string
-    Payload     []byte
-    Properties  map[string]any
+    Data     []byte
+    Attributes  map[string]any
     CreatedAt   time.Time
     PublishedAt *time.Time
 }
@@ -484,7 +484,7 @@ func (h *CommandHandlerWithOutbox) Handle(
     msg *Message,
 ) ([]*Message, error) {
     var cmd CreateOrder
-    json.Unmarshal(msg.Payload, &cmd)
+    json.Unmarshal(msg.Data, &cmd)
 
     // Begin transaction
     tx, err := h.db.Begin(ctx)
@@ -504,9 +504,9 @@ func (h *CommandHandlerWithOutbox) Handle(
     // Store events in outbox WITHIN same transaction
     var outMsgs []*Message
     for _, evt := range events {
-        payload, _ := json.Marshal(evt)
-        outMsg := New(payload, Properties{
-            PropSubject: reflect.TypeOf(evt).Name(),
+        data, _ := json.Marshal(evt)
+        outMsg := New(data, Attributes{
+            AttrSubject: reflect.TypeOf(evt).Name(),
         })
 
         // ✅ Store in outbox (atomic with business logic!)
@@ -583,8 +583,8 @@ func (p *OutboxProcessor) processPending(ctx context.Context) error {
 ```sql
 CREATE TABLE message_outbox (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    payload       BYTEA NOT NULL,
-    properties    JSONB NOT NULL,
+    data       BYTEA NOT NULL,
+    attributes    JSONB NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     published_at  TIMESTAMPTZ,
 

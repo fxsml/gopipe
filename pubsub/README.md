@@ -50,8 +50,8 @@ msgs := make(chan *message.Message)
 done := publisher.Publish(ctx, msgs)
 
 // Send messages
-msgs <- message.New([]byte("event"), message.Properties{
-    message.PropTopic: "orders.created",
+msgs <- message.New([]byte("event"), message.Attributes{
+    message.AttrTopic: "orders.created",
 })
 
 close(msgs)
@@ -70,7 +70,7 @@ msgChan := subscriber.Subscribe(ctx)
 
 for msg := range msgChan {
     // Process messages from all topics
-    fmt.Println(string(msg.Payload))
+    fmt.Println(string(msg.Data))
 }
 ```
 
@@ -101,11 +101,11 @@ Example:
 ```go
 // Route by subject
 pubsub.RouteBySubject()
-// Message with PropSubject="orders.created" → topic "orders.created"
+// Message with AttrSubject="orders.created" → topic "orders.created"
 
 // Route by custom property
 pubsub.RouteByProperty("region")
-// Message with Properties{"region": "us-east"} → topic "us-east"
+// Message with Attributes{"region": "us-east"} → topic "us-east"
 
 // Route to static topic
 pubsub.RouteStatic("all-events")
@@ -113,7 +113,7 @@ pubsub.RouteStatic("all-events")
 
 // Route by format
 pubsub.RouteByFormat("events/%s/%s", "type", "region")
-// Message with Properties{"type": "order", "region": "us"} → topic "events/order/us"
+// Message with Attributes{"type": "order", "region": "us"} → topic "events/order/us"
 ```
 
 ## Multiplexing
@@ -324,8 +324,8 @@ func TestMessageProcessing(t *testing.T) {
     ctx := context.Background()
     msgs := make(chan *message.Message, 1)
 
-    msgs <- message.New([]byte("test"), message.Properties{
-        message.PropTopic: "test.topic",
+    msgs <- message.New([]byte("test"), message.Attributes{
+        message.AttrTopic: "test.topic",
     })
     close(msgs)
 
@@ -350,7 +350,7 @@ func TestMultiplexRouting(t *testing.T) {
     multiplex := pubsub.NewMultiplexSender(selector, natsBroker)
 
     ctx := context.Background()
-    msg := message.New([]byte("test"), message.Properties{})
+    msg := message.New([]byte("test"), message.Attributes{})
 
     // Should route to memory broker
     multiplex.Send(ctx, "internal.events", []*message.Message{msg})

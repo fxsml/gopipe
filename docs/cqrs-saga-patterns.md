@@ -125,12 +125,12 @@ type OrderSagaCoordinator struct {
 
 // OnEvent is called for each event, returns commands to trigger
 func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *Message) ([]*Message, error) {
-    subject, _ := msg.Properties.Subject()
+    subject, _ := msg.Attributes.Subject()
 
     switch subject {
     case "OrderCreated":
         var evt OrderCreated
-        json.Unmarshal(msg.Payload, &evt)
+        json.Unmarshal(msg.Data, &evt)
 
         log.Printf("🔄 Saga: OrderCreated → triggering ChargePayment")
 
@@ -145,7 +145,7 @@ func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *Message) ([]*Me
 
     case "PaymentCharged":
         var evt PaymentCharged
-        json.Unmarshal(msg.Payload, &evt)
+        json.Unmarshal(msg.Data, &evt)
 
         log.Printf("🔄 Saga: PaymentCharged → triggering ShipOrder")
 
@@ -168,11 +168,11 @@ func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *Message) ([]*Me
 func (s *OrderSagaCoordinator) createCommands(cmds ...any) ([]*Message, error) {
     var msgs []*Message
     for _, cmd := range cmds {
-        payload, _ := json.Marshal(cmd)
+        data, _ := json.Marshal(cmd)
         name := s.marshaler.Name(cmd)
 
-        msgs = append(msgs, message.New(payload, message.Properties{
-            message.PropSubject: name,
+        msgs = append(msgs, message.New(data, message.Attributes{
+            message.AttrSubject: name,
             "type":              "command",
         }))
     }
@@ -196,7 +196,7 @@ sideEffectsProcessor := NewEventProcessor(
 sagaCoordinator := &OrderSagaCoordinator{marshaler: marshaler}
 sagaHandler := message.NewHandler(
     sagaCoordinator.OnEvent,
-    func(prop Properties) bool {
+    func(prop Attributes) bool {
         msgType, _ := prop["type"].(string)
         return msgType == "event"  // Reacts to all events
     },
@@ -420,11 +420,11 @@ type OrderSagaCoordinator struct {
 }
 
 func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *Message) ([]*Message, error) {
-    subject, _ := msg.Properties.Subject()
+    subject, _ := msg.Attributes.Subject()
 
     if subject == "OrderCreated" {
         var evt OrderCreated
-        json.Unmarshal(msg.Payload, &evt)
+        json.Unmarshal(msg.Data, &evt)
 
         log.Printf("🔄 Saga: OrderCreated → triggering MULTIPLE commands")
 
@@ -479,7 +479,7 @@ type SagaCoordinator interface {
 func NewSagaHandler(coordinator SagaCoordinator) Handler {
     return message.NewHandler(
         coordinator.OnEvent,
-        func(prop Properties) bool {
+        func(prop Attributes) bool {
             msgType, _ := prop["type"].(string)
             return msgType == "event"
         },

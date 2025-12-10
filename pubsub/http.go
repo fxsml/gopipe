@@ -122,7 +122,7 @@ func (s *HTTPSender) Send(ctx context.Context, topic string, msgs []*message.Mes
 }
 
 func (s *HTTPSender) sendOne(ctx context.Context, topic string, msg *message.Message) error {
-	body := msg.Payload
+	body := msg.Data
 	if len(body) == 0 {
 		body = []byte("null")
 	}
@@ -136,7 +136,7 @@ func (s *HTTPSender) sendOne(ctx context.Context, topic string, msg *message.Mes
 	req.Header.Set(HeaderTopic, topic)
 	req.Header.Set(HeaderTimestamp, time.Now().UTC().Format(time.RFC3339Nano))
 
-	for key, value := range msg.Properties {
+	for key, value := range msg.Attributes {
 		headerKey := propertyToHeader(key)
 		req.Header.Set(headerKey, fmt.Sprintf("%v", value))
 	}
@@ -241,7 +241,7 @@ func (r *HTTPReceiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	props := message.Properties{}
+	props := message.Attributes{}
 	for key, values := range req.Header {
 		if strings.HasPrefix(key, HeaderPrefix+"Prop-") && len(values) > 0 {
 			propKey := headerToProperty(key)

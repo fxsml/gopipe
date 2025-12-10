@@ -29,12 +29,12 @@ type OrderConfirmed struct {
 // This is only used in tests; production code should use cqrs.NewCommandHandler.
 func testJSONHandler[In, Out any](
 	handle func(ctx context.Context, payload In) ([]Out, error),
-	match func(prop message.Properties) bool,
-	props func(prop message.Properties) message.Properties,
+	match func(prop message.Attributes) bool,
+	props func(prop message.Attributes) message.Attributes,
 ) cqrs.Handler {
 	h := func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		var payload In
-		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+		if err := json.Unmarshal(msg.Data, &payload); err != nil {
 			err = fmt.Errorf("unmarshal message: %w: %w", cqrs.ErrInvalidMessagePayload, err)
 			msg.Nack(err)
 			return nil, err
@@ -56,7 +56,7 @@ func testJSONHandler[In, Out any](
 				return nil, err
 			}
 			outMsg := message.Copy(msg, data)
-			outMsg.Properties = props(msg.Properties)
+			outMsg.Attributes = props(msg.Attributes)
 			msgs = append(msgs, outMsg)
 		}
 
@@ -74,13 +74,13 @@ func TestRouter_BasicRouting(t *testing.T) {
 				ConfirmedAt: time.Now(),
 			}}, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			subject, _ := prop.Subject()
 			return subject == "orders.new"
 		},
-		func(prop message.Properties) message.Properties {
-			p := make(message.Properties)
-			p[message.PropSubject] = "orders.confirmed"
+		func(prop message.Attributes) message.Attributes {
+			p := make(message.Attributes)
+			p[message.AttrSubject] = "orders.confirmed"
 			return p
 		},
 	)
@@ -89,7 +89,7 @@ func TestRouter_BasicRouting(t *testing.T) {
 
 	orderData, _ := json.Marshal(Order{ID: "order-1", Amount: 100})
 	in := channel.FromValues(
-		message.New(orderData, message.Properties{message.PropSubject: "orders.new"}),
+		message.New(orderData, message.Attributes{message.AttrSubject: "orders.new"}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -107,13 +107,13 @@ func TestRouter_BasicRouting(t *testing.T) {
 	}
 
 	if len(results) > 0 {
-		subject, _ := results[0].Properties.Subject()
+		subject, _ := results[0].Attributes.Subject()
 		if subject != "orders.confirmed" {
 			t.Errorf("Expected subject 'orders.confirmed', got %s", subject)
 		}
 
 		var confirmed OrderConfirmed
-		json.Unmarshal(results[0].Payload, &confirmed)
+		json.Unmarshal(results[0].Data, &confirmed)
 		if confirmed.ID != "order-1" {
 			t.Errorf("Expected ID 'order-1', got %s", confirmed.ID)
 		}
@@ -126,13 +126,13 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 			order.Amount *= 2
 			return []Order{order}, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			subject, _ := prop.Subject()
 			return subject == "orders"
 		},
-		func(prop message.Properties) message.Properties {
-			p := make(message.Properties)
-			p[message.PropSubject] = "orders.processed"
+		func(prop message.Attributes) message.Attributes {
+			p := make(message.Attributes)
+			p[message.AttrSubject] = "orders.processed"
 			return p
 		},
 	)
@@ -141,13 +141,13 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 		func(ctx context.Context, order Order) ([]OrderConfirmed, error) {
 			return []OrderConfirmed{{ID: order.ID}}, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			subject, _ := prop.Subject()
 			return subject == "confirmations"
 		},
-		func(prop message.Properties) message.Properties {
-			p := make(message.Properties)
-			p[message.PropSubject] = "confirmations.done"
+		func(prop message.Attributes) message.Attributes {
+			p := make(message.Attributes)
+			p[message.AttrSubject] = "confirmations.done"
 			return p
 		},
 	)
@@ -158,8 +158,8 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 	confirmData, _ := json.Marshal(Order{ID: "order-2", Amount: 75})
 
 	in := channel.FromValues(
-		message.New(orderData, message.Properties{message.PropSubject: "orders"}),
-		message.New(confirmData, message.Properties{message.PropSubject: "confirmations"}),
+		message.New(orderData, message.Attributes{message.AttrSubject: "orders"}),
+		message.New(confirmData, message.Attributes{message.AttrSubject: "confirmations"}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -169,7 +169,7 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 
 	results := make(map[string]int)
 	for msg := range out {
-		subject, _ := msg.Properties.Subject()
+		subject, _ := msg.Attributes.Subject()
 		results[subject]++
 	}
 
@@ -186,12 +186,12 @@ func TestRouter_NoMatchingHandler(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			subject, _ := prop.Subject()
 			return subject == "orders"
 		},
-		func(prop message.Properties) message.Properties {
-			return make(message.Properties)
+		func(prop message.Attributes) message.Attributes {
+			return make(message.Attributes)
 		},
 	)
 
@@ -203,8 +203,8 @@ func TestRouter_NoMatchingHandler(t *testing.T) {
 	var nackErr error
 
 	in := channel.FromValues(
-		message.NewWithAcking(data, message.Properties{
-			message.PropSubject: "unknown",
+		message.NewWithAcking(data, message.Attributes{
+			message.AttrSubject: "unknown",
 		},
 			func() {},
 			func(err error) {
@@ -241,11 +241,11 @@ func TestRouter_HandlerError(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return nil, testErr
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			return true
 		},
-		func(prop message.Properties) message.Properties {
-			return make(message.Properties)
+		func(prop message.Attributes) message.Attributes {
+			return make(message.Attributes)
 		},
 	)
 
@@ -291,11 +291,11 @@ func TestRouter_UnmarshalError(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			return true
 		},
-		func(prop message.Properties) message.Properties {
-			return make(message.Properties)
+		func(prop message.Attributes) message.Attributes {
+			return make(message.Attributes)
 		},
 	)
 
@@ -334,11 +334,11 @@ func TestRouter_AckOnSuccess(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			return true
 		},
-		func(prop message.Properties) message.Properties {
-			return make(message.Properties)
+		func(prop message.Attributes) message.Attributes {
+			return make(message.Attributes)
 		},
 	)
 
@@ -380,11 +380,11 @@ func TestRouter_Concurrency(t *testing.T) {
 			mu.Unlock()
 			return []Order{order}, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			return true
 		},
-		func(prop message.Properties) message.Properties {
-			return make(message.Properties)
+		func(prop message.Attributes) message.Attributes {
+			return make(message.Attributes)
 		},
 	)
 
@@ -425,11 +425,11 @@ func TestRouter_WithRecover(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			panic("handler panic")
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			return true
 		},
-		func(prop message.Properties) message.Properties {
-			return make(message.Properties)
+		func(prop message.Attributes) message.Attributes {
+			return make(message.Attributes)
 		},
 	)
 
@@ -459,11 +459,11 @@ func TestRouter_MultipleOutputMessages(t *testing.T) {
 				{ID: order.ID + "-2", Amount: order.Amount},
 			}, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			return true
 		},
-		func(prop message.Properties) message.Properties {
-			return make(message.Properties)
+		func(prop message.Attributes) message.Attributes {
+			return make(message.Attributes)
 		},
 	)
 
@@ -492,16 +492,16 @@ func TestRouter_PreservesProperties(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			return true
 		},
-		func(prop message.Properties) message.Properties {
+		func(prop message.Attributes) message.Attributes {
 			// Preserve correlation ID
-			p := make(message.Properties)
+			p := make(message.Attributes)
 			if corr, ok := prop.CorrelationID(); ok {
-				p[message.PropCorrelationID] = corr
+				p[message.AttrCorrelationID] = corr
 			}
-			p[message.PropSubject] = "processed"
+			p[message.AttrSubject] = "processed"
 			return p
 		},
 	)
@@ -510,8 +510,8 @@ func TestRouter_PreservesProperties(t *testing.T) {
 
 	data, _ := json.Marshal(Order{ID: "order-1"})
 	in := channel.FromValues(
-		message.New(data, message.Properties{
-			message.PropCorrelationID: "corr-123",
+		message.New(data, message.Attributes{
+			message.AttrCorrelationID: "corr-123",
 		}),
 	)
 
@@ -521,11 +521,11 @@ func TestRouter_PreservesProperties(t *testing.T) {
 	out := router.Start(ctx, in)
 
 	for msg := range out {
-		corrID, ok := msg.Properties.CorrelationID()
+		corrID, ok := msg.Attributes.CorrelationID()
 		if !ok || corrID != "corr-123" {
 			t.Errorf("Expected correlation ID 'corr-123', got %s (ok=%v)", corrID, ok)
 		}
-		subject, ok := msg.Properties.Subject()
+		subject, ok := msg.Attributes.Subject()
 		if !ok || subject != "processed" {
 			t.Errorf("Expected subject 'processed', got %s (ok=%v)", subject, ok)
 		}
@@ -536,26 +536,26 @@ func TestRouter_AddPipe_Basic(t *testing.T) {
 	// Create a simple pipe that doubles the message amount
 	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		var order Order
-		if err := json.Unmarshal(msg.Payload, &order); err != nil {
+		if err := json.Unmarshal(msg.Data, &order); err != nil {
 			return nil, err
 		}
 		order.Amount *= 2
 		data, _ := json.Marshal(order)
 		outMsg := message.Copy(msg, data)
-		outMsg.Properties = make(message.Properties)
-		outMsg.Properties[message.PropSubject] = "orders.doubled"
+		outMsg.Attributes = make(message.Attributes)
+		outMsg.Attributes[message.AttrSubject] = "orders.doubled"
 		return []*message.Message{outMsg}, nil
 	})
 
 	router := cqrs.NewRouter(cqrs.RouterConfig{})
-	router.AddPipe(pipe, func(prop message.Properties) bool {
+	router.AddPipe(pipe, func(prop message.Attributes) bool {
 		subject, _ := prop.Subject()
 		return subject == "orders.double"
 	})
 
 	orderData, _ := json.Marshal(Order{ID: "order-1", Amount: 100})
 	in := channel.FromValues(
-		message.New(orderData, message.Properties{message.PropSubject: "orders.double"}),
+		message.New(orderData, message.Attributes{message.AttrSubject: "orders.double"}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -572,13 +572,13 @@ func TestRouter_AddPipe_Basic(t *testing.T) {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
 
-	subject, _ := results[0].Properties.Subject()
+	subject, _ := results[0].Attributes.Subject()
 	if subject != "orders.doubled" {
 		t.Errorf("Expected subject 'orders.doubled', got %s", subject)
 	}
 
 	var order Order
-	json.Unmarshal(results[0].Payload, &order)
+	json.Unmarshal(results[0].Data, &order)
 	if order.Amount != 200 {
 		t.Errorf("Expected amount 200, got %d", order.Amount)
 	}
@@ -588,14 +588,14 @@ func TestRouter_AddPipe_WithHandlers(t *testing.T) {
 	// Create a pipe for "orders.double" messages
 	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		var order Order
-		if err := json.Unmarshal(msg.Payload, &order); err != nil {
+		if err := json.Unmarshal(msg.Data, &order); err != nil {
 			return nil, err
 		}
 		order.Amount *= 2
 		data, _ := json.Marshal(order)
 		outMsg := message.Copy(msg, data)
-		outMsg.Properties = make(message.Properties)
-		outMsg.Properties[message.PropSubject] = "orders.doubled"
+		outMsg.Attributes = make(message.Attributes)
+		outMsg.Attributes[message.AttrSubject] = "orders.doubled"
 		return []*message.Message{outMsg}, nil
 	})
 
@@ -604,19 +604,19 @@ func TestRouter_AddPipe_WithHandlers(t *testing.T) {
 		func(ctx context.Context, order Order) ([]OrderConfirmed, error) {
 			return []OrderConfirmed{{ID: order.ID, ConfirmedAt: time.Now()}}, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			subject, _ := prop.Subject()
 			return subject == "orders.confirm"
 		},
-		func(prop message.Properties) message.Properties {
-			p := make(message.Properties)
-			p[message.PropSubject] = "orders.confirmed"
+		func(prop message.Attributes) message.Attributes {
+			p := make(message.Attributes)
+			p[message.AttrSubject] = "orders.confirmed"
 			return p
 		},
 	)
 
 	router := cqrs.NewRouter(cqrs.RouterConfig{}, confirmHandler)
-	router.AddPipe(pipe, func(prop message.Properties) bool {
+	router.AddPipe(pipe, func(prop message.Attributes) bool {
 		subject, _ := prop.Subject()
 		return subject == "orders.double"
 	})
@@ -625,8 +625,8 @@ func TestRouter_AddPipe_WithHandlers(t *testing.T) {
 	confirmData, _ := json.Marshal(Order{ID: "order-2", Amount: 50})
 
 	in := channel.FromValues(
-		message.New(doubleData, message.Properties{message.PropSubject: "orders.double"}),
-		message.New(confirmData, message.Properties{message.PropSubject: "orders.confirm"}),
+		message.New(doubleData, message.Attributes{message.AttrSubject: "orders.double"}),
+		message.New(confirmData, message.Attributes{message.AttrSubject: "orders.confirm"}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -636,7 +636,7 @@ func TestRouter_AddPipe_WithHandlers(t *testing.T) {
 
 	results := make(map[string]int)
 	for msg := range out {
-		subject, _ := msg.Properties.Subject()
+		subject, _ := msg.Attributes.Subject()
 		results[subject]++
 	}
 
@@ -652,37 +652,37 @@ func TestRouter_AddPipe_MultiplePipes(t *testing.T) {
 	// Pipe 1: doubles the amount
 	doublePipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		var order Order
-		if err := json.Unmarshal(msg.Payload, &order); err != nil {
+		if err := json.Unmarshal(msg.Data, &order); err != nil {
 			return nil, err
 		}
 		order.Amount *= 2
 		data, _ := json.Marshal(order)
 		outMsg := message.Copy(msg, data)
-		outMsg.Properties = make(message.Properties)
-		outMsg.Properties[message.PropSubject] = "orders.doubled"
+		outMsg.Attributes = make(message.Attributes)
+		outMsg.Attributes[message.AttrSubject] = "orders.doubled"
 		return []*message.Message{outMsg}, nil
 	})
 
 	// Pipe 2: triples the amount
 	triplePipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		var order Order
-		if err := json.Unmarshal(msg.Payload, &order); err != nil {
+		if err := json.Unmarshal(msg.Data, &order); err != nil {
 			return nil, err
 		}
 		order.Amount *= 3
 		data, _ := json.Marshal(order)
 		outMsg := message.Copy(msg, data)
-		outMsg.Properties = make(message.Properties)
-		outMsg.Properties[message.PropSubject] = "orders.tripled"
+		outMsg.Attributes = make(message.Attributes)
+		outMsg.Attributes[message.AttrSubject] = "orders.tripled"
 		return []*message.Message{outMsg}, nil
 	})
 
 	router := cqrs.NewRouter(cqrs.RouterConfig{})
-	router.AddPipe(doublePipe, func(prop message.Properties) bool {
+	router.AddPipe(doublePipe, func(prop message.Attributes) bool {
 		subject, _ := prop.Subject()
 		return subject == "orders.double"
 	})
-	router.AddPipe(triplePipe, func(prop message.Properties) bool {
+	router.AddPipe(triplePipe, func(prop message.Attributes) bool {
 		subject, _ := prop.Subject()
 		return subject == "orders.triple"
 	})
@@ -691,8 +691,8 @@ func TestRouter_AddPipe_MultiplePipes(t *testing.T) {
 	tripleData, _ := json.Marshal(Order{ID: "order-2", Amount: 100})
 
 	in := channel.FromValues(
-		message.New(doubleData, message.Properties{message.PropSubject: "orders.double"}),
-		message.New(tripleData, message.Properties{message.PropSubject: "orders.triple"}),
+		message.New(doubleData, message.Attributes{message.AttrSubject: "orders.double"}),
+		message.New(tripleData, message.Attributes{message.AttrSubject: "orders.triple"}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -702,9 +702,9 @@ func TestRouter_AddPipe_MultiplePipes(t *testing.T) {
 
 	results := make(map[string]*Order)
 	for msg := range out {
-		subject, _ := msg.Properties.Subject()
+		subject, _ := msg.Attributes.Subject()
 		var order Order
-		json.Unmarshal(msg.Payload, &order)
+		json.Unmarshal(msg.Data, &order)
 		results[subject] = &order
 	}
 
@@ -733,26 +733,26 @@ func TestRouter_AddPipe_NoMatch(t *testing.T) {
 		func(ctx context.Context, order Order) ([]Order, error) {
 			return []Order{order}, nil
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			subject, _ := prop.Subject()
 			return subject == "orders.process"
 		},
-		func(prop message.Properties) message.Properties {
-			p := make(message.Properties)
-			p[message.PropSubject] = "orders.processed"
+		func(prop message.Attributes) message.Attributes {
+			p := make(message.Attributes)
+			p[message.AttrSubject] = "orders.processed"
 			return p
 		},
 	)
 
 	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
-	router.AddPipe(pipe, func(prop message.Properties) bool {
+	router.AddPipe(pipe, func(prop message.Attributes) bool {
 		subject, _ := prop.Subject()
 		return subject == "orders.double"
 	})
 
 	orderData, _ := json.Marshal(Order{ID: "order-1", Amount: 100})
 	in := channel.FromValues(
-		message.New(orderData, message.Properties{message.PropSubject: "orders.process"}),
+		message.New(orderData, message.Attributes{message.AttrSubject: "orders.process"}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -762,7 +762,7 @@ func TestRouter_AddPipe_NoMatch(t *testing.T) {
 
 	var count int
 	for msg := range out {
-		subject, _ := msg.Properties.Subject()
+		subject, _ := msg.Attributes.Subject()
 		if subject != "orders.processed" {
 			t.Errorf("Expected subject 'orders.processed', got %s", subject)
 		}
@@ -778,7 +778,7 @@ func TestRouter_AddPipe_MultipleOutputs(t *testing.T) {
 	// Create a pipe that produces multiple outputs
 	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		var order Order
-		if err := json.Unmarshal(msg.Payload, &order); err != nil {
+		if err := json.Unmarshal(msg.Data, &order); err != nil {
 			return nil, err
 		}
 
@@ -790,25 +790,25 @@ func TestRouter_AddPipe_MultipleOutputs(t *testing.T) {
 		data2, _ := json.Marshal(out2)
 
 		msg1 := message.Copy(msg, data1)
-		msg1.Properties = make(message.Properties)
-		msg1.Properties[message.PropSubject] = "orders.split"
+		msg1.Attributes = make(message.Attributes)
+		msg1.Attributes[message.AttrSubject] = "orders.split"
 
 		msg2 := message.Copy(msg, data2)
-		msg2.Properties = make(message.Properties)
-		msg2.Properties[message.PropSubject] = "orders.split"
+		msg2.Attributes = make(message.Attributes)
+		msg2.Attributes[message.AttrSubject] = "orders.split"
 
 		return []*message.Message{msg1, msg2}, nil
 	})
 
 	router := cqrs.NewRouter(cqrs.RouterConfig{})
-	router.AddPipe(pipe, func(prop message.Properties) bool {
+	router.AddPipe(pipe, func(prop message.Attributes) bool {
 		subject, _ := prop.Subject()
 		return subject == "orders.split"
 	})
 
 	orderData, _ := json.Marshal(Order{ID: "order", Amount: 100})
 	in := channel.FromValues(
-		message.New(orderData, message.Properties{message.PropSubject: "orders.split"}),
+		message.New(orderData, message.Attributes{message.AttrSubject: "orders.split"}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

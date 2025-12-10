@@ -11,7 +11,7 @@ import (
 )
 
 // RouteFunc determines the routing key (topic) for a message based on its properties.
-type RouteFunc func(message.Properties) string
+type RouteFunc func(message.Attributes) string
 
 // ============================================================================
 // Routing Key Helpers
@@ -19,7 +19,7 @@ type RouteFunc func(message.Properties) string
 
 // RouteBySubject returns a RouteFunc that routes by the message subject property.
 func RouteBySubject() RouteFunc {
-	return func(props message.Properties) string {
+	return func(props message.Attributes) string {
 		subject, _ := props.Subject()
 		return subject
 	}
@@ -27,7 +27,7 @@ func RouteBySubject() RouteFunc {
 
 // RouteByProperty returns a RouteFunc that routes by a specific message property.
 func RouteByProperty(key string) RouteFunc {
-	return func(props message.Properties) string {
+	return func(props message.Attributes) string {
 		value, ok := props[key].(string)
 		if !ok {
 			return ""
@@ -38,14 +38,14 @@ func RouteByProperty(key string) RouteFunc {
 
 // RouteStatic returns a RouteFunc that always routes to the same topic.
 func RouteStatic(topic string) RouteFunc {
-	return func(props message.Properties) string {
+	return func(props message.Attributes) string {
 		return topic
 	}
 }
 
 // RouteByFormat returns a RouteFunc that formats the topic using fmt.Sprintf with property values.
 func RouteByFormat(format string, keys ...string) RouteFunc {
-	return func(props message.Properties) string {
+	return func(props message.Attributes) string {
 		values := make([]any, len(keys))
 		for i, key := range keys {
 			values[i] = props[key]
@@ -67,7 +67,7 @@ type Publisher struct {
 func (p *Publisher) Publish(ctx context.Context, msgs <-chan *message.Message) <-chan struct{} {
 	// Extract topic from message properties, defaulting to empty string
 	groupBy := func(msg *message.Message) string {
-		topic, _ := msg.Properties.Topic()
+		topic, _ := msg.Attributes.Topic()
 		return topic
 	}
 	group := channel.GroupBy(msgs, groupBy, channel.GroupByConfig{
@@ -95,7 +95,7 @@ type PublisherConfig struct {
 
 // NewPublisher creates a Publisher that wraps a Sender with batching and gopipe processing.
 // Messages are grouped by topic and sent in batches. The topic is determined by the
-// message.PropTopic property. If not set, empty string is used as the default topic.
+// message.AttrTopic property. If not set, empty string is used as the default topic.
 //
 // Note: Empty string is a valid topic representing the default topic. Senders should handle
 // this appropriately, either by configuring a default topic name or logging errors when

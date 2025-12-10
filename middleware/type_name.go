@@ -39,10 +39,10 @@ func MessageTypeName[T any]() gopipe.MiddlewareFunc[*message.Message, *message.M
 			}
 
 			for _, outMsg := range results {
-				if outMsg.Properties == nil {
-					outMsg.Properties = make(message.Properties)
+				if outMsg.Attributes == nil {
+					outMsg.Attributes = make(message.Attributes)
 				}
-				outMsg.Properties[message.PropSubject] = typeName
+				outMsg.Attributes[message.AttrSubject] = typeName
 			}
 
 			return results, nil

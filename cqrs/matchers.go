@@ -7,7 +7,7 @@ import (
 )
 
 // Matcher is a function that matches message properties.
-type Matcher func(message.Properties) bool
+type Matcher func(message.Attributes) bool
 
 // ============================================================================
 // Matcher Combinators
@@ -24,7 +24,7 @@ type Matcher func(message.Properties) bool
 //	)
 //	// Matches messages with subject="CreateOrder" AND type="command"
 func Match(matchers ...Matcher) Matcher {
-	return func(prop message.Properties) bool {
+	return func(prop message.Attributes) bool {
 		for _, matcher := range matchers {
 			if !matcher(prop) {
 				return false
@@ -45,7 +45,7 @@ func Match(matchers ...Matcher) Matcher {
 //	matcher := cqrs.MatchSubject("CreateOrder")
 //	// Matches messages with subject="CreateOrder"
 func MatchSubject(subject string) Matcher {
-	return func(prop message.Properties) bool {
+	return func(prop message.Attributes) bool {
 		propSubject, _ := prop.Subject()
 		return propSubject == subject
 	}
@@ -58,7 +58,7 @@ func MatchSubject(subject string) Matcher {
 //	matcher := cqrs.MatchType("command")
 //	// Matches messages with type="command"
 func MatchType(msgType string) Matcher {
-	return func(prop message.Properties) bool {
+	return func(prop message.Attributes) bool {
 		propType, _ := prop["type"].(string)
 		return propType == msgType
 	}
@@ -72,7 +72,7 @@ func MatchType(msgType string) Matcher {
 //	matcher := cqrs.MatchProperty("priority", "high")
 //	// Matches messages with priority="high"
 func MatchProperty(key string, value any) Matcher {
-	return func(prop message.Properties) bool {
+	return func(prop message.Attributes) bool {
 		propValue, ok := prop[key]
 		if !ok {
 			return false
@@ -95,7 +95,7 @@ func MatchProperty(key string, value any) Matcher {
 //	// Matches messages with message_type="CreateOrder"
 func MatchTypeName[T any]() Matcher {
 	typeName := typeNameOf[T]()
-	return func(prop message.Properties) bool {
+	return func(prop message.Attributes) bool {
 		propType, _ := prop.Type()
 		return propType == typeName
 	}
@@ -109,7 +109,7 @@ func MatchTypeName[T any]() Matcher {
 //	matcher := cqrs.MatchHasProperty("correlation-id")
 //	// Matches messages that have a "correlation-id" property
 func MatchHasProperty(key string) Matcher {
-	return func(prop message.Properties) bool {
+	return func(prop message.Attributes) bool {
 		_, ok := prop[key]
 		return ok
 	}
@@ -119,12 +119,12 @@ func MatchHasProperty(key string) Matcher {
 // Property Transformers (Deprecated)
 // ============================================================================
 //
-// These functions are deprecated. Use PropertyProvider functions instead:
-// - PropagateCorrelation() -> PropertyProvider in properties.go
-// - WithType() -> PropertyProvider in properties.go
-// - WithSubject() -> PropertyProvider in properties.go
-// - WithSubjectAndType() -> CombineProps(WithSubject(), WithType())
-// - WithTypeAndName[T]() -> CombineProps(WithTypeName(), WithType())
+// These functions are deprecated. Use AttributeProvider functions instead:
+// - PropagateCorrelation() -> AttributeProvider in properties.go
+// - WithType() -> AttributeProvider in properties.go
+// - WithSubject() -> AttributeProvider in properties.go
+// - WithSubjectAndType() -> CombineAttrs(WithSubject(), WithType())
+// - WithTypeAndName[T]() -> CombineAttrs(WithTypeName(), WithType())
 
 // ============================================================================
 // Helpers

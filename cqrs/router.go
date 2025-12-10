@@ -34,7 +34,7 @@ type Router struct {
 // pipeEntry stores a pipe with its matcher function.
 type pipeEntry struct {
 	pipe  gopipe.Pipe[*message.Message, *message.Message]
-	match func(prop message.Properties) bool
+	match func(prop message.Attributes) bool
 }
 
 // NewRouter creates a router with the given configuration and handlers.
@@ -52,7 +52,7 @@ func (r *Router) AddHandler(handler Handler) {
 
 // AddPipe appends a pipe to the router's pipe list.
 // Messages matching the matcher will be sent to the pipe instead of handlers.
-func (r *Router) AddPipe(pipe gopipe.Pipe[*message.Message, *message.Message], match func(prop message.Properties) bool) {
+func (r *Router) AddPipe(pipe gopipe.Pipe[*message.Message, *message.Message], match func(prop message.Attributes) bool) {
 	r.pipes = append(r.pipes, pipeEntry{
 		pipe:  pipe,
 		match: match,
@@ -94,7 +94,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan
 			// Check if message matches any pipe
 			matched := false
 			for i, pe := range r.pipes {
-				if pe.match(msg.Properties) {
+				if pe.match(msg.Attributes) {
 					pipeInputs[i] <- msg
 					matched = true
 					break
@@ -117,7 +117,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan
 func (r *Router) startWithHandlersOnly(ctx context.Context, msgs <-chan *message.Message) <-chan *message.Message {
 	handle := func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		for _, h := range r.handlers {
-			if h.Match(msg.Properties) {
+			if h.Match(msg.Attributes) {
 				return h.Handle(ctx, msg)
 			}
 		}
@@ -134,11 +134,11 @@ func (r *Router) startWithHandlersOnly(ctx context.Context, msgs <-chan *message
 		}),
 		gopipe.WithMetadataProvider[*message.Message, *message.Message](func(msg *message.Message) gopipe.Metadata {
 			metadata := gopipe.Metadata{}
-			if id, ok := msg.Properties.ID(); ok {
-				metadata[message.PropID] = id
+			if id, ok := msg.Attributes.ID(); ok {
+				metadata[message.AttrID] = id
 			}
-			if corr, ok := msg.Properties.CorrelationID(); ok {
-				metadata[message.PropCorrelationID] = corr
+			if corr, ok := msg.Attributes.CorrelationID(); ok {
+				metadata[message.AttrCorrelationID] = corr
 			}
 			return metadata
 		}),

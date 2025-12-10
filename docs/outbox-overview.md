@@ -50,7 +50,7 @@ INSERT INTO orders (id, customer_id, amount)
 VALUES ('order-123', 'customer-456', 100);
 
 -- Store message in outbox
-INSERT INTO message_outbox (payload, properties)
+INSERT INTO message_outbox (data, attributes)
 VALUES ('{"id":"order-123",...}', '{"subject":"OrderCreated"}');
 
 COMMIT; -- Both writes succeed or both fail (atomic!)
@@ -122,8 +122,8 @@ Scenario 3: Network issues
 ```sql
 CREATE TABLE message_outbox (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    payload BYTEA NOT NULL,
-    properties JSONB NOT NULL,
+    data BYTEA NOT NULL,
+    attributes JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     published_at TIMESTAMPTZ,
     attempts INT NOT NULL DEFAULT 0,
@@ -223,9 +223,9 @@ func handleCreateOrder(ctx context.Context, cmd CreateOrder) error {
 
     // Store event in outbox (same transaction!)
     evt := OrderCreated{ID: cmd.ID, Amount: cmd.Amount}
-    payload, _ := json.Marshal(evt)
-    msg := message.New(payload, message.Properties{
-        message.PropSubject: "OrderCreated",
+    data, _ := json.Marshal(evt)
+    msg := message.New(data, message.Attributes{
+        message.AttrSubject: "OrderCreated",
     })
 
     if err := outboxStore.Store(ctx, tx, msg); err != nil {
@@ -366,9 +366,9 @@ Even with outbox, consumers should be idempotent:
 
 ```go
 // Message should include idempotency key
-props := message.Properties{
-    message.PropSubject:       "OrderCreated",
-    message.PropCorrelationID: "corr-123",
+props := message.Attributes{
+    message.AttrSubject:       "OrderCreated",
+    message.AttrCorrelationID: "corr-123",
     "idempotency_key":         "order-123-created",  // ✅ Idempotency key
 }
 ```

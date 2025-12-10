@@ -31,7 +31,7 @@ func (s *SenderTestSuite) Run(t *testing.T) {
 func (s *SenderTestSuite) TestSendSingleMessage(t *testing.T) {
 	sender := s.NewSender()
 	ctx := context.Background()
-	msg := message.New([]byte("test payload"), message.Properties{"key": "value"})
+	msg := message.New([]byte("test payload"), message.Attributes{"key": "value"})
 
 	err := sender.Send(ctx, "test/topic", []*message.Message{msg})
 	if err != nil {
@@ -43,9 +43,9 @@ func (s *SenderTestSuite) TestSendMultipleMessages(t *testing.T) {
 	sender := s.NewSender()
 	ctx := context.Background()
 	msgs := []*message.Message{
-		message.New([]byte("msg1"), message.Properties{}),
-		message.New([]byte("msg2"), message.Properties{}),
-		message.New([]byte("msg3"), message.Properties{}),
+		message.New([]byte("msg1"), message.Attributes{}),
+		message.New([]byte("msg2"), message.Attributes{}),
+		message.New([]byte("msg3"), message.Attributes{}),
 	}
 
 	err := sender.Send(ctx, "test/topic", msgs)
@@ -69,7 +69,7 @@ func (s *SenderTestSuite) TestSendContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	msg := message.New([]byte("test"), message.Properties{})
+	msg := message.New([]byte("test"), message.Attributes{})
 	err := sender.Send(ctx, "test/topic", []*message.Message{msg})
 
 	// Should return context error (or be a no-op for some implementations)
@@ -83,7 +83,7 @@ func (s *SenderTestSuite) TestSendDifferentTopics(t *testing.T) {
 
 	topics := []string{"topic/a", "topic/b", "topic/c/nested"}
 	for _, topic := range topics {
-		msg := message.New([]byte(topic), message.Properties{})
+		msg := message.New([]byte(topic), message.Attributes{})
 		err := sender.Send(ctx, topic, []*message.Message{msg})
 		if err != nil {
 			t.Fatalf("Send to %s failed: %v", topic, err)
@@ -159,7 +159,7 @@ func TestChannelBroker_Subscribe_SendReceive(t *testing.T) {
 	ch := broker.Subscribe(ctx, "test/topic")
 
 	// Send message
-	msg := message.New([]byte("hello"), message.Properties{"id": "1"})
+	msg := message.New([]byte("hello"), message.Attributes{"id": "1"})
 	err := broker.Send(ctx, "test/topic", []*message.Message{msg})
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -168,8 +168,8 @@ func TestChannelBroker_Subscribe_SendReceive(t *testing.T) {
 	// Receive from subscription channel
 	select {
 	case received := <-ch:
-		if !bytes.Equal(received.Payload, []byte("hello")) {
-			t.Errorf("Expected 'hello', got %s", received.Payload)
+		if !bytes.Equal(received.Data, []byte("hello")) {
+			t.Errorf("Expected 'hello', got %s", received.Data)
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("Timeout waiting for message")
@@ -189,7 +189,7 @@ func TestChannelBroker_Subscribe_MultipleSubscribers(t *testing.T) {
 	ch3 := broker.Subscribe(ctx, "events")
 
 	// Send one message
-	msg := message.New([]byte("event"), message.Properties{})
+	msg := message.New([]byte("event"), message.Attributes{})
 	err := broker.Send(ctx, "events", []*message.Message{msg})
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -199,8 +199,8 @@ func TestChannelBroker_Subscribe_MultipleSubscribers(t *testing.T) {
 	for i, ch := range []<-chan *message.Message{ch1, ch2, ch3} {
 		select {
 		case received := <-ch:
-			if !bytes.Equal(received.Payload, []byte("event")) {
-				t.Errorf("Subscriber %d: expected 'event', got %s", i+1, received.Payload)
+			if !bytes.Equal(received.Data, []byte("event")) {
+				t.Errorf("Subscriber %d: expected 'event', got %s", i+1, received.Data)
 			}
 		case <-time.After(100 * time.Millisecond):
 			t.Fatalf("Subscriber %d: timeout waiting for message", i+1)
@@ -221,19 +221,19 @@ func TestChannelBroker_Subscribe_DifferentTopics(t *testing.T) {
 
 	// Send to orders topic
 	broker.Send(ctx, "orders", []*message.Message{
-		message.New([]byte("order-msg"), message.Properties{}),
+		message.New([]byte("order-msg"), message.Attributes{}),
 	})
 
 	// Send to users topic
 	broker.Send(ctx, "users", []*message.Message{
-		message.New([]byte("user-msg"), message.Properties{}),
+		message.New([]byte("user-msg"), message.Attributes{}),
 	})
 
 	// Check orders channel
 	select {
 	case msg := <-chOrders:
-		if !bytes.Equal(msg.Payload, []byte("order-msg")) {
-			t.Errorf("Orders: expected 'order-msg', got %s", msg.Payload)
+		if !bytes.Equal(msg.Data, []byte("order-msg")) {
+			t.Errorf("Orders: expected 'order-msg', got %s", msg.Data)
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("Timeout waiting for orders message")
@@ -242,8 +242,8 @@ func TestChannelBroker_Subscribe_DifferentTopics(t *testing.T) {
 	// Check users channel
 	select {
 	case msg := <-chUsers:
-		if !bytes.Equal(msg.Payload, []byte("user-msg")) {
-			t.Errorf("Users: expected 'user-msg', got %s", msg.Payload)
+		if !bytes.Equal(msg.Data, []byte("user-msg")) {
+			t.Errorf("Users: expected 'user-msg', got %s", msg.Data)
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("Timeout waiting for users message")
@@ -262,20 +262,20 @@ func TestChannelBroker_Subscribe_ExactMatchOnly(t *testing.T) {
 
 	// Send to different topics
 	broker.Send(ctx, "orders", []*message.Message{
-		message.New([]byte("parent"), message.Properties{}),
+		message.New([]byte("parent"), message.Attributes{}),
 	})
 	broker.Send(ctx, "orders/created/v2", []*message.Message{
-		message.New([]byte("child"), message.Properties{}),
+		message.New([]byte("child"), message.Attributes{}),
 	})
 	broker.Send(ctx, "orders/created", []*message.Message{
-		message.New([]byte("exact"), message.Properties{}),
+		message.New([]byte("exact"), message.Attributes{}),
 	})
 
 	// Should only receive exact match
 	select {
 	case msg := <-ch:
-		if !bytes.Equal(msg.Payload, []byte("exact")) {
-			t.Errorf("Expected 'exact', got %s", msg.Payload)
+		if !bytes.Equal(msg.Data, []byte("exact")) {
+			t.Errorf("Expected 'exact', got %s", msg.Data)
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("Timeout waiting for message")
@@ -284,7 +284,7 @@ func TestChannelBroker_Subscribe_ExactMatchOnly(t *testing.T) {
 	// Should not receive more messages
 	select {
 	case msg := <-ch:
-		t.Errorf("Unexpected message: %s", msg.Payload)
+		t.Errorf("Unexpected message: %s", msg.Data)
 	case <-time.After(50 * time.Millisecond):
 		// Expected - no more messages
 	}
@@ -335,7 +335,7 @@ func TestChannelBroker_Close(t *testing.T) {
 	}
 
 	// Send after close should fail
-	msg := message.New([]byte("test"), message.Properties{})
+	msg := message.New([]byte("test"), message.Attributes{})
 	err = broker.Send(ctx, "test", []*message.Message{msg})
 	if err != pubsub.ErrBrokerClosed {
 		t.Errorf("Expected ErrBrokerClosed, got %v", err)
@@ -359,7 +359,7 @@ func TestChannelBroker_Receive_Polling(t *testing.T) {
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		broker.Send(ctx, "test", []*message.Message{
-			message.New([]byte("delayed"), message.Properties{}),
+			message.New([]byte("delayed"), message.Attributes{}),
 		})
 	}()
 
@@ -372,8 +372,8 @@ func TestChannelBroker_Receive_Polling(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Errorf("Expected 1 message, got %d", len(msgs))
 	}
-	if len(msgs) > 0 && !bytes.Equal(msgs[0].Payload, []byte("delayed")) {
-		t.Errorf("Expected 'delayed', got %s", msgs[0].Payload)
+	if len(msgs) > 0 && !bytes.Equal(msgs[0].Data, []byte("delayed")) {
+		t.Errorf("Expected 'delayed', got %s", msgs[0].Data)
 	}
 }
 
@@ -398,7 +398,7 @@ func TestChannelBroker_ConcurrentSendSubscribe(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			for j := 0; j < numMessages; j++ {
-				msg := message.New([]byte("msg"), message.Properties{})
+				msg := message.New([]byte("msg"), message.Attributes{})
 				broker.Send(ctx, topic, []*message.Message{msg})
 			}
 		}(i)
@@ -495,7 +495,7 @@ func TestIOBroker_SenderInterface(t *testing.T) {
 	ctx := context.Background()
 
 	// Test with valid JSON payload
-	msg := message.New([]byte(`{"test": "payload"}`), message.Properties{"key": "value"})
+	msg := message.New([]byte(`{"test": "payload"}`), message.Attributes{"key": "value"})
 	err := sender.Send(ctx, "test/topic", []*message.Message{msg})
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -503,8 +503,8 @@ func TestIOBroker_SenderInterface(t *testing.T) {
 
 	// Test multiple messages
 	msgs := []*message.Message{
-		message.New([]byte(`"msg1"`), message.Properties{}),
-		message.New([]byte(`"msg2"`), message.Properties{}),
+		message.New([]byte(`"msg1"`), message.Attributes{}),
+		message.New([]byte(`"msg2"`), message.Attributes{}),
 	}
 	err = sender.Send(ctx, "test/topic", msgs)
 	if err != nil {

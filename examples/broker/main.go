@@ -78,7 +78,7 @@ func basicPubSubSubscribe(ctx context.Context, b *pubsub.ChannelBroker, wg *sync
 				if !ok {
 					return
 				}
-				fmt.Printf("  Received: %s\n", msg.Payload)
+				fmt.Printf("  Received: %s\n", msg.Data)
 			case <-time.After(100 * time.Millisecond):
 				return
 			}
@@ -90,10 +90,10 @@ func basicPubSubSubscribe(ctx context.Context, b *pubsub.ChannelBroker, wg *sync
 
 	// Publish messages - they are delivered to active subscribers
 	b.Send(ctx, "greetings", []*message.Message{
-		message.New([]byte("Hello, World!"), message.Properties{}),
+		message.New([]byte("Hello, World!"), message.Attributes{}),
 	})
 	b.Send(ctx, "greetings", []*message.Message{
-		message.New([]byte("Welcome to gopipe!"), message.Properties{}),
+		message.New([]byte("Welcome to gopipe!"), message.Attributes{}),
 	})
 }
 
@@ -114,7 +114,7 @@ func multipleSubscribers(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.
 					if !ok {
 						return
 					}
-					fmt.Printf("  Subscriber %d received: %s\n", id, msg.Payload)
+					fmt.Printf("  Subscriber %d received: %s\n", id, msg.Data)
 				case <-time.After(100 * time.Millisecond):
 					return
 				}
@@ -126,7 +126,7 @@ func multipleSubscribers(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.
 
 	// Send event - ALL subscribers receive it (fan-out)
 	b.Send(ctx, "events", []*message.Message{
-		message.New([]byte("Important event occurred!"), message.Properties{}),
+		message.New([]byte("Important event occurred!"), message.Attributes{}),
 	})
 }
 
@@ -146,17 +146,17 @@ func hierarchicalTopics(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.W
 				if !ok {
 					return
 				}
-				fmt.Printf("  [orders/created] %s\n", msg.Payload)
+				fmt.Printf("  [orders/created] %s\n", msg.Data)
 			case msg, ok := <-chUpdates:
 				if !ok {
 					return
 				}
-				fmt.Printf("  [orders/updated] %s\n", msg.Payload)
+				fmt.Printf("  [orders/updated] %s\n", msg.Data)
 			case msg, ok := <-chProfile:
 				if !ok {
 					return
 				}
-				fmt.Printf("  [users/profile/updated] %s\n", msg.Payload)
+				fmt.Printf("  [users/profile/updated] %s\n", msg.Data)
 			case <-time.After(100 * time.Millisecond):
 				return
 			}
@@ -167,13 +167,13 @@ func hierarchicalTopics(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.W
 
 	// Send to different topics
 	b.Send(ctx, "orders/created", []*message.Message{
-		message.New([]byte("Order #123 created"), message.Properties{}),
+		message.New([]byte("Order #123 created"), message.Attributes{}),
 	})
 	b.Send(ctx, "orders/updated", []*message.Message{
-		message.New([]byte("Order #456 shipped"), message.Properties{}),
+		message.New([]byte("Order #456 shipped"), message.Attributes{}),
 	})
 	b.Send(ctx, "users/profile/updated", []*message.Message{
-		message.New([]byte("User john updated profile"), message.Properties{}),
+		message.New([]byte("User john updated profile"), message.Attributes{}),
 	})
 }
 
@@ -187,8 +187,8 @@ func receivePollingMode(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.W
 		// Start sending while Receive is waiting
 		time.Sleep(10 * time.Millisecond)
 		b.Send(ctx, "polling/topic", []*message.Message{
-			message.New([]byte("Polled message 1"), message.Properties{}),
-			message.New([]byte("Polled message 2"), message.Properties{}),
+			message.New([]byte("Polled message 1"), message.Attributes{}),
+			message.New([]byte("Polled message 2"), message.Attributes{}),
 		})
 	}()
 
@@ -201,7 +201,7 @@ func receivePollingMode(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.W
 
 	fmt.Printf("  Received %d message(s):\n", len(msgs))
 	for _, msg := range msgs {
-		fmt.Printf("    - %s\n", msg.Payload)
+		fmt.Printf("    - %s\n", msg.Data)
 	}
 }
 
@@ -216,13 +216,13 @@ func ioBrokerExample() {
 	ctx := context.Background()
 
 	// Send messages with properties (payload must be valid JSON)
-	msg1 := message.New([]byte(`"Application started"`), message.Properties{"id": "log-001", "level": "info"})
+	msg1 := message.New([]byte(`"Application started"`), message.Attributes{"id": "log-001", "level": "info"})
 	sender.Send(ctx, "logs/app", []*message.Message{msg1})
 
-	msg2 := message.New([]byte(`"Processing request"`), message.Properties{"id": "log-002", "level": "debug"})
+	msg2 := message.New([]byte(`"Processing request"`), message.Attributes{"id": "log-002", "level": "debug"})
 	sender.Send(ctx, "logs/app", []*message.Message{msg2})
 
-	msg3 := message.New([]byte(`"Connection failed"`), message.Properties{"id": "log-003", "level": "error"})
+	msg3 := message.New([]byte(`"Connection failed"`), message.Attributes{"id": "log-003", "level": "error"})
 	sender.Send(ctx, "logs/error", []*message.Message{msg3})
 
 	fmt.Println("  Written JSONL:")
@@ -244,8 +244,8 @@ func ioBrokerExample() {
 
 	fmt.Println("  Filtered messages (logs/app only):")
 	for _, msg := range msgs {
-		level := msg.Properties["level"]
-		fmt.Printf("    [%s] %s\n", level, msg.Payload)
+		level := msg.Attributes["level"]
+		fmt.Printf("    [%s] %s\n", level, msg.Data)
 	}
 }
 
@@ -271,17 +271,17 @@ func ioBrokerPipeExample() {
 			return
 		}
 		for _, msg := range msgs {
-			fmt.Printf("  Received via pipe: %s\n", msg.Payload)
+			fmt.Printf("  Received via pipe: %s\n", msg.Data)
 		}
 	}()
 
 	// Send events through the pipe (payload must be valid JSON)
 	go func() {
 		b.Send(ctx, "events", []*message.Message{
-			message.New([]byte(`"user.created: user-123"`), message.Properties{}),
+			message.New([]byte(`"user.created: user-123"`), message.Attributes{}),
 		})
 		b.Send(ctx, "events", []*message.Message{
-			message.New([]byte(`"order.placed: order-456"`), message.Properties{}),
+			message.New([]byte(`"order.placed: order-456"`), message.Attributes{}),
 		})
 		pw.Close() // Signal EOF
 	}()

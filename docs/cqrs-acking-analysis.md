@@ -33,7 +33,7 @@ func NewCommandHandler[Cmd, Evt any](
 ) Handler {
     return func(ctx, msg *Message) ([]*Message, error) {
         var cmd Cmd
-        json.Unmarshal(msg.Payload, &cmd)
+        json.Unmarshal(msg.Data, &cmd)
 
         events, err := handle(ctx, cmd)
         if err != nil {
@@ -48,9 +48,9 @@ func NewCommandHandler[Cmd, Evt any](
 
         var outMsgs []*Message
         for _, evt := range events {
-            payload, _ := json.Marshal(evt)
+            data, _ := json.Marshal(evt)
 
-            outMsg := New(payload, props)
+            outMsg := New(data, props)
 
             // ❌ Copy acking to output
             outMsg.a = msg.a  // Share acking!
@@ -193,7 +193,7 @@ func NewCommandHandler[Cmd, Evt any](
 ) Handler {
     return func(ctx, msg *Message) ([]*Message, error) {
         var cmd Cmd
-        json.Unmarshal(msg.Payload, &cmd)
+        json.Unmarshal(msg.Data, &cmd)
 
         events, err := handle(ctx, cmd)
         if err != nil {
@@ -203,10 +203,10 @@ func NewCommandHandler[Cmd, Evt any](
 
         var outMsgs []*Message
         for _, evt := range events {
-            payload, _ := json.Marshal(evt)
+            data, _ := json.Marshal(evt)
 
             // ✅ Create NEW message without acking
-            outMsg := New(payload, props)  // No acking!
+            outMsg := New(data, props)  // No acking!
 
             outMsgs = append(outMsgs, outMsg)
         }
@@ -288,8 +288,8 @@ Use independent acking + correlation IDs for tracking:
 msg.Ack()
 
 // But propagate correlation ID for tracking
-outMsg := New(payload, Properties{
-    PropCorrelationID: msg.Properties.CorrelationID(),  // ✅ Track saga
+outMsg := New(data, Attributes{
+    AttrCorrelationID: msg.Attributes.CorrelationID(),  // ✅ Track saga
 })
 
 // Monitor saga completion separately
@@ -358,7 +358,7 @@ func NewCommandHandler[Cmd, Evt any](
 ) Handler {
     return func(ctx, msg *Message) ([]*Message, error) {
         var cmd Cmd
-        json.Unmarshal(msg.Payload, &cmd)
+        json.Unmarshal(msg.Data, &cmd)
 
         events, err := handle(ctx, cmd)
         if err != nil {
@@ -368,13 +368,13 @@ func NewCommandHandler[Cmd, Evt any](
 
         var outMsgs []*Message
         for _, evt := range events {
-            payload, _ := json.Marshal(evt)
+            data, _ := json.Marshal(evt)
 
             // ✅ Don't copy acking
             // ✅ DO copy correlation ID
-            outMsg := New(payload, Properties{
-                PropSubject:       reflect.TypeOf(evt).Name(),
-                PropCorrelationID: msg.Properties.CorrelationID(),  // Track saga
+            outMsg := New(data, Attributes{
+                AttrSubject:       reflect.TypeOf(evt).Name(),
+                AttrCorrelationID: msg.Attributes.CorrelationID(),  // Track saga
                 PropCreatedAt:     time.Now(),
                 "type":            "event",
             })
@@ -433,7 +433,7 @@ func TestCommandHandlerAcking(t *testing.T) {
     var ackCalled, nackCalled bool
 
     msg := NewWithAcking(
-        commandPayload,
+        commandData,
         props,
         func() { ackCalled = true },
         func(err error) { nackCalled = true },
@@ -455,7 +455,7 @@ func TestCommandHandlerAcking(t *testing.T) {
     }
 
     // ✅ Assert: Correlation ID propagated
-    assert.Equal(t, msg.Properties.CorrelationID(), outMsgs[0].Properties.CorrelationID())
+    assert.Equal(t, msg.Attributes.CorrelationID(), outMsgs[0].Attributes.CorrelationID())
 }
 ```
 

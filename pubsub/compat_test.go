@@ -25,24 +25,24 @@ func TestIOCompatibility(t *testing.T) {
 		{
 			name: "single message",
 			messages: []*message.Message{
-				message.New([]byte(`{"hello":"world"}`), message.Properties{"id": "msg-1"}),
+				message.New([]byte(`{"hello":"world"}`), message.Attributes{"id": "msg-1"}),
 			},
 			topic: "test/single",
 		},
 		{
 			name: "multiple messages",
 			messages: []*message.Message{
-				message.New([]byte(`"first"`), message.Properties{"seq": "1"}),
-				message.New([]byte(`"second"`), message.Properties{"seq": "2"}),
-				message.New([]byte(`"third"`), message.Properties{"seq": "3"}),
+				message.New([]byte(`"first"`), message.Attributes{"seq": "1"}),
+				message.New([]byte(`"second"`), message.Attributes{"seq": "2"}),
+				message.New([]byte(`"third"`), message.Attributes{"seq": "3"}),
 			},
 			topic: "test/multiple",
 		},
 		{
 			name: "different topics",
 			messages: []*message.Message{
-				message.New([]byte(`"order created"`), message.Properties{"type": "order"}),
-				message.New([]byte(`"user registered"`), message.Properties{"type": "user"}),
+				message.New([]byte(`"order created"`), message.Attributes{"type": "order"}),
+				message.New([]byte(`"user registered"`), message.Attributes{"type": "user"}),
 			},
 			topic: "events/all",
 		},
@@ -84,9 +84,9 @@ func TestIOCompatibility(t *testing.T) {
 				if i >= len(tt.messages) {
 					break
 				}
-				if !bytes.Equal(msg.Payload, tt.messages[i].Payload) {
+				if !bytes.Equal(msg.Data, tt.messages[i].Data) {
 					t.Errorf("Message %d payload mismatch: got %s, want %s",
-						i, msg.Payload, tt.messages[i].Payload)
+						i, msg.Data, tt.messages[i].Data)
 				}
 			}
 		})
@@ -120,7 +120,7 @@ func TestIOPipeCompatibility(t *testing.T) {
 	// Sender goroutine
 	go func() {
 		time.Sleep(50 * time.Millisecond) // Let receiver start
-		msg := message.New([]byte(`"pipe message"`), message.Properties{"via": "pipe"})
+		msg := message.New([]byte(`"pipe message"`), message.Attributes{"via": "pipe"})
 		if err := broker.Send(ctx, "pipe/test", []*message.Message{msg}); err != nil {
 			t.Errorf("Send error: %v", err)
 		}
@@ -135,8 +135,8 @@ func TestIOPipeCompatibility(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Errorf("Expected 1 message, got %d", len(msgs))
 	}
-	if len(msgs) > 0 && !bytes.Equal(msgs[0].Payload, []byte(`"pipe message"`)) {
-		t.Errorf("Payload mismatch: got %s", msgs[0].Payload)
+	if len(msgs) > 0 && !bytes.Equal(msgs[0].Data, []byte(`"pipe message"`)) {
+		t.Errorf("Payload mismatch: got %s", msgs[0].Data)
 	}
 }
 
@@ -161,11 +161,11 @@ func TestHTTPCompatibility(t *testing.T) {
 	// Send messages
 	ctx := context.Background()
 	messages := []*message.Message{
-		message.New([]byte(`{"event": "order.created"}`), message.Properties{
+		message.New([]byte(`{"event": "order.created"}`), message.Attributes{
 			"id":       "evt-001",
 			"priority": "high",
 		}),
-		message.New([]byte(`{"event": "user.registered"}`), message.Properties{
+		message.New([]byte(`{"event": "user.registered"}`), message.Attributes{
 			"id":     "evt-002",
 			"source": "api",
 		}),
@@ -198,13 +198,13 @@ func TestHTTPCompatibility(t *testing.T) {
 		if i >= len(messages) {
 			break
 		}
-		if !bytes.Equal(msg.Payload, messages[i].Payload) {
+		if !bytes.Equal(msg.Data, messages[i].Data) {
 			t.Errorf("Message %d payload mismatch: got %s, want %s",
-				i, msg.Payload, messages[i].Payload)
+				i, msg.Data, messages[i].Data)
 		}
 		// Note: HTTP properties are converted to strings during transport,
 		// so we just verify they exist
-		if len(msg.Properties) == 0 {
+		if len(msg.Attributes) == 0 {
 			t.Errorf("Message %d has no properties", i)
 		}
 	}
@@ -229,7 +229,7 @@ func TestHTTPTopicRouting(t *testing.T) {
 	}
 
 	for _, topic := range topics {
-		msg := message.New([]byte(topic), message.Properties{"topic": topic})
+		msg := message.New([]byte(topic), message.Attributes{"topic": topic})
 		if err := sender.Send(ctx, topic, []*message.Message{msg}); err != nil {
 			t.Fatalf("Send to %s failed: %v", topic, err)
 		}
@@ -259,7 +259,7 @@ func TestIOHTTPRoundTrip(t *testing.T) {
 	ioSender := pubsub.NewIOSender(&buf, pubsub.IOConfig{})
 	ctx := context.Background()
 
-	originalMsg := message.New([]byte(`"test message"`), message.Properties{
+	originalMsg := message.New([]byte(`"test message"`), message.Attributes{
 		"source": "io",
 		"id":     "123",
 	})
@@ -294,9 +294,9 @@ func TestIOHTTPRoundTrip(t *testing.T) {
 	httpSender := pubsub.NewHTTPSender(server.URL, pubsub.HTTPConfig{})
 
 	// Transform message: add new property
-	transformedMsg := message.New(ioMessages[0].Payload, message.Properties{
+	transformedMsg := message.New(ioMessages[0].Data, message.Attributes{
 		"source":      "http",
-		"original-id": ioMessages[0].Properties["id"],
+		"original-id": ioMessages[0].Attributes["id"],
 	})
 
 	if err := httpSender.Send(ctx, "test/topic", []*message.Message{transformedMsg}); err != nil {
@@ -319,8 +319,8 @@ func TestIOHTTPRoundTrip(t *testing.T) {
 	}
 
 	// Verify round-trip
-	if !bytes.Equal(httpMessages[0].Payload, originalMsg.Payload) {
+	if !bytes.Equal(httpMessages[0].Data, originalMsg.Data) {
 		t.Errorf("Payload mismatch after round-trip: got %s, want %s",
-			httpMessages[0].Payload, originalMsg.Payload)
+			httpMessages[0].Data, originalMsg.Data)
 	}
 }

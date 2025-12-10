@@ -32,28 +32,28 @@ func main() {
 	order2, _ := json.Marshal(Order{ID: "order-2", Amount: 200})
 
 	in := channel.FromValues(
-		message.NewWithAcking(order1, message.Properties{
-			message.PropDeadline:  deadline,
-			message.PropID:        "msg-001",
-			message.PropSubject:   "orders.created",
-			message.PropCreatedAt: time.Now(),
+		message.NewWithAcking(order1, message.Attributes{
+			message.AttrDeadline:  deadline,
+			message.AttrID:        "msg-001",
+			message.AttrSubject:   "orders.created",
+			message.AttrTime: time.Now(),
 		}, ack, nack),
-		message.NewWithAcking(order2, message.Properties{
-			message.PropDeadline:  deadline,
-			message.PropID:        "msg-002",
-			message.PropSubject:   "orders.created",
-			message.PropCreatedAt: time.Now(),
+		message.NewWithAcking(order2, message.Attributes{
+			message.AttrDeadline:  deadline,
+			message.AttrID:        "msg-002",
+			message.AttrSubject:   "orders.created",
+			message.AttrTime: time.Now(),
 		}, ack, nack),
 	)
 
 	// Create pipe with acknowledgment - using non-generic Message
 	pipe := gopipe.NewTransformPipe(
 		func(ctx context.Context, msg *message.Message) (*message.Message, error) {
-			msg.Properties["processed_at"] = time.Now().Format(time.RFC3339)
+			msg.Attributes["processed_at"] = time.Now().Format(time.RFC3339)
 
 			// Unmarshal the order
 			var order Order
-			if err := json.Unmarshal(msg.Payload, &order); err != nil {
+			if err := json.Unmarshal(msg.Data, &order); err != nil {
 				err := fmt.Errorf("failed to unmarshal order: %w", err)
 				msg.Nack(err)
 				return nil, err
@@ -75,7 +75,7 @@ func main() {
 			// On success
 			msg.Ack()
 			result := message.Copy(msg, processedData)
-			result.Properties[message.PropSubject] = "orders.processed"
+			result.Attributes[message.AttrSubject] = "orders.processed"
 			return result, nil
 		},
 	)
@@ -86,12 +86,12 @@ func main() {
 	// Consume results
 	<-channel.Sink(results, func(result *message.Message) {
 		var order Order
-		json.Unmarshal(result.Payload, &order)
+		json.Unmarshal(result.Data, &order)
 
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("Order ID: %s, Amount: %d\n", order.ID, order.Amount))
 		sb.WriteString("Properties:\n")
-		for key, value := range result.Properties {
+		for key, value := range result.Attributes {
 			sb.WriteString(fmt.Sprintf("  %s: %v\n", key, value))
 		}
 		fmt.Print(sb.String())

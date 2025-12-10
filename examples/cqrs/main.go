@@ -21,26 +21,26 @@ import (
 // Handler processes messages matching specific properties (local POC type)
 type Handler interface {
 	Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error)
-	Match(prop message.Properties) bool
+	Match(prop message.Attributes) bool
 }
 
 type handler struct {
 	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error)
-	match  func(prop message.Properties) bool
+	match  func(prop message.Attributes) bool
 }
 
 func (h *handler) Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 	return h.handle(ctx, msg)
 }
 
-func (h *handler) Match(prop message.Properties) bool {
+func (h *handler) Match(prop message.Attributes) bool {
 	return h.match(prop)
 }
 
 // NewHandler creates a new Handler (local POC function)
 func NewHandler(
 	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error),
-	match func(prop message.Properties) bool,
+	match func(prop message.Attributes) bool,
 ) Handler {
 	return &handler{
 		handle: handle,
@@ -72,7 +72,7 @@ func NewRouter(config RouterConfig, handlers ...Handler) *Router {
 func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan *message.Message {
 	handle := func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		for _, h := range r.handlers {
-			if h.Match(msg.Properties) {
+			if h.Match(msg.Attributes) {
 				return h.Handle(ctx, msg)
 			}
 		}
@@ -137,9 +137,9 @@ func (b *CommandBus) Send(ctx context.Context, cmd any) error {
 	}
 
 	name := b.marshaler.Name(cmd)
-	msg := message.New(payload, message.Properties{
-		message.PropSubject:   name,
-		message.PropCreatedAt: time.Now(),
+	msg := message.New(payload, message.Attributes{
+		message.AttrSubject:   name,
+		message.AttrTime: time.Now(),
 		"type":                "command",
 	})
 
@@ -171,9 +171,9 @@ func (b *EventBus) Publish(ctx context.Context, evt any) error {
 	}
 
 	name := b.marshaler.Name(evt)
-	msg := message.New(payload, message.Properties{
-		message.PropSubject:   name,
-		message.PropCreatedAt: time.Now(),
+	msg := message.New(payload, message.Attributes{
+		message.AttrSubject:   name,
+		message.AttrTime: time.Now(),
 		"type":                "event",
 	})
 
@@ -195,13 +195,13 @@ func NewCommandHandler[T any](
 			// Commands don't produce output messages directly
 			// They publish events via EventBus instead
 			var cmd T
-			if err := json.Unmarshal(msg.Payload, &cmd); err != nil {
+			if err := json.Unmarshal(msg.Data, &cmd); err != nil {
 				return nil, err
 			}
 			err := handle(ctx, cmd)
 			return nil, err
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			subject, _ := prop.Subject()
 			msgType, _ := prop.String("type")
 			return subject == name && msgType == "command"
@@ -217,13 +217,13 @@ func NewEventHandler[T any](
 	return NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			var evt T
-			if err := json.Unmarshal(msg.Payload, &evt); err != nil {
+			if err := json.Unmarshal(msg.Data, &evt); err != nil {
 				return nil, err
 			}
 			err := handle(ctx, evt)
 			return nil, err
 		},
-		func(prop message.Properties) bool {
+		func(prop message.Attributes) bool {
 			subject, _ := prop.Subject()
 			msgType, _ := prop.String("type")
 			return subject == name && msgType == "event"

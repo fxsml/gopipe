@@ -31,10 +31,10 @@ func MessageType(msgType string) gopipe.MiddlewareFunc[*message.Message, *messag
 			}
 
 			for _, outMsg := range results {
-				if outMsg.Properties == nil {
-					outMsg.Properties = make(message.Properties)
+				if outMsg.Attributes == nil {
+					outMsg.Attributes = make(message.Attributes)
 				}
-				outMsg.Properties["type"] = msgType
+				outMsg.Attributes["type"] = msgType
 			}
 
 			return results, nil
