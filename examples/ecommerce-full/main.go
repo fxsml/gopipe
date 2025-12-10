@@ -40,6 +40,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -363,7 +364,7 @@ func (h *InventoryReservedHandler) Match(props message.Properties) bool {
 // Webhook Receiver Server
 // ============================================================================
 
-func startWebhookServer(ctx context.Context, addr string) {
+func startWebhookServer(ctx context.Context, addr string, ready chan<- struct{}, errCh chan<- error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -382,7 +383,14 @@ func startWebhookServer(ctx context.Context, addr string) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	server := &http.Server{Addr: addr, Handler: mux}
+	// Create listener first to detect port conflicts early
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		errCh <- fmt.Errorf("[WEBHOOK] Failed to listen on %s: %v", addr, err)
+		return
+	}
+
+	server := &http.Server{Handler: mux}
 
 	go func() {
 		<-ctx.Done()
@@ -392,7 +400,9 @@ func startWebhookServer(ctx context.Context, addr string) {
 	}()
 
 	log.Printf("[WEBHOOK] Server listening on %s", addr)
-	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+	close(ready) // Signal that server is ready
+
+	if err := server.Serve(ln); err != http.ErrServerClosed {
 		log.Printf("[WEBHOOK] Server error: %v", err)
 	}
 }
@@ -499,15 +509,14 @@ func main() {
 	// Start Servers
 	// ========================================================================
 
+	// Error channel for server startup failures
+	serverErrCh := make(chan error, 2)
+
 	// Start webhook receiver server
-	go startWebhookServer(ctx, ":8081")
+	webhookReady := make(chan struct{})
+	go startWebhookServer(ctx, ":8081", webhookReady, serverErrCh)
 
 	// Start HTTP command server
-	// PROBLEM: httpReceiver doesn't expose Handler() in the Receiver interface
-	// NewHTTPReceiver returns Receiver, not the concrete type with ServeHTTP
-	// We need to type assert to access the HTTP handler, but the type isn't exported!
-
-	// WORKAROUND: Create our own HTTP handler that sends to ChannelBroker directly
 	commandMux := http.NewServeMux()
 	commandMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Extract topic from path: /commands/create-order -> commands/create-order
@@ -517,9 +526,6 @@ func main() {
 		}
 		r.Header.Set(pubsub.HeaderTopic, topic)
 
-		// Forward to HTTP receiver
-		// PROBLEM: We can't access ServeHTTP because it's on the concrete type
-		// This is a design issue - NewHTTPReceiver returns Receiver interface
 		log.Printf("[HTTP] Received request for topic: %s", topic)
 
 		// Read body
@@ -535,8 +541,7 @@ func main() {
 			}
 		}
 
-		// WORKAROUND: Since we can't use HTTPReceiver's ServeHTTP,
-		// we'll send directly to the channel broker for internal routing
+		// Send directly to the channel broker for internal routing
 		props := message.Properties{
 			message.PropSubject: subject,
 			message.PropType:    "command",
@@ -554,7 +559,6 @@ func main() {
 		log.Printf("[HTTP] Created message with subject: %s, topic: %s", subject, topic)
 
 		// Send to channel broker for processing
-		// PROBLEM: This bypasses the HTTPReceiver entirely!
 		if err := channelBroker.Send(ctx, "commands", []*message.Message{msg}); err != nil {
 			log.Printf("[HTTP] Error sending to broker: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -565,17 +569,31 @@ func main() {
 		w.Write([]byte(`{"status":"accepted"}`))
 	})
 
-	commandServer := &http.Server{
-		Addr:    ":8080",
-		Handler: commandMux,
+	// Create listener first to detect port conflicts early
+	cmdListener, err := net.Listen("tcp", ":8080")
+	if err != nil {
+		log.Fatalf("[HTTP] Failed to listen on :8080: %v", err)
 	}
 
+	commandServer := &http.Server{Handler: commandMux}
 	go func() {
 		log.Printf("[HTTP] Command server listening on :8080")
-		if err := commandServer.ListenAndServe(); err != http.ErrServerClosed {
+		if err := commandServer.Serve(cmdListener); err != http.ErrServerClosed {
 			log.Printf("[HTTP] Server error: %v", err)
 		}
 	}()
+
+	// Wait for webhook server to be ready (or fail)
+	select {
+	case <-webhookReady:
+		// Webhook server started successfully
+	case err := <-serverErrCh:
+		cmdListener.Close()
+		log.Fatalf("Server startup failed: %v", err)
+	case <-time.After(2 * time.Second):
+		cmdListener.Close()
+		log.Fatalf("Timeout waiting for servers to start")
+	}
 
 	// ========================================================================
 	// Start Message Processing Pipeline
