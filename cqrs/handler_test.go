@@ -34,8 +34,8 @@ func TestNewCommandHandler_SetsType(t *testing.T) {
 				Processed: true,
 			}}, nil
 		},
-		marshaler,
 		Match(MatchSubject("TestCommand"), MatchType("command")),
+		marshaler,
 	)
 
 	// Create input message
@@ -159,8 +159,8 @@ func TestNewCommandHandler_WithMultipleEvents(t *testing.T) {
 				{ID: "evt-3", Name: "event 3", Processed: true},
 			}, nil
 		},
-		marshaler,
 		Match(MatchSubject("TestCommand")),
+		marshaler,
 	)
 
 	// Create input message

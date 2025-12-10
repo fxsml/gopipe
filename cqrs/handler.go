@@ -40,8 +40,8 @@ func NewHandler(
 // The handler unmarshals commands, executes business logic, and marshals resulting events.
 func NewCommandHandler[Cmd, Evt any](
 	handle func(ctx context.Context, cmd Cmd) ([]Evt, error),
-	marshaler CommandMarshaler,
 	match Matcher,
+	marshaler CommandMarshaler,
 ) Handler {
 	return NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
@@ -85,8 +85,8 @@ func NewCommandHandler[Cmd, Evt any](
 // Event handlers do not return output messages.
 func NewEventHandler[Evt any](
 	handle func(ctx context.Context, evt Evt) error,
-	marshaler EventMarshaler,
 	match Matcher,
+	marshaler EventMarshaler,
 ) Handler {
 	return NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {

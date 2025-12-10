@@ -140,11 +140,11 @@ func main() {
 				CreatedAt:  time.Now(),
 			}}, nil
 		},
-		marshaler,
 		cqrs.Match(
 			cqrs.MatchSubject("CreateOrder"),
 			cqrs.MatchType("command"),
 		),
+		marshaler,
 	)
 
 	// Create router with configuration
