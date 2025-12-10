@@ -35,7 +35,33 @@ type Receiver interface {
 }
 
 type Broker interface { Sender; Receiver }
+
+type Subscriber interface {
+    AddTopic(topic string)
+    Subscribe(ctx context.Context) <-chan *message.Message
+}
 ```
+
+### Subscriber Design
+
+The Subscriber uses a two-phase approach:
+1. **Topic Registration**: Call `AddTopic()` to register topics before subscribing
+2. **Subscription**: Call `Subscribe()` to start polling all registered topics
+
+Each topic is polled in a separate goroutine and messages are merged into a single output channel using `channel.Merge()`.
+
+```go
+subscriber := pubsub.NewSubscriber(broker, pubsub.SubscriberConfig{})
+subscriber.AddTopic("orders.created")
+subscriber.AddTopic("orders.updated")
+msgs := subscriber.Subscribe(ctx)
+```
+
+This design:
+- Allows subscribing to multiple topics with a single Subscribe call
+- Each topic runs independently in its own goroutine
+- All messages merge into one output channel for simplified consumption
+- Supports configuration (concurrency, retry, timeout) per topic
 
 ## Consequences
 
@@ -44,6 +70,7 @@ type Broker interface { Sender; Receiver }
 - Descriptive constructors: `NewInMemoryBroker()`, `NewChannelBroker()`
 - Clean import paths
 - Extensible: easy to add new broker implementations
+- Subscriber supports multi-topic subscription with merged output
 
 **Negative:**
 - Breaking change: existing imports need updating

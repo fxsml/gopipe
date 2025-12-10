@@ -5,27 +5,70 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 )
 
 // Subscriber provides channel-based message consumption from a Receiver.
+// Topics must be added via AddTopic before calling Subscribe.
 type Subscriber interface {
-	// Subscribe returns a channel that emits messages from the specified topic.
+	// AddTopic registers a topic to subscribe to.
+	// Must be called before Subscribe. Can be called multiple times
+	// to subscribe to multiple topics.
+	AddTopic(topic string)
+
+	// Subscribe starts polling all registered topics and returns a channel
+	// that emits messages from all topics. Each topic is polled in a separate
+	// goroutine and messages are merged into a single output channel.
 	// The channel is closed when the context is canceled.
-	Subscribe(ctx context.Context, topic string) <-chan *message.Message
+	Subscribe(ctx context.Context) <-chan *message.Message
 }
 
 type subscriber struct {
-	subscribe func(ctx context.Context, topic string) <-chan *message.Message
+	receiver Receiver
+	topics   []string
+	opts     []gopipe.Option[struct{}, *message.Message]
 }
 
-func (s *subscriber) Subscribe(ctx context.Context, topic string) <-chan *message.Message {
-	return s.subscribe(ctx, topic)
+// AddTopic registers a topic to subscribe to.
+func (s *subscriber) AddTopic(topic string) {
+	s.topics = append(s.topics, topic)
+}
+
+// Subscribe starts polling all registered topics concurrently.
+// Messages from all topics are merged into a single output channel.
+func (s *subscriber) Subscribe(ctx context.Context) <-chan *message.Message {
+	if len(s.topics) == 0 {
+		// No topics registered, return closed channel
+		out := make(chan *message.Message)
+		close(out)
+		return out
+	}
+
+	if len(s.topics) == 1 {
+		// Single topic, no need for merging
+		return s.subscribeToTopic(ctx, s.topics[0])
+	}
+
+	// Multiple topics: start a goroutine for each and merge outputs
+	outputs := make([]<-chan *message.Message, len(s.topics))
+	for i, topic := range s.topics {
+		outputs[i] = s.subscribeToTopic(ctx, topic)
+	}
+
+	return channel.Merge(outputs...)
+}
+
+// subscribeToTopic creates a channel that polls a single topic.
+func (s *subscriber) subscribeToTopic(ctx context.Context, topic string) <-chan *message.Message {
+	return gopipe.NewGenerator(func(ctx context.Context) ([]*message.Message, error) {
+		return s.receiver.Receive(ctx, topic)
+	}, s.opts...).Generate(ctx)
 }
 
 // SubscriberConfig configures the Subscriber behavior.
 type SubscriberConfig struct {
-	// Concurrency is the number of concurrent receive operations. Default: 1.
+	// Concurrency is the number of concurrent receive operations per topic. Default: 1.
 	Concurrency int
 	// Timeout is the maximum duration for each receive operation.
 	Timeout time.Duration
@@ -36,6 +79,17 @@ type SubscriberConfig struct {
 }
 
 // NewSubscriber creates a Subscriber that wraps a Receiver with gopipe processing.
+// Topics must be added via AddTopic before calling Subscribe.
+//
+// Example:
+//
+//	subscriber := pubsub.NewSubscriber(broker, pubsub.SubscriberConfig{})
+//	subscriber.AddTopic("orders.created")
+//	subscriber.AddTopic("orders.updated")
+//	msgs := subscriber.Subscribe(ctx)
+//	for msg := range msgs {
+//	    // Process messages from both topics
+//	}
 func NewSubscriber(
 	receiver Receiver,
 	config SubscriberConfig,
@@ -61,10 +115,7 @@ func NewSubscriber(
 	}
 
 	return &subscriber{
-		subscribe: func(ctx context.Context, topic string) <-chan *message.Message {
-			return gopipe.NewGenerator(func(ctx context.Context) ([]*message.Message, error) {
-				return receiver.Receive(ctx, topic)
-			}, opts...).Generate(ctx)
-		},
+		receiver: receiver,
+		opts:     opts,
 	}
 }

@@ -255,11 +255,12 @@ func TestSubscriber_Basic(t *testing.T) {
 		receiver,
 		pubsub.SubscriberConfig{},
 	)
+	subscriber.AddTopic("topic-a")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx, "topic-a")
+	msgs := subscriber.Subscribe(ctx)
 
 	var count int
 	for range msgs {
@@ -288,11 +289,12 @@ func TestSubscriber_ErrorHandling(t *testing.T) {
 			},
 		},
 	)
+	subscriber.AddTopic("topic-a")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx, "topic-a")
+	msgs := subscriber.Subscribe(ctx)
 
 	// Should receive no messages due to errors
 	for range msgs {
@@ -321,11 +323,12 @@ func TestSubscriber_MultipleReceives(t *testing.T) {
 		receiver,
 		pubsub.SubscriberConfig{},
 	)
+	subscriber.AddTopic("topic-a")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx, "topic-a")
+	msgs := subscriber.Subscribe(ctx)
 
 	var count int
 	for range msgs {
@@ -380,15 +383,109 @@ func TestSubscriber_WithRecover(t *testing.T) {
 			Recover: true,
 		},
 	)
+	subscriber.AddTopic("topic-a")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx, "topic-a")
+	msgs := subscriber.Subscribe(ctx)
 
 	// Should not panic due to Recover option
 	for range msgs {
 		t.Error("Expected no messages due to panic")
+	}
+}
+
+func TestSubscriber_MultipleTopics(t *testing.T) {
+	receiver := newMockReceiver()
+	receiver.addMessages("topic-a", message.New([]byte("msg-a"), nil))
+	receiver.addMessages("topic-b", message.New([]byte("msg-b"), nil))
+
+	var mu sync.Mutex
+	callCount := make(map[string]int)
+
+	receiver.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message, error) {
+		mu.Lock()
+		callCount[topic]++
+		count := callCount[topic]
+		mu.Unlock()
+
+		if count == 1 {
+			receiver.mu.Lock()
+			msgs := receiver.messages[topic]
+			receiver.messages[topic] = nil
+			receiver.mu.Unlock()
+			return msgs, nil
+		}
+		// Block on subsequent calls
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	subscriber := pubsub.NewSubscriber(
+		receiver,
+		pubsub.SubscriberConfig{},
+	)
+	subscriber.AddTopic("topic-a")
+	subscriber.AddTopic("topic-b")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	msgs := subscriber.Subscribe(ctx)
+
+	var received []string
+	for msg := range msgs {
+		received = append(received, string(msg.Payload))
+		if len(received) == 2 {
+			cancel()
+		}
+	}
+
+	if len(received) != 2 {
+		t.Errorf("Expected 2 messages, got %d", len(received))
+	}
+
+	// Verify we got messages from both topics
+	hasA := false
+	hasB := false
+	for _, payload := range received {
+		if payload == "msg-a" {
+			hasA = true
+		}
+		if payload == "msg-b" {
+			hasB = true
+		}
+	}
+	if !hasA {
+		t.Error("Expected message from topic-a")
+	}
+	if !hasB {
+		t.Error("Expected message from topic-b")
+	}
+}
+
+func TestSubscriber_NoTopics(t *testing.T) {
+	receiver := newMockReceiver()
+
+	subscriber := pubsub.NewSubscriber(
+		receiver,
+		pubsub.SubscriberConfig{},
+	)
+	// No topics added
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	msgs := subscriber.Subscribe(ctx)
+
+	var count int
+	for range msgs {
+		count++
+	}
+
+	if count != 0 {
+		t.Errorf("Expected 0 messages when no topics registered, got %d", count)
 	}
 }
 

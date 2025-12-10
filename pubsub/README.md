@@ -60,17 +60,21 @@ close(msgs)
 
 ### Subscriber
 
-Receives messages as a channel:
+Receives messages from multiple topics as a single channel:
 
 ```go
 subscriber := pubsub.NewSubscriber(broker, pubsub.SubscriberConfig{})
-msgChan := subscriber.Subscribe(ctx, "orders.created")
+subscriber.AddTopic("orders.created")
+subscriber.AddTopic("orders.updated")
+msgChan := subscriber.Subscribe(ctx)
 
 for msg := range msgChan {
-    // Process message
+    // Process messages from all topics
     fmt.Println(string(msg.Payload))
 }
 ```
+
+Each topic is polled in a separate goroutine and messages are merged into a single output channel.
 
 ## Routing
 
