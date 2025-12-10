@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fxsml/gopipe"
 	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/cqrs"
 	"github.com/fxsml/gopipe/message"
@@ -528,5 +529,299 @@ func TestRouter_PreservesProperties(t *testing.T) {
 		if !ok || subject != "processed" {
 			t.Errorf("Expected subject 'processed', got %s (ok=%v)", subject, ok)
 		}
+	}
+}
+
+func TestRouter_AddPipe_Basic(t *testing.T) {
+	// Create a simple pipe that doubles the message amount
+	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+		var order Order
+		if err := json.Unmarshal(msg.Payload, &order); err != nil {
+			return nil, err
+		}
+		order.Amount *= 2
+		data, _ := json.Marshal(order)
+		outMsg := message.Copy(msg, data)
+		outMsg.Properties = make(message.Properties)
+		outMsg.Properties[message.PropSubject] = "orders.doubled"
+		return []*message.Message{outMsg}, nil
+	})
+
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddPipe(pipe, func(prop message.Properties) bool {
+		subject, _ := prop.Subject()
+		return subject == "orders.double"
+	})
+
+	orderData, _ := json.Marshal(Order{ID: "order-1", Amount: 100})
+	in := channel.FromValues(
+		message.New(orderData, message.Properties{message.PropSubject: "orders.double"}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	out := router.Start(ctx, in)
+
+	var results []*message.Message
+	for msg := range out {
+		results = append(results, msg)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+
+	subject, _ := results[0].Properties.Subject()
+	if subject != "orders.doubled" {
+		t.Errorf("Expected subject 'orders.doubled', got %s", subject)
+	}
+
+	var order Order
+	json.Unmarshal(results[0].Payload, &order)
+	if order.Amount != 200 {
+		t.Errorf("Expected amount 200, got %d", order.Amount)
+	}
+}
+
+func TestRouter_AddPipe_WithHandlers(t *testing.T) {
+	// Create a pipe for "orders.double" messages
+	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+		var order Order
+		if err := json.Unmarshal(msg.Payload, &order); err != nil {
+			return nil, err
+		}
+		order.Amount *= 2
+		data, _ := json.Marshal(order)
+		outMsg := message.Copy(msg, data)
+		outMsg.Properties = make(message.Properties)
+		outMsg.Properties[message.PropSubject] = "orders.doubled"
+		return []*message.Message{outMsg}, nil
+	})
+
+	// Create a handler for "orders.confirm" messages
+	confirmHandler := testJSONHandler(
+		func(ctx context.Context, order Order) ([]OrderConfirmed, error) {
+			return []OrderConfirmed{{ID: order.ID, ConfirmedAt: time.Now()}}, nil
+		},
+		func(prop message.Properties) bool {
+			subject, _ := prop.Subject()
+			return subject == "orders.confirm"
+		},
+		func(prop message.Properties) message.Properties {
+			p := make(message.Properties)
+			p[message.PropSubject] = "orders.confirmed"
+			return p
+		},
+	)
+
+	router := cqrs.NewRouter(cqrs.RouterConfig{}, confirmHandler)
+	router.AddPipe(pipe, func(prop message.Properties) bool {
+		subject, _ := prop.Subject()
+		return subject == "orders.double"
+	})
+
+	doubleData, _ := json.Marshal(Order{ID: "order-1", Amount: 100})
+	confirmData, _ := json.Marshal(Order{ID: "order-2", Amount: 50})
+
+	in := channel.FromValues(
+		message.New(doubleData, message.Properties{message.PropSubject: "orders.double"}),
+		message.New(confirmData, message.Properties{message.PropSubject: "orders.confirm"}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	out := router.Start(ctx, in)
+
+	results := make(map[string]int)
+	for msg := range out {
+		subject, _ := msg.Properties.Subject()
+		results[subject]++
+	}
+
+	if results["orders.doubled"] != 1 {
+		t.Errorf("Expected 1 orders.doubled, got %d", results["orders.doubled"])
+	}
+	if results["orders.confirmed"] != 1 {
+		t.Errorf("Expected 1 orders.confirmed, got %d", results["orders.confirmed"])
+	}
+}
+
+func TestRouter_AddPipe_MultiplePipes(t *testing.T) {
+	// Pipe 1: doubles the amount
+	doublePipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+		var order Order
+		if err := json.Unmarshal(msg.Payload, &order); err != nil {
+			return nil, err
+		}
+		order.Amount *= 2
+		data, _ := json.Marshal(order)
+		outMsg := message.Copy(msg, data)
+		outMsg.Properties = make(message.Properties)
+		outMsg.Properties[message.PropSubject] = "orders.doubled"
+		return []*message.Message{outMsg}, nil
+	})
+
+	// Pipe 2: triples the amount
+	triplePipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+		var order Order
+		if err := json.Unmarshal(msg.Payload, &order); err != nil {
+			return nil, err
+		}
+		order.Amount *= 3
+		data, _ := json.Marshal(order)
+		outMsg := message.Copy(msg, data)
+		outMsg.Properties = make(message.Properties)
+		outMsg.Properties[message.PropSubject] = "orders.tripled"
+		return []*message.Message{outMsg}, nil
+	})
+
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddPipe(doublePipe, func(prop message.Properties) bool {
+		subject, _ := prop.Subject()
+		return subject == "orders.double"
+	})
+	router.AddPipe(triplePipe, func(prop message.Properties) bool {
+		subject, _ := prop.Subject()
+		return subject == "orders.triple"
+	})
+
+	doubleData, _ := json.Marshal(Order{ID: "order-1", Amount: 100})
+	tripleData, _ := json.Marshal(Order{ID: "order-2", Amount: 100})
+
+	in := channel.FromValues(
+		message.New(doubleData, message.Properties{message.PropSubject: "orders.double"}),
+		message.New(tripleData, message.Properties{message.PropSubject: "orders.triple"}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	out := router.Start(ctx, in)
+
+	results := make(map[string]*Order)
+	for msg := range out {
+		subject, _ := msg.Properties.Subject()
+		var order Order
+		json.Unmarshal(msg.Payload, &order)
+		results[subject] = &order
+	}
+
+	if doubledOrder, ok := results["orders.doubled"]; !ok {
+		t.Error("Expected orders.doubled result")
+	} else if doubledOrder.Amount != 200 {
+		t.Errorf("Expected doubled amount 200, got %d", doubledOrder.Amount)
+	}
+
+	if tripledOrder, ok := results["orders.tripled"]; !ok {
+		t.Error("Expected orders.tripled result")
+	} else if tripledOrder.Amount != 300 {
+		t.Errorf("Expected tripled amount 300, got %d", tripledOrder.Amount)
+	}
+}
+
+func TestRouter_AddPipe_NoMatch(t *testing.T) {
+	// Create a pipe that should NOT match
+	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+		t.Error("Pipe should not be called for non-matching message")
+		return []*message.Message{msg}, nil
+	})
+
+	// Create a handler that SHOULD match
+	handler := testJSONHandler(
+		func(ctx context.Context, order Order) ([]Order, error) {
+			return []Order{order}, nil
+		},
+		func(prop message.Properties) bool {
+			subject, _ := prop.Subject()
+			return subject == "orders.process"
+		},
+		func(prop message.Properties) message.Properties {
+			p := make(message.Properties)
+			p[message.PropSubject] = "orders.processed"
+			return p
+		},
+	)
+
+	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
+	router.AddPipe(pipe, func(prop message.Properties) bool {
+		subject, _ := prop.Subject()
+		return subject == "orders.double"
+	})
+
+	orderData, _ := json.Marshal(Order{ID: "order-1", Amount: 100})
+	in := channel.FromValues(
+		message.New(orderData, message.Properties{message.PropSubject: "orders.process"}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	out := router.Start(ctx, in)
+
+	var count int
+	for msg := range out {
+		subject, _ := msg.Properties.Subject()
+		if subject != "orders.processed" {
+			t.Errorf("Expected subject 'orders.processed', got %s", subject)
+		}
+		count++
+	}
+
+	if count != 1 {
+		t.Errorf("Expected 1 result, got %d", count)
+	}
+}
+
+func TestRouter_AddPipe_MultipleOutputs(t *testing.T) {
+	// Create a pipe that produces multiple outputs
+	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+		var order Order
+		if err := json.Unmarshal(msg.Payload, &order); err != nil {
+			return nil, err
+		}
+
+		// Create two output messages
+		out1 := Order{ID: order.ID + "-1", Amount: order.Amount * 2}
+		out2 := Order{ID: order.ID + "-2", Amount: order.Amount * 3}
+
+		data1, _ := json.Marshal(out1)
+		data2, _ := json.Marshal(out2)
+
+		msg1 := message.Copy(msg, data1)
+		msg1.Properties = make(message.Properties)
+		msg1.Properties[message.PropSubject] = "orders.split"
+
+		msg2 := message.Copy(msg, data2)
+		msg2.Properties = make(message.Properties)
+		msg2.Properties[message.PropSubject] = "orders.split"
+
+		return []*message.Message{msg1, msg2}, nil
+	})
+
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddPipe(pipe, func(prop message.Properties) bool {
+		subject, _ := prop.Subject()
+		return subject == "orders.split"
+	})
+
+	orderData, _ := json.Marshal(Order{ID: "order", Amount: 100})
+	in := channel.FromValues(
+		message.New(orderData, message.Properties{message.PropSubject: "orders.split"}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	out := router.Start(ctx, in)
+
+	var results []*message.Message
+	for msg := range out {
+		results = append(results, msg)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("Expected 2 results, got %d", len(results))
 	}
 }
