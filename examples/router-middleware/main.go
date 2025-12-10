@@ -119,10 +119,9 @@ func main() {
 	log.Println("=== Router Middleware Example ===")
 	log.Println()
 
-	// Create JSON marshaler with property providers
+	// Create JSON marshaler
 	marshaler := cqrs.NewJSONCommandMarshaler(
-		cqrs.WithType("event"),
-		cqrs.WithSubjectFromTypeName(),
+		cqrs.WithType(),
 	)
 
 	// Create command handler

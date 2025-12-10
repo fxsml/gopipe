@@ -7,45 +7,11 @@ import (
 )
 
 // CreateCommand creates a command message from a command struct.
-//
-// This helper is useful for:
-//   - Saga coordinators creating commands
-//   - Initial command creation in application code
-//   - Testing
-//
-// Parameters:
-//   - marshaler: Used to serialize the command and extract its type name
-//   - cmd: The command struct (e.g., CreateOrder{...})
-//   - props: Optional properties to set on the message
-//
-// The function automatically sets:
-//   - Subject from marshaler.Name(cmd)
-//   - Type to "command"
-//
-// Example:
-//
-//	// In a saga coordinator
-//	func (s *OrderSagaCoordinator) OnEvent(ctx, msg) ([]*message.Message, error) {
-//	    return []*message.Message{
-//	        CreateCommand(s.marshaler, ChargePayment{OrderID: "123", Amount: 100},
-//	            message.Attributes{
-//	                message.AttrCorrelationID: msg.Attributes.CorrelationID(),
-//	            },
-//	        ),
-//	    }, nil
-//	}
-//
-//	// Creating initial command
-//	cmd := CreateCommand(marshaler, CreateOrder{ID: "order-1", Amount: 100},
-//	    message.Attributes{
-//	        message.AttrCorrelationID: "corr-123",
-//	    },
-//	)
-func CreateCommand(marshaler Marshaler, cmd any, props message.Attributes) *message.Message {
+func CreateCommand(marshaler Marshaler, cmd any, attrs message.Attributes) *message.Message {
 	payload, _ := marshaler.Marshal(cmd)
 
-	if props == nil {
-		props = message.Attributes{}
+	if attrs == nil {
+		attrs = message.Attributes{}
 	}
 
 	// Extract type name from the command
@@ -53,41 +19,24 @@ func CreateCommand(marshaler Marshaler, cmd any, props message.Attributes) *mess
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
-	props[message.AttrSubject] = t.Name()
-	props[message.AttrType] = t.Name()
-	props["type"] = "command"
+	attrs[message.AttrSubject] = t.Name()
+	attrs[message.AttrType] = t.Name()
+	attrs["type"] = "command"
 
-	return message.New(payload, props)
+	return message.New(payload, attrs)
 }
 
-// CreateCommands creates multiple command messages from command structs.
-// This is a convenience function for saga coordinators that need to create multiple commands.
-//
-// Parameters:
-//   - marshaler: Used to serialize commands
-//   - correlationID: Correlation ID to propagate to all commands (optional, can be empty)
-//   - cmds: Variable number of command structs
-//
-// Example:
-//
-//	func (s *OrderSagaCoordinator) OnEvent(ctx, msg) ([]*message.Message, error) {
-//	    corrID, _ := msg.Attributes.CorrelationID()
-//
-//	    return CreateCommands(s.marshaler, corrID,
-//	        ChargePayment{OrderID: evt.ID, Amount: evt.Amount},
-//	        ReserveInventory{OrderID: evt.ID, SKU: "SKU-123"},
-//	    ), nil
-//	}
+// CreateCommands creates multiple command messages with optional correlation ID.
 func CreateCommands(marshaler Marshaler, correlationID string, cmds ...any) []*message.Message {
 	msgs := make([]*message.Message, 0, len(cmds))
 
 	for _, cmd := range cmds {
-		props := message.Attributes{}
+		attrs := message.Attributes{}
 		if correlationID != "" {
-			props[message.AttrCorrelationID] = correlationID
+			attrs[message.AttrCorrelationID] = correlationID
 		}
 
-		msgs = append(msgs, CreateCommand(marshaler, cmd, props))
+		msgs = append(msgs, CreateCommand(marshaler, cmd, attrs))
 	}
 
 	return msgs

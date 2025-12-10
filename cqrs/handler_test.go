@@ -18,12 +18,11 @@ type TestEvent struct {
 	Processed bool
 }
 
-// TestNewCommandHandler_SetsPropType verifies that NewCommandHandler
-// automatically sets the PropType property using marshaler.Props()
-func TestNewCommandHandler_SetsPropType(t *testing.T) {
+// TestNewCommandHandler_SetsType verifies that NewCommandHandler
+// automatically sets attributes using marshaler.Attributes()
+func TestNewCommandHandler_SetsType(t *testing.T) {
 	marshaler := NewJSONCommandMarshaler(
-		WithType("event"),
-		WithTypeName(),
+		WithType(),
 	)
 
 	// Create command handler

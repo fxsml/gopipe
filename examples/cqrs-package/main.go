@@ -199,8 +199,7 @@ func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message
 func main() {
 	ctx := context.Background()
 	marshaler := cqrs.NewJSONCommandMarshaler(
-		cqrs.WithType("event"),
-		cqrs.WithSubjectFromTypeName(),
+		cqrs.WithType(),
 	)
 
 	log.Println(strings.Repeat("=", 70))

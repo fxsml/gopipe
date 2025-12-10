@@ -6,10 +6,7 @@ import (
 	"github.com/fxsml/gopipe/message"
 )
 
-// CommandMarshaler handles serialization/deserialization of commands and events,
-// and provides property transformation for output messages.
-//
-// This is used by NewCommandHandler to marshal commands (input) and events (output).
+// CommandMarshaler handles serialization and attribute transformation for commands and events.
 type CommandMarshaler interface {
 	// Marshal serializes a value to bytes
 	Marshal(v any) ([]byte, error)
@@ -17,16 +14,11 @@ type CommandMarshaler interface {
 	// Unmarshal deserializes bytes into a value
 	Unmarshal(data []byte, v any) error
 
-	// Props returns message properties for the given value.
-	// This replaces the old props parameter in NewCommandHandler.
-	// For correlation ID propagation, use message-level middleware instead.
-	Props(v any) message.Attributes
+	// Attributes returns message attributes for the given value
+	Attributes(v any) message.Attributes
 }
 
-// EventMarshaler handles deserialization of events.
-//
-// This is used by NewEventHandler to unmarshal events (input only).
-// Event handlers don't produce output messages, so only Unmarshal is needed.
+// EventMarshaler handles deserialization of events for event handlers.
 type EventMarshaler interface {
 	// Unmarshal deserializes bytes into a value
 	Unmarshal(data []byte, v any) error
@@ -38,30 +30,16 @@ type EventMarshaler interface {
 
 // JSONCommandMarshaler is a JSON-based implementation of CommandMarshaler.
 type JSONCommandMarshaler struct {
-	propProviders []AttributeProvider
+	attrProviders []AttributeProvider
 }
 
-// NewJSONCommandMarshaler creates a new JSON command marshaler with property providers.
-//
-// If no providers are specified, it uses sensible defaults:
-// - WithTypeName(): Set PropType to the reflected type name
-//
-// For correlation ID propagation, use message-level middleware instead.
-//
-// Example with custom providers:
-//
-//	marshaler := NewJSONCommandMarshaler(
-//	    WithType("event"),
-//	    WithTypeName(),
-//	)
+// NewJSONCommandMarshaler creates a JSON marshaler with attribute providers.
+// Defaults to WithType() if no providers specified.
 func NewJSONCommandMarshaler(providers ...AttributeProvider) *JSONCommandMarshaler {
-	// Use default providers if none specified
 	if len(providers) == 0 {
-		providers = []AttributeProvider{
-			WithTypeName(),
-		}
+		providers = []AttributeProvider{WithType()}
 	}
-	return &JSONCommandMarshaler{propProviders: providers}
+	return &JSONCommandMarshaler{attrProviders: providers}
 }
 
 // Marshal serializes a value to JSON bytes.
@@ -74,10 +52,10 @@ func (m *JSONCommandMarshaler) Unmarshal(data []byte, v any) error {
 	return json.Unmarshal(data, v)
 }
 
-// Props returns message properties by applying all configured property providers.
-func (m *JSONCommandMarshaler) Props(v any) message.Attributes {
+// Attributes returns message attributes by applying all configured attribute providers.
+func (m *JSONCommandMarshaler) Attributes(v any) message.Attributes {
 	result := make(message.Attributes)
-	for _, provider := range m.propProviders {
+	for _, provider := range m.attrProviders {
 		for k, val := range provider(v) {
 			result[k] = val
 		}

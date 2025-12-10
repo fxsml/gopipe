@@ -24,17 +24,16 @@ type RouterConfig struct {
 	Middleware  []gopipe.MiddlewareFunc[*message.Message, *message.Message]
 }
 
-// Router dispatches messages to registered handlers based on property matching.
+// Router dispatches messages to handlers based on attribute matching.
 type Router struct {
 	handlers []Handler
 	pipes    []pipeEntry
 	config   RouterConfig
 }
 
-// pipeEntry stores a pipe with its matcher function.
 type pipeEntry struct {
 	pipe  gopipe.Pipe[*message.Message, *message.Message]
-	match func(prop message.Attributes) bool
+	match func(attrs message.Attributes) bool
 }
 
 // NewRouter creates a router with the given configuration and handlers.
@@ -45,22 +44,20 @@ func NewRouter(config RouterConfig, handlers ...Handler) *Router {
 	}
 }
 
-// AddHandler appends a handler to the router's handler list.
+// AddHandler adds a handler to the router.
 func (r *Router) AddHandler(handler Handler) {
 	r.handlers = append(r.handlers, handler)
 }
 
-// AddPipe appends a pipe to the router's pipe list.
-// Messages matching the matcher will be sent to the pipe instead of handlers.
-func (r *Router) AddPipe(pipe gopipe.Pipe[*message.Message, *message.Message], match func(prop message.Attributes) bool) {
+// AddPipe adds a pipe that receives matching messages.
+func (r *Router) AddPipe(pipe gopipe.Pipe[*message.Message, *message.Message], match func(attrs message.Attributes) bool) {
 	r.pipes = append(r.pipes, pipeEntry{
 		pipe:  pipe,
 		match: match,
 	})
 }
 
-// Start processes incoming messages through matched handlers and returns output messages.
-// Messages are routed to pipes first (if any match), then to handlers.
+// Start processes messages through matched handlers and pipes.
 func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan *message.Message {
 	// If no pipes, use simple handler-based routing
 	if len(r.pipes) == 0 {
