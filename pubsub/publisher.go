@@ -86,10 +86,14 @@ type PublisherConfig struct {
 }
 
 // NewPublisher creates a Publisher that wraps a Sender with batching and gopipe processing.
-// Messages are grouped by the routing key returned by route, then sent in batches.
+// Messages are grouped by topic and sent in batches. The topic is determined by the
+// message.PropTopic property. If not set, empty string is used as the default topic.
+//
+// Note: Empty string is a valid topic representing the default topic. Senders should handle
+// this appropriately, either by configuring a default topic name or logging errors when
+// messages are sent to the default topic without proper configuration.
 func NewPublisher(
 	sender Sender,
-	route RouteFunc,
 	config PublisherConfig,
 ) Publisher {
 	proc := gopipe.NewProcessor(func(ctx context.Context, group channel.Group[string, *message.Message]) ([]struct{}, error) {
@@ -118,9 +122,10 @@ func NewPublisher(
 
 	return &publisher{
 		publish: func(ctx context.Context, msgs <-chan *message.Message) <-chan struct{} {
-			// Wrap RouteFunc to work with GroupBy's signature
+			// Extract topic from message properties, defaulting to empty string
 			groupBy := func(msg *message.Message) string {
-				return route(msg.Properties)
+				topic, _ := msg.Properties.Topic()
+				return topic
 			}
 			group := channel.GroupBy(msgs, groupBy, channel.GroupByConfig{
 				MaxBatchSize: config.MaxBatchSize,

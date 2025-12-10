@@ -48,7 +48,6 @@ func example1_PrefixRouting() {
 	// Create publisher using multiplex sender
 	publisher := pubsub.NewPublisher(
 		multiplexSender,
-		pubsub.RouteBySubject(),
 		pubsub.PublisherConfig{
 			MaxBatchSize: 10,
 		},
@@ -60,18 +59,18 @@ func example1_PrefixRouting() {
 	// Start publisher
 	done := publisher.Publish(ctx, msgs)
 
-	// Send messages with different subjects
+	// Send messages with different topics
 	msgs <- message.New([]byte("Fast cache update"), message.Properties{
-		message.PropSubject: "internal.cache.update",
+		message.PropTopic: "internal.cache.update",
 	})
 	msgs <- message.New([]byte("Internal event"), message.Properties{
-		message.PropSubject: "internal.events.user.created",
+		message.PropTopic: "internal.events.user.created",
 	})
 	msgs <- message.New([]byte("External API call"), message.Properties{
-		message.PropSubject: "external.api.request",
+		message.PropTopic: "external.api.request",
 	})
 	msgs <- message.New([]byte("Order created"), message.Properties{
-		message.PropSubject: "orders.created",
+		message.PropTopic: "orders.created",
 	})
 
 	close(msgs)

@@ -25,6 +25,12 @@ const (
 	// PropType is the specific type name of the message payload (e.g., "OrderCreated", "CreateOrder").
 	// This is different from the generic message type ("command", "event", "query").
 	PropType = "message_type"
+
+	// PropTopic is the pub/sub topic for routing messages in publish-subscribe systems.
+	// This property is used by publishers to determine message routing and should be set
+	// by PropertyProviders or marshalers. Empty string is a valid topic value representing
+	// the default topic. Senders should not forward this property to the underlying broker.
+	PropTopic = "topic"
 )
 
 // String retrieves a string property by key.
@@ -80,4 +86,10 @@ func (p Properties) Deadline() (time.Time, bool) {
 // Type returns the specific type name as string from properties.
 func (p Properties) Type() (string, bool) {
 	return p.String(PropType)
+}
+
+// Topic returns the pub/sub topic as string from properties.
+// Empty string is a valid topic representing the default topic.
+func (p Properties) Topic() (string, bool) {
+	return p.String(PropTopic)
 }

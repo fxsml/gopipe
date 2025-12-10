@@ -40,7 +40,6 @@ Batches messages and sends them to a broker:
 ```go
 publisher := pubsub.NewPublisher(
     broker,
-    pubsub.RouteBySubject(),
     pubsub.PublisherConfig{
         MaxBatchSize: 100,
         MaxDuration:  100 * time.Millisecond,
@@ -52,7 +51,7 @@ done := publisher.Publish(ctx, msgs)
 
 // Send messages
 msgs <- message.New([]byte("event"), message.Properties{
-    message.PropSubject: "orders.created",
+    message.PropTopic: "orders.created",
 })
 
 close(msgs)
@@ -131,7 +130,6 @@ multiplexSender := pubsub.NewMultiplexSender(selector, natsBroker)
 // Use with publisher
 publisher := pubsub.NewPublisher(
     multiplexSender,
-    pubsub.RouteBySubject(),
     pubsub.PublisherConfig{},
 )
 ```
@@ -268,7 +266,7 @@ auditBroker := createAuditBroker()
 selector := pubsub.PrefixSenderSelector("audit", auditBroker)
 multiplex := pubsub.NewMultiplexSender(selector, mainBroker)
 
-publisher := pubsub.NewPublisher(multiplex, pubsub.RouteBySubject(), config)
+publisher := pubsub.NewPublisher(multiplex, config)
 ```
 
 ### Pattern 3: Performance Optimization
@@ -316,7 +314,6 @@ func TestMessageProcessing(t *testing.T) {
 
     publisher := pubsub.NewPublisher(
         broker,
-        pubsub.RouteBySubject(),
         pubsub.PublisherConfig{MaxBatchSize: 10},
     )
 
@@ -324,7 +321,7 @@ func TestMessageProcessing(t *testing.T) {
     msgs := make(chan *message.Message, 1)
 
     msgs <- message.New([]byte("test"), message.Properties{
-        message.PropSubject: "test.topic",
+        message.PropTopic: "test.topic",
     })
     close(msgs)
 

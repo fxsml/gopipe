@@ -36,6 +36,7 @@ type SubscriberConfig struct {
 }
 
 // NewSubscriber creates a Subscriber that wraps a Receiver with gopipe processing.
+func NewSubscriber(
 	receiver Receiver,
 	config SubscriberConfig,
 ) Subscriber {

@@ -149,6 +149,23 @@ func WithProperty(key string, value any) PropertyProvider {
 	}
 }
 
+// WithTopic returns a property provider that sets the pub/sub topic for message routing.
+//
+// The topic property is used by publishers to determine the destination topic for messages.
+// Empty string is a valid topic value representing the default topic. This property is
+// intended for routing only and should not be forwarded to the broker by senders.
+//
+// Example:
+//
+//	marshaler := NewJSONCommandMarshaler(
+//	    WithTopic("orders/created"),
+//	)
+func WithTopic(topic string) PropertyProvider {
+	return func(v any) message.Properties {
+		return message.Properties{message.PropTopic: topic}
+	}
+}
+
 // ============================================================================
 // Custom Property Provider Example
 // ============================================================================

@@ -395,7 +395,6 @@ func TestIntegration_WithPublisher(t *testing.T) {
 	// Create publisher using multiplex sender
 	publisher := pubsub.NewPublisher(
 		multiplexSender,
-		pubsub.RouteBySubject(),
 		pubsub.PublisherConfig{
 			MaxBatchSize: 10,
 		},
@@ -407,12 +406,12 @@ func TestIntegration_WithPublisher(t *testing.T) {
 	// Start publisher
 	done := publisher.Publish(ctx, msgs)
 
-	// Send messages with different subjects
+	// Send messages with different topics
 	msgs <- message.New([]byte("internal-1"), message.Properties{
-		message.PropSubject: "internal.cache",
+		message.PropTopic: "internal.cache",
 	})
 	msgs <- message.New([]byte("external-1"), message.Properties{
-		message.PropSubject: "external.api",
+		message.PropTopic: "external.api",
 	})
 
 	close(msgs)

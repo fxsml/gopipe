@@ -86,7 +86,6 @@ func TestPublisher_Basic(t *testing.T) {
 	sender := newMockSender()
 	publisher := pubsub.NewPublisher(
 		sender,
-		pubsub.RouteBySubject(),
 		pubsub.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
@@ -96,9 +95,9 @@ func TestPublisher_Basic(t *testing.T) {
 	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
-		msgs <- message.New([]byte("msg1"), message.Properties{message.PropSubject: "topic-a"})
-		msgs <- message.New([]byte("msg2"), message.Properties{message.PropSubject: "topic-a"})
-		msgs <- message.New([]byte("msg3"), message.Properties{message.PropSubject: "topic-b"})
+		msgs <- message.New([]byte("msg1"), message.Properties{message.PropTopic: "topic-a"})
+		msgs <- message.New([]byte("msg2"), message.Properties{message.PropTopic: "topic-a"})
+		msgs <- message.New([]byte("msg3"), message.Properties{message.PropTopic: "topic-b"})
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -138,7 +137,6 @@ func TestPublisher_Batching(t *testing.T) {
 	sender := newMockSender()
 	publisher := pubsub.NewPublisher(
 		sender,
-		pubsub.RouteStatic("topic"),
 		pubsub.PublisherConfig{
 			MaxBatchSize: 3,
 			MaxDuration:  time.Hour,
@@ -149,7 +147,7 @@ func TestPublisher_Batching(t *testing.T) {
 	go func() {
 		defer close(msgs)
 		for i := 0; i < 10; i++ {
-			msgs <- message.New([]byte("msg"), nil)
+			msgs <- message.New([]byte("msg"), message.Properties{message.PropTopic: "topic"})
 		}
 	}()
 
@@ -172,7 +170,6 @@ func TestPublisher_ErrorHandling(t *testing.T) {
 
 	publisher := pubsub.NewPublisher(
 		sender,
-		pubsub.RouteStatic("topic"),
 		pubsub.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
@@ -186,7 +183,7 @@ func TestPublisher_ErrorHandling(t *testing.T) {
 	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
-		msgs <- message.New([]byte("msg"), nil)
+		msgs <- message.New([]byte("msg"), message.Properties{message.PropTopic: "topic"})
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -211,7 +208,6 @@ func TestPublisher_Concurrency(t *testing.T) {
 
 	publisher := pubsub.NewPublisher(
 		sender,
-		pubsub.RouteBySubject(),
 		pubsub.PublisherConfig{
 			MaxBatchSize: 1,
 			MaxDuration:  time.Hour,
@@ -223,7 +219,7 @@ func TestPublisher_Concurrency(t *testing.T) {
 	go func() {
 		defer close(msgs)
 		for i := 0; i < 10; i++ {
-			msgs <- message.New([]byte("msg"), message.Properties{message.PropSubject: "topic-a"})
+			msgs <- message.New([]byte("msg"), message.Properties{message.PropTopic: "topic-a"})
 		}
 	}()
 
@@ -352,7 +348,6 @@ func TestPublisher_WithRecover(t *testing.T) {
 
 	publisher := pubsub.NewPublisher(
 		sender,
-		pubsub.RouteStatic("topic"),
 		pubsub.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
@@ -363,7 +358,7 @@ func TestPublisher_WithRecover(t *testing.T) {
 	msgs := make(chan *message.Message)
 	go func() {
 		defer close(msgs)
-		msgs <- message.New([]byte("msg"), nil)
+		msgs <- message.New([]byte("msg"), message.Properties{message.PropTopic: "topic"})
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
