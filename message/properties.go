@@ -16,15 +16,19 @@ const (
 	// PropDeadline stores the message processing deadline.
 	PropDeadline = "deadline"
 
-	// PropSubject indicates the subject of the message.
+	// PropSubject identifies the specific entity this message is about within the source.
+	// Per CloudEvents spec: "the subject of the event in the context of the event producer"
+	// Example: "order/ORD-001" for an order-related event, "user/123" for a user event.
 	PropSubject = "subject"
 
 	// PropContentType indicates the content type of the message.
 	PropContentType = "content_type"
 
-	// PropType is the specific type name of the message payload (e.g., "OrderCreated", "CreateOrder").
-	// This is different from the generic message type ("command", "event", "query").
-	PropType = "message_type"
+	// PropType describes what kind of event/command occurred.
+	// Per CloudEvents spec: "contains a value describing the type of event related to the originating occurrence"
+	// Examples: "OrderCreated", "CreateOrder", "com.example.order.created"
+	// Used for routing and handler matching. Should NOT be generic values like "event" or "command".
+	PropType = "type"
 
 	// PropTopic is the pub/sub topic for routing messages in publish-subscribe systems.
 	// This property is used by publishers to determine message routing and should be set

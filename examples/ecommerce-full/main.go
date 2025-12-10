@@ -232,12 +232,10 @@ func (h *CreateOrderHandler) Handle(ctx context.Context, msg *message.Message) (
 	}
 	payload, _ := json.Marshal(event)
 
-	// PROBLEM: How to specify topic for cascading?
-	// The Router outputs messages but we need to route them through Publisher
 	eventMsg := message.New(payload, message.Properties{
-		message.PropSubject: "OrderCreated",
-		message.PropType:    "event",
-		message.PropTopic:   "events.order.created", // For external webhook
+		message.PropType:    "OrderCreated",
+		message.PropSubject: "order/" + cmd.OrderID,
+		message.PropTopic:   "events/order/created",
 	})
 
 	log.Printf("[HANDLER] Emitting OrderCreated event for %s", cmd.OrderID)
@@ -245,8 +243,8 @@ func (h *CreateOrderHandler) Handle(ctx context.Context, msg *message.Message) (
 }
 
 func (h *CreateOrderHandler) Match(props message.Properties) bool {
-	subject, _ := props.Subject()
-	return subject == "CreateOrder"
+	typ, _ := props.Type()
+	return typ == "CreateOrder"
 }
 
 type ReserveInventoryHandler struct {
@@ -273,9 +271,9 @@ func (h *ReserveInventoryHandler) Handle(ctx context.Context, msg *message.Messa
 	payload, _ := json.Marshal(event)
 
 	eventMsg := message.New(payload, message.Properties{
-		message.PropSubject: "InventoryReserved",
-		message.PropType:    "event",
-		message.PropTopic:   "events.inventory.reserved",
+		message.PropType:    "InventoryReserved",
+		message.PropSubject: "order/" + cmd.OrderID,
+		message.PropTopic:   "events/inventory/reserved",
 	})
 
 	log.Printf("[HANDLER] Emitting InventoryReserved event for order %s", cmd.OrderID)
@@ -283,8 +281,8 @@ func (h *ReserveInventoryHandler) Handle(ctx context.Context, msg *message.Messa
 }
 
 func (h *ReserveInventoryHandler) Match(props message.Properties) bool {
-	subject, _ := props.Subject()
-	return subject == "ReserveInventory"
+	typ, _ := props.Type()
+	return typ == "ReserveInventory"
 }
 
 // OrderCreatedHandler reacts to OrderCreated events by triggering inventory reservation
@@ -308,9 +306,9 @@ func (h *OrderCreatedHandler) Handle(ctx context.Context, msg *message.Message) 
 	payload, _ := json.Marshal(cmd)
 
 	cmdMsg := message.New(payload, message.Properties{
-		message.PropSubject: "ReserveInventory",
-		message.PropType:    "command",
-		message.PropTopic:   "internal.commands", // Route internally
+		message.PropType:    "ReserveInventory",
+		message.PropSubject: "order/" + event.OrderID,
+		message.PropTopic:   "internal/commands",
 	})
 
 	log.Printf("[HANDLER] Emitting ReserveInventory command for order %s", event.OrderID)
@@ -318,8 +316,8 @@ func (h *OrderCreatedHandler) Handle(ctx context.Context, msg *message.Message) 
 }
 
 func (h *OrderCreatedHandler) Match(props message.Properties) bool {
-	subject, _ := props.Subject()
-	return subject == "OrderCreated"
+	typ, _ := props.Type()
+	return typ == "OrderCreated"
 }
 
 // InventoryReservedHandler confirms the order after inventory is reserved
@@ -346,9 +344,9 @@ func (h *InventoryReservedHandler) Handle(ctx context.Context, msg *message.Mess
 	payload, _ := json.Marshal(confirmEvent)
 
 	eventMsg := message.New(payload, message.Properties{
-		message.PropSubject: "OrderConfirmed",
-		message.PropType:    "event",
-		message.PropTopic:   "events.order.confirmed",
+		message.PropType:    "OrderConfirmed",
+		message.PropSubject: "order/" + event.OrderID,
+		message.PropTopic:   "events/order/confirmed",
 	})
 
 	log.Printf("[HANDLER] Emitting OrderConfirmed event for order %s", event.OrderID)
@@ -356,8 +354,8 @@ func (h *InventoryReservedHandler) Handle(ctx context.Context, msg *message.Mess
 }
 
 func (h *InventoryReservedHandler) Match(props message.Properties) bool {
-	subject, _ := props.Subject()
-	return subject == "InventoryReserved"
+	typ, _ := props.Type()
+	return typ == "InventoryReserved"
 }
 
 // ============================================================================
@@ -531,21 +529,26 @@ func main() {
 		// Read body
 		body, _ := io.ReadAll(r.Body)
 
-		// Extract subject from header or use default
-		subject := r.Header.Get("X-Gopipe-Prop-Subject")
-		if subject == "" {
-			// Try to infer subject from topic
+		// Extract message type from header or infer from topic
+		// e.g., topic "commands/CreateOrder" -> type "CreateOrder"
+		msgType := r.Header.Get("X-Gopipe-Type")
+		if msgType == "" {
 			parts := strings.Split(topic, "/")
 			if len(parts) > 1 {
-				subject = parts[len(parts)-1]
+				msgType = parts[len(parts)-1]
 			}
 		}
 
+		// Extract subject (the specific entity this message is about)
+		subject := r.Header.Get("X-Gopipe-Subject")
+
 		// Send directly to the channel broker for internal routing
 		props := message.Properties{
-			message.PropSubject: subject,
-			message.PropType:    "command",
-			message.PropTopic:   topic,
+			message.PropType:  msgType,
+			message.PropTopic: topic,
+		}
+		if subject != "" {
+			props[message.PropSubject] = subject
 		}
 		for key, values := range r.Header {
 			if strings.HasPrefix(key, "X-Gopipe-Prop-") && len(values) > 0 {
@@ -556,7 +559,7 @@ func main() {
 		}
 
 		msg := message.New(body, props)
-		log.Printf("[HTTP] Created message with subject: %s, topic: %s", subject, topic)
+		log.Printf("[HTTP] Created message with type: %s, topic: %s", msgType, topic)
 
 		// Send to channel broker for processing
 		if err := channelBroker.Send(ctx, "commands", []*message.Message{msg}); err != nil {
@@ -641,7 +644,8 @@ func main() {
 	pubInput := make(chan *message.Message, 100)
 	go func() {
 		for msg := range routerOutput {
-			log.Printf("[PIPELINE] Router output: subject=%s, topic=%s",
+			log.Printf("[PIPELINE] Router output: type=%s, subject=%s, topic=%s",
+				msg.Properties[message.PropType],
 				msg.Properties[message.PropSubject],
 				msg.Properties[message.PropTopic])
 			pubInput <- msg

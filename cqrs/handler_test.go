@@ -119,19 +119,18 @@ func TestMatchTypeName_UsesPropType(t *testing.T) {
 			matches:    false,
 		},
 		{
-			name: "ignores generic 'type' property",
+			name: "matches when type property equals type name",
 			properties: message.Properties{
-				"type": "TestEvent", // This is the generic type, not PropType
-			},
-			matches: false,
-		},
-		{
-			name: "matches PropType even with different generic type",
-			properties: message.Properties{
-				message.PropType: "TestEvent",
-				"type":           "event",
+				"type": "TestEvent",
 			},
 			matches: true,
+		},
+		{
+			name: "does not match when type is generic category",
+			properties: message.Properties{
+				message.PropType: "event", // Generic category, not the actual type
+			},
+			matches: false,
 		},
 	}
 
