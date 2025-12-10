@@ -13,7 +13,7 @@ import (
 	"github.com/fxsml/gopipe/pubsub"
 )
 
-func TestCloudEvents_BinaryMode(t *testing.T) {
+func TestHTTPCloudEvents_BinaryMode(t *testing.T) {
 	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
 	defer receiver.Close()
 
@@ -29,11 +29,11 @@ func TestCloudEvents_BinaryMode(t *testing.T) {
 
 	// Create a message with CloudEvents attributes
 	msg := message.New([]byte(`{"order":"123"}`), message.Attributes{
-		message.AttrID:     "evt-001",
-		message.AttrSource: "https://example.com/orders",
-		message.AttrType:   "com.example.order.created",
-		message.AttrSubject: "order/123",
-		message.AttrTime:    time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
+		message.AttrID:              "evt-001",
+		message.AttrSource:          "https://example.com/orders",
+		message.AttrType:            "com.example.order.created",
+		message.AttrSubject:         "order/123",
+		message.AttrTime:            time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
 		message.AttrDataContentType: "application/json",
 	})
 
@@ -76,7 +76,7 @@ func TestCloudEvents_BinaryMode(t *testing.T) {
 	}
 }
 
-func TestCloudEvents_BinaryMode_PercentEncoding(t *testing.T) {
+func TestHTTPCloudEvents_BinaryMode_PercentEncoding(t *testing.T) {
 	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
 	defer receiver.Close()
 
@@ -91,10 +91,10 @@ func TestCloudEvents_BinaryMode_PercentEncoding(t *testing.T) {
 
 	// Create message with special characters requiring percent-encoding
 	msg := message.New([]byte(`{}`), message.Attributes{
-		message.AttrID:      "evt 001",  // Contains space
-		message.AttrSource:  "https://example.com/€",  // Contains special char
+		message.AttrID:      "evt 001",               // Contains space
+		message.AttrSource:  "https://example.com/€", // Contains special char
 		message.AttrType:    "test.type",
-		message.AttrSubject: "Euro € 😀",  // Contains non-ASCII characters
+		message.AttrSubject: "Euro € 😀", // Contains non-ASCII characters
 	})
 
 	err := sender.Send(ctx, "test.topic", []*message.Message{msg})
@@ -122,7 +122,7 @@ func TestCloudEvents_BinaryMode_PercentEncoding(t *testing.T) {
 	}
 }
 
-func TestCloudEvents_StructuredMode(t *testing.T) {
+func TestHTTPCloudEvents_StructuredMode(t *testing.T) {
 	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
 	defer receiver.Close()
 
@@ -180,7 +180,7 @@ func TestCloudEvents_StructuredMode(t *testing.T) {
 	}
 }
 
-func TestCloudEvents_BatchMode(t *testing.T) {
+func TestHTTPCloudEvents_BatchMode(t *testing.T) {
 	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
 	defer receiver.Close()
 
@@ -236,7 +236,7 @@ func TestCloudEvents_BatchMode(t *testing.T) {
 	}
 }
 
-func TestCloudEvents_ExtensionAttributes(t *testing.T) {
+func TestHTTPCloudEvents_ExtensionAttributes(t *testing.T) {
 	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
 	defer receiver.Close()
 
@@ -296,7 +296,7 @@ func TestCloudEvents_ExtensionAttributes(t *testing.T) {
 	}
 }
 
-func TestCloudEvents_DefaultAttributes(t *testing.T) {
+func TestHTTPCloudEvents_DefaultAttributes(t *testing.T) {
 	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
 	defer receiver.Close()
 
@@ -349,7 +349,7 @@ func TestCloudEvents_DefaultAttributes(t *testing.T) {
 	}
 }
 
-func TestCloudEvents_ReceiverDetectsMode(t *testing.T) {
+func TestHTTPCloudEvents_ReceiverDetectsMode(t *testing.T) {
 	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
 	defer receiver.Close()
 
@@ -463,7 +463,7 @@ func TestCloudEvents_ReceiverDetectsMode(t *testing.T) {
 	})
 }
 
-func TestCloudEvents_InvalidEvent(t *testing.T) {
+func TestHTTPCloudEvents_InvalidEvent(t *testing.T) {
 	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
 	defer receiver.Close()
 
