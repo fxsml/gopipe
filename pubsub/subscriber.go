@@ -11,33 +11,24 @@ import (
 
 // Subscriber provides channel-based message consumption from a Receiver.
 // Topics must be added via AddTopic before calling Subscribe.
-type Subscriber interface {
-	// AddTopic registers a topic to subscribe to.
-	// Must be called before Subscribe. Can be called multiple times
-	// to subscribe to multiple topics.
-	AddTopic(topic string)
-
-	// Subscribe starts polling all registered topics and returns a channel
-	// that emits messages from all topics. Each topic is polled in a separate
-	// goroutine and messages are merged into a single output channel.
-	// The channel is closed when the context is canceled.
-	Subscribe(ctx context.Context) <-chan *message.Message
-}
-
-type subscriber struct {
+type Subscriber struct {
 	receiver Receiver
 	topics   []string
 	opts     []gopipe.Option[struct{}, *message.Message]
 }
 
 // AddTopic registers a topic to subscribe to.
-func (s *subscriber) AddTopic(topic string) {
+// Must be called before Subscribe. Can be called multiple times
+// to subscribe to multiple topics.
+func (s *Subscriber) AddTopic(topic string) {
 	s.topics = append(s.topics, topic)
 }
 
-// Subscribe starts polling all registered topics concurrently.
-// Messages from all topics are merged into a single output channel.
-func (s *subscriber) Subscribe(ctx context.Context) <-chan *message.Message {
+// Subscribe starts polling all registered topics and returns a channel
+// that emits messages from all topics. Each topic is polled in a separate
+// goroutine and messages are merged into a single output channel.
+// The channel is closed when the context is canceled.
+func (s *Subscriber) Subscribe(ctx context.Context) <-chan *message.Message {
 	if len(s.topics) == 0 {
 		// No topics registered, return closed channel
 		out := make(chan *message.Message)
@@ -60,7 +51,7 @@ func (s *subscriber) Subscribe(ctx context.Context) <-chan *message.Message {
 }
 
 // subscribeToTopic creates a channel that polls a single topic.
-func (s *subscriber) subscribeToTopic(ctx context.Context, topic string) <-chan *message.Message {
+func (s *Subscriber) subscribeToTopic(ctx context.Context, topic string) <-chan *message.Message {
 	return gopipe.NewGenerator(func(ctx context.Context) ([]*message.Message, error) {
 		return s.receiver.Receive(ctx, topic)
 	}, s.opts...).Generate(ctx)
@@ -93,7 +84,7 @@ type SubscriberConfig struct {
 func NewSubscriber(
 	receiver Receiver,
 	config SubscriberConfig,
-) Subscriber {
+) *Subscriber {
 	opts := []gopipe.Option[struct{}, *message.Message]{
 		gopipe.WithLogConfig[struct{}, *message.Message](gopipe.LogConfig{
 			MessageSuccess: "Received messages",
@@ -114,7 +105,7 @@ func NewSubscriber(
 		opts = append(opts, gopipe.WithRetryConfig[struct{}, *message.Message](*config.Retry))
 	}
 
-	return &subscriber{
+	return &Subscriber{
 		receiver: receiver,
 		opts:     opts,
 	}

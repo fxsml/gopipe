@@ -36,10 +36,12 @@ type Receiver interface {
 
 type Broker interface { Sender; Receiver }
 
-type Subscriber interface {
-    AddTopic(topic string)
-    Subscribe(ctx context.Context) <-chan *message.Message
-}
+type Subscriber struct { ... }
+func (s *Subscriber) AddTopic(topic string)
+func (s *Subscriber) Subscribe(ctx context.Context) <-chan *message.Message
+
+type Publisher struct { ... }
+func (p *Publisher) Publish(ctx, msgs) <-chan struct{}
 ```
 
 ### Subscriber Design

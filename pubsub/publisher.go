@@ -55,18 +55,26 @@ func RouteByFormat(format string, keys ...string) RouteFunc {
 }
 
 // Publisher provides channel-based message publishing with batching and routing.
-type Publisher interface {
-	// Publish consumes messages from the input channel, batches them by routing key,
-	// and sends them via the Sender. Returns a channel that closes when publishing completes.
-	Publish(ctx context.Context, msgs <-chan *message.Message) <-chan struct{}
+type Publisher struct {
+	sender Sender
+	config PublisherConfig
+	proc   gopipe.Processor[channel.Group[string, *message.Message], struct{}]
+	opts   []gopipe.Option[channel.Group[string, *message.Message], struct{}]
 }
 
-type publisher struct {
-	publish func(ctx context.Context, msgs <-chan *message.Message) <-chan struct{}
-}
-
-func (p *publisher) Publish(ctx context.Context, msgs <-chan *message.Message) <-chan struct{} {
-	return p.publish(ctx, msgs)
+// Publish consumes messages from the input channel, batches them by topic,
+// and sends them via the Sender. Returns a channel that closes when publishing completes.
+func (p *Publisher) Publish(ctx context.Context, msgs <-chan *message.Message) <-chan struct{} {
+	// Extract topic from message properties, defaulting to empty string
+	groupBy := func(msg *message.Message) string {
+		topic, _ := msg.Properties.Topic()
+		return topic
+	}
+	group := channel.GroupBy(msgs, groupBy, channel.GroupByConfig{
+		MaxBatchSize: p.config.MaxBatchSize,
+		MaxDuration:  p.config.MaxDuration,
+	})
+	return gopipe.StartProcessor(ctx, group, p.proc, p.opts...)
 }
 
 // PublisherConfig configures the Publisher behavior.
@@ -95,7 +103,7 @@ type PublisherConfig struct {
 func NewPublisher(
 	sender Sender,
 	config PublisherConfig,
-) Publisher {
+) *Publisher {
 	proc := gopipe.NewProcessor(func(ctx context.Context, group channel.Group[string, *message.Message]) ([]struct{}, error) {
 		return nil, sender.Send(ctx, group.Key, group.Items)
 	}, nil)
@@ -120,18 +128,10 @@ func NewPublisher(
 		opts = append(opts, gopipe.WithRetryConfig[channel.Group[string, *message.Message], struct{}](*config.Retry))
 	}
 
-	return &publisher{
-		publish: func(ctx context.Context, msgs <-chan *message.Message) <-chan struct{} {
-			// Extract topic from message properties, defaulting to empty string
-			groupBy := func(msg *message.Message) string {
-				topic, _ := msg.Properties.Topic()
-				return topic
-			}
-			group := channel.GroupBy(msgs, groupBy, channel.GroupByConfig{
-				MaxBatchSize: config.MaxBatchSize,
-				MaxDuration:  config.MaxDuration,
-			})
-			return gopipe.StartProcessor(ctx, group, proc, opts...)
-		},
+	return &Publisher{
+		sender: sender,
+		config: config,
+		proc:   proc,
+		opts:   opts,
 	}
 }
