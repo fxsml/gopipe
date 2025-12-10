@@ -233,6 +233,7 @@ func (h *CreateOrderHandler) Handle(ctx context.Context, msg *message.Message) (
 	payload, _ := json.Marshal(event)
 
 	eventMsg := message.New(payload, message.Properties{
+		message.PropSource:  "/orders/api",
 		message.PropType:    "OrderCreated",
 		message.PropSubject: "order/" + cmd.OrderID,
 		message.PropTopic:   "events/order/created",
@@ -271,6 +272,7 @@ func (h *ReserveInventoryHandler) Handle(ctx context.Context, msg *message.Messa
 	payload, _ := json.Marshal(event)
 
 	eventMsg := message.New(payload, message.Properties{
+		message.PropSource:  "/inventory/api",
 		message.PropType:    "InventoryReserved",
 		message.PropSubject: "order/" + cmd.OrderID,
 		message.PropTopic:   "events/inventory/reserved",
@@ -306,6 +308,7 @@ func (h *OrderCreatedHandler) Handle(ctx context.Context, msg *message.Message) 
 	payload, _ := json.Marshal(cmd)
 
 	cmdMsg := message.New(payload, message.Properties{
+		message.PropSource:  "/orders/api",
 		message.PropType:    "ReserveInventory",
 		message.PropSubject: "order/" + event.OrderID,
 		message.PropTopic:   "internal/commands",
@@ -344,6 +347,7 @@ func (h *InventoryReservedHandler) Handle(ctx context.Context, msg *message.Mess
 	payload, _ := json.Marshal(confirmEvent)
 
 	eventMsg := message.New(payload, message.Properties{
+		message.PropSource:  "/orders/api",
 		message.PropType:    "OrderConfirmed",
 		message.PropSubject: "order/" + event.OrderID,
 		message.PropTopic:   "events/order/confirmed",
@@ -543,9 +547,15 @@ func main() {
 		subject := r.Header.Get("X-Gopipe-Subject")
 
 		// Send directly to the channel broker for internal routing
+		// Source defaults to request URI or a header if provided
+		source := r.Header.Get("X-Gopipe-Source")
+		if source == "" {
+			source = r.URL.Path // Use request path as source
+		}
 		props := message.Properties{
-			message.PropType:  msgType,
-			message.PropTopic: topic,
+			message.PropSource: source,
+			message.PropType:   msgType,
+			message.PropTopic:  topic,
 		}
 		if subject != "" {
 			props[message.PropSubject] = subject
@@ -644,7 +654,8 @@ func main() {
 	pubInput := make(chan *message.Message, 100)
 	go func() {
 		for msg := range routerOutput {
-			log.Printf("[PIPELINE] Router output: type=%s, subject=%s, topic=%s",
+			log.Printf("[PIPELINE] Router output: source=%s, type=%s, subject=%s, topic=%s",
+				msg.Properties[message.PropSource],
 				msg.Properties[message.PropType],
 				msg.Properties[message.PropSubject],
 				msg.Properties[message.PropTopic])
