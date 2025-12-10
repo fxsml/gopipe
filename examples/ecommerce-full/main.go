@@ -426,7 +426,7 @@ func main() {
 	_ = pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 100)
 
 	// 2. Channel Broker for internal messaging
-	channelBroker := pubsub.NewBroker(pubsub.BrokerConfig{
+	channelBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{
 		BufferSize: 100,
 	})
 

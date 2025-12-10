@@ -145,11 +145,11 @@ func (s *ReceiverTestSuite) TestReceiveDifferentTopics(t *testing.T) {
 }
 
 // ============================================================================
-// Broker Tests (combined Sender + Receiver with Subscribe)
+// ChannelBroker Tests (combined Sender + Receiver with Subscribe)
 // ============================================================================
 
-func TestBroker_Subscribe_SendReceive(t *testing.T) {
-	broker := pubsub.NewBroker(pubsub.BrokerConfig{BufferSize: 10})
+func TestChannelBroker_Subscribe_SendReceive(t *testing.T) {
+	broker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{BufferSize: 10})
 	defer broker.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -176,8 +176,8 @@ func TestBroker_Subscribe_SendReceive(t *testing.T) {
 	}
 }
 
-func TestBroker_Subscribe_MultipleSubscribers(t *testing.T) {
-	broker := pubsub.NewBroker(pubsub.BrokerConfig{BufferSize: 10})
+func TestChannelBroker_Subscribe_MultipleSubscribers(t *testing.T) {
+	broker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{BufferSize: 10})
 	defer broker.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -208,8 +208,8 @@ func TestBroker_Subscribe_MultipleSubscribers(t *testing.T) {
 	}
 }
 
-func TestBroker_Subscribe_DifferentTopics(t *testing.T) {
-	broker := pubsub.NewBroker(pubsub.BrokerConfig{BufferSize: 10})
+func TestChannelBroker_Subscribe_DifferentTopics(t *testing.T) {
+	broker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{BufferSize: 10})
 	defer broker.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -250,8 +250,8 @@ func TestBroker_Subscribe_DifferentTopics(t *testing.T) {
 	}
 }
 
-func TestBroker_Subscribe_ExactMatchOnly(t *testing.T) {
-	broker := pubsub.NewBroker(pubsub.BrokerConfig{BufferSize: 10})
+func TestChannelBroker_Subscribe_ExactMatchOnly(t *testing.T) {
+	broker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{BufferSize: 10})
 	defer broker.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -290,8 +290,8 @@ func TestBroker_Subscribe_ExactMatchOnly(t *testing.T) {
 	}
 }
 
-func TestBroker_Subscribe_ContextCancel(t *testing.T) {
-	broker := pubsub.NewBroker(pubsub.BrokerConfig{BufferSize: 10})
+func TestChannelBroker_Subscribe_ContextCancel(t *testing.T) {
+	broker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{BufferSize: 10})
 	defer broker.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -312,8 +312,8 @@ func TestBroker_Subscribe_ContextCancel(t *testing.T) {
 	}
 }
 
-func TestBroker_Close(t *testing.T) {
-	broker := pubsub.NewBroker(pubsub.BrokerConfig{BufferSize: 10})
+func TestChannelBroker_Close(t *testing.T) {
+	broker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{BufferSize: 10})
 
 	ctx := context.Background()
 	ch := broker.Subscribe(ctx, "test")
@@ -348,8 +348,8 @@ func TestBroker_Close(t *testing.T) {
 	}
 }
 
-func TestBroker_Receive_Polling(t *testing.T) {
-	broker := pubsub.NewBroker(pubsub.BrokerConfig{BufferSize: 10})
+func TestChannelBroker_Receive_Polling(t *testing.T) {
+	broker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{BufferSize: 10})
 	defer broker.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -377,8 +377,8 @@ func TestBroker_Receive_Polling(t *testing.T) {
 	}
 }
 
-func TestBroker_ConcurrentSendSubscribe(t *testing.T) {
-	broker := pubsub.NewBroker(pubsub.BrokerConfig{BufferSize: 100})
+func TestChannelBroker_ConcurrentSendSubscribe(t *testing.T) {
+	broker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{BufferSize: 100})
 	defer broker.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -434,22 +434,22 @@ done:
 }
 
 // ============================================================================
-// Run Sender/Receiver test suites against Broker
+// Run Sender/Receiver test suites against ChannelBroker
 // ============================================================================
 
-func TestBroker_SenderInterface(t *testing.T) {
+func TestChannelBroker_SenderInterface(t *testing.T) {
 	suite := &SenderTestSuite{
 		NewSender: func() pubsub.Sender {
-			return pubsub.NewBroker(pubsub.BrokerConfig{BufferSize: 10})
+			return pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{BufferSize: 10})
 		},
 	}
 	suite.Run(t)
 }
 
-func TestBroker_ReceiverInterface(t *testing.T) {
+func TestChannelBroker_ReceiverInterface(t *testing.T) {
 	suite := &ReceiverTestSuite{
 		NewReceiver: func() pubsub.Receiver {
-			return pubsub.NewBroker(pubsub.BrokerConfig{BufferSize: 10})
+			return pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{BufferSize: 10})
 		},
 	}
 	suite.Run(t)

@@ -16,8 +16,8 @@ func main() {
 	fmt.Println("=== In-Memory Broker Example ===")
 	fmt.Println()
 
-	// Create broker with configuration
-	b := pubsub.NewBroker(pubsub.BrokerConfig{
+	// Create channel broker with configuration
+	b := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{
 		CloseTimeout: 5 * time.Second,
 		SendTimeout:  time.Second,
 		BufferSize:   50,
@@ -64,7 +64,7 @@ func main() {
 	fmt.Println("\n=== All examples completed ===")
 }
 
-func basicPubSubSubscribe(ctx context.Context, b *pubsub.Broker, wg *sync.WaitGroup) {
+func basicPubSubSubscribe(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.WaitGroup) {
 	// Subscribe FIRST - returns a channel for real-time message delivery
 	ch := b.Subscribe(ctx, "greetings")
 
@@ -97,7 +97,7 @@ func basicPubSubSubscribe(ctx context.Context, b *pubsub.Broker, wg *sync.WaitGr
 	})
 }
 
-func multipleSubscribers(ctx context.Context, b *pubsub.Broker, wg *sync.WaitGroup) {
+func multipleSubscribers(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.WaitGroup) {
 	// Create multiple subscribers for the same topic
 	ch1 := b.Subscribe(ctx, "events")
 	ch2 := b.Subscribe(ctx, "events")
@@ -130,7 +130,7 @@ func multipleSubscribers(ctx context.Context, b *pubsub.Broker, wg *sync.WaitGro
 	})
 }
 
-func hierarchicalTopics(ctx context.Context, b *pubsub.Broker, wg *sync.WaitGroup) {
+func hierarchicalTopics(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.WaitGroup) {
 	// Subscribe to specific topics (exact match only - no wildcards)
 	chOrders := b.Subscribe(ctx, "orders/created")
 	chUpdates := b.Subscribe(ctx, "orders/updated")
@@ -177,7 +177,7 @@ func hierarchicalTopics(ctx context.Context, b *pubsub.Broker, wg *sync.WaitGrou
 	})
 }
 
-func receivePollingMode(ctx context.Context, b *pubsub.Broker, wg *sync.WaitGroup) {
+func receivePollingMode(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.WaitGroup) {
 	// Receive() creates a temporary subscription and polls for ~100ms
 	// Use this for one-shot polling or compatibility with existing code
 

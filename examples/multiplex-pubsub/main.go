@@ -39,8 +39,8 @@ func example1_PrefixRouting() {
 	fmt.Println()
 
 	// Create brokers
-	memoryBroker := pubsub.NewBroker(pubsub.BrokerConfig{})
-	externalBroker := pubsub.NewBroker(pubsub.BrokerConfig{})
+	memoryBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
+	externalBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
 
 	// Create multiplex sender with routing logic
 	selector := pubsub.PrefixSenderSelector("internal", memoryBroker)
@@ -129,9 +129,9 @@ func example2_ExactRouting() {
 	fmt.Println()
 
 	// Create brokers for different purposes
-	memoryBroker := pubsub.NewBroker(pubsub.BrokerConfig{})
-	auditBroker := pubsub.NewBroker(pubsub.BrokerConfig{})
-	natsBroker := pubsub.NewBroker(pubsub.BrokerConfig{}) // Simulated NATS
+	memoryBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
+	auditBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
+	natsBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{}) // Simulated NATS
 
 	// Define routing rules (exact match only)
 	selector := pubsub.NewTopicSenderSelector([]pubsub.TopicSenderRoute{
@@ -189,9 +189,9 @@ func example3_ChainedSelectors() {
 	fmt.Println()
 
 	// Create brokers
-	auditBroker := pubsub.NewBroker(pubsub.BrokerConfig{})
-	internalBroker := pubsub.NewBroker(pubsub.BrokerConfig{})
-	externalBroker := pubsub.NewBroker(pubsub.BrokerConfig{})
+	auditBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
+	internalBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
+	externalBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
 
 	// Chain selectors (first match wins)
 	selector := pubsub.ChainSenderSelectors(
@@ -244,8 +244,8 @@ func example4_MultiplexReceiver() {
 	fmt.Println()
 
 	// Create brokers and populate with messages
-	memoryBroker := pubsub.NewBroker(pubsub.BrokerConfig{})
-	externalBroker := pubsub.NewBroker(pubsub.BrokerConfig{})
+	memoryBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
+	externalBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

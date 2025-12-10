@@ -37,8 +37,8 @@ var (
 	ErrSendTimeout = errors.New("send timeout")
 )
 
-// BrokerConfig configures the in-process broker.
-type BrokerConfig struct {
+// ChannelBrokerConfig configures the in-process channel broker.
+type ChannelBrokerConfig struct {
 	// BufferSize is the channel buffer size for subscriptions.
 	// Default: 100.
 	BufferSize int
@@ -52,7 +52,7 @@ type BrokerConfig struct {
 	CloseTimeout time.Duration
 }
 
-func (c BrokerConfig) defaults() BrokerConfig {
+func (c ChannelBrokerConfig) defaults() ChannelBrokerConfig {
 	cfg := c
 	if cfg.BufferSize == 0 {
 		cfg.BufferSize = 100
@@ -70,10 +70,10 @@ type subscription struct {
 	ch    chan *message.Message
 }
 
-// Broker is an in-process message broker using Go channels.
+// ChannelBroker is an in-process message broker using Go channels.
 // It supports both Subscribe (push) and Receive (pull) patterns.
-type Broker struct {
-	config BrokerConfig
+type ChannelBroker struct {
+	config ChannelBrokerConfig
 
 	mu     sync.RWMutex
 	subs   map[string]*subscription // keyed by subscription ID
@@ -83,14 +83,14 @@ type Broker struct {
 
 // Compile-time interface assertions
 var (
-	_ Sender   = (*Broker)(nil)
-	_ Receiver = (*Broker)(nil)
+	_ Sender   = (*ChannelBroker)(nil)
+	_ Receiver = (*ChannelBroker)(nil)
 )
 
-// NewBroker creates a new in-process message broker.
-func NewBroker(config BrokerConfig) *Broker {
+// NewChannelBroker creates a new in-process message broker.
+func NewChannelBroker(config ChannelBrokerConfig) *ChannelBroker {
 	cfg := config.defaults()
-	return &Broker{
+	return &ChannelBroker{
 		config: cfg,
 		subs:   make(map[string]*subscription),
 	}
@@ -99,7 +99,7 @@ func NewBroker(config BrokerConfig) *Broker {
 // Subscribe creates a subscription to the specified topic.
 // Returns a channel that receives messages sent to that topic.
 // The channel is closed when the context is canceled or the broker is closed.
-func (b *Broker) Subscribe(ctx context.Context, topic string) <-chan *message.Message {
+func (b *ChannelBroker) Subscribe(ctx context.Context, topic string) <-chan *message.Message {
 	out := make(chan *message.Message, b.config.BufferSize)
 
 	b.mu.Lock()
@@ -152,7 +152,7 @@ func (b *Broker) Subscribe(ctx context.Context, topic string) <-chan *message.Me
 
 // Send publishes messages to all subscribers of the specified topic.
 // Messages are delivered to subscribers with exact topic match only.
-func (b *Broker) Send(ctx context.Context, topic string, msgs []*message.Message) error {
+func (b *ChannelBroker) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -207,7 +207,7 @@ func (b *Broker) Send(ctx context.Context, topic string, msgs []*message.Message
 // Receive polls for messages from the specified topic.
 // Creates a temporary subscription, collects available messages, and returns.
 // For continuous message consumption, use Subscribe instead.
-func (b *Broker) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
+func (b *ChannelBroker) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -252,7 +252,7 @@ func (b *Broker) Receive(ctx context.Context, topic string) ([]*message.Message,
 }
 
 // Close gracefully shuts down the broker.
-func (b *Broker) Close() error {
+func (b *ChannelBroker) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -270,7 +270,7 @@ func (b *Broker) Close() error {
 	return nil
 }
 
-func (b *Broker) nextSubID() string {
+func (b *ChannelBroker) nextSubID() string {
 	id := atomic.AddUint64(&b.nextID, 1)
 	return string(rune(id)) + "-sub"
 }

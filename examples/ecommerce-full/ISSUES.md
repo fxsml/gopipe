@@ -6,7 +6,7 @@ All issues have been resolved in commit `a695139`.
 
 | Issue | Status | Resolution |
 |-------|--------|------------|
-| #0 Duplicate brokers | ✅ Resolved | Removed InMemoryBroker, kept unified Broker |
+| #0 Duplicate brokers | ✅ Resolved | Removed InMemoryBroker, kept unified ChannelBroker |
 | #1 Concrete types | ✅ Resolved | All constructors return concrete types |
 | #2 Topic separator | ✅ Resolved | Standardized on `/`, exact match only |
 | #3 HTTP message clearing | ✅ Resolved | Messages cleared after Receive() |
@@ -19,12 +19,12 @@ All issues have been resolved in commit `a695139`.
 
 ## 0. InMemoryBroker vs ChannelBroker ✅ RESOLVED
 
-**Resolution**: Removed both, created unified `Broker` type in `pubsub/broker.go`.
+**Resolution**: Removed both, created unified `ChannelBroker` type in `pubsub/broker.go`.
 
 ```go
-// New unified Broker
-type Broker struct {
-    config BrokerConfig
+// New unified ChannelBroker
+type ChannelBroker struct {
+    config ChannelBrokerConfig
     mu     sync.RWMutex
     subs   map[string]*subscription  // keyed by unique ID
     nextID uint64
@@ -32,21 +32,21 @@ type Broker struct {
 }
 
 // Returns concrete type
-func NewBroker(config BrokerConfig) *Broker
+func NewChannelBroker(config ChannelBrokerConfig) *ChannelBroker
 
 // Subscribe returns channel (primary API)
-func (b *Broker) Subscribe(ctx context.Context, topic string) <-chan *message.Message
+func (b *ChannelBroker) Subscribe(ctx context.Context, topic string) <-chan *message.Message
 
 // Send fans out to exact topic matches
-func (b *Broker) Send(ctx context.Context, topic string, msgs []*message.Message) error
+func (b *ChannelBroker) Send(ctx context.Context, topic string, msgs []*message.Message) error
 
 // Receive creates temp subscription for polling (compatibility API)
-func (b *Broker) Receive(ctx context.Context, topic string) ([]*message.Message, error)
+func (b *ChannelBroker) Receive(ctx context.Context, topic string) ([]*message.Message, error)
 ```
 
 Files deleted:
-- `pubsub/memory.go` (InMemoryBroker)
-- `pubsub/channel.go` (ChannelBroker)
+- `pubsub/memory.go` (old InMemoryBroker)
+- `pubsub/channel.go` (old ChannelBroker)
 
 ---
 
@@ -57,10 +57,10 @@ Files deleted:
 ```go
 // pubsub/broker.go
 var (
-    _ Sender   = (*Broker)(nil)
-    _ Receiver = (*Broker)(nil)
+    _ Sender   = (*ChannelBroker)(nil)
+    _ Receiver = (*ChannelBroker)(nil)
 )
-func NewBroker(config BrokerConfig) *Broker
+func NewChannelBroker(config ChannelBrokerConfig) *ChannelBroker
 
 // pubsub/http.go
 var _ Sender = (*HTTPSender)(nil)
@@ -84,7 +84,7 @@ func NewIOBroker(r io.Reader, w io.Writer, config IOConfig) *IOBroker
 
 | Component | Separator | Example |
 |-----------|-----------|---------|
-| Broker | `/` | `orders/created` |
+| ChannelBroker | `/` | `orders/created` |
 | HTTPReceiver | `/` | `commands/create-order` |
 | Multiplex | `/` | `internal/cache` |
 | Topics utility | `/` | `SplitTopic()`, `JoinTopic()` |
@@ -144,12 +144,12 @@ Note: Full Ack/Nack channel support deferred to future iteration.
 **Resolution**: Uses `map[string]*subscription` with atomic ID generation.
 
 ```go
-type Broker struct {
+type ChannelBroker struct {
     subs   map[string]*subscription  // keyed by subscription ID
     nextID uint64
 }
 
-func (b *Broker) nextSubID() string {
+func (b *ChannelBroker) nextSubID() string {
     id := atomic.AddUint64(&b.nextID, 1)
     return string(rune(id)) + "-sub"
 }
