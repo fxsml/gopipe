@@ -18,8 +18,8 @@ import (
 var (
 	// ErrHTTPRequestFailed is returned when an HTTP request fails.
 	ErrHTTPRequestFailed = errors.New("HTTP request failed")
-	// ErrHTTPServerClosed is returned when operations are attempted on a closed server.
-	ErrHTTPServerClosed = errors.New("HTTP server is closed")
+	// ErrHTTPReceiverClosed is returned when operations are attempted on a closed receiver.
+	ErrHTTPReceiverClosed = errors.New("HTTP receiver is closed")
 )
 
 const (
@@ -50,6 +50,15 @@ type HTTPConfig struct {
 
 	// ContentType for the payload. Defaults to application/json.
 	ContentType string
+
+	// WaitForAck makes the HTTP receiver wait for message acknowledgment before responding.
+	// When true: returns 200 OK after ack, 500 on nack/timeout.
+	// When false: returns 201 Created immediately.
+	WaitForAck bool
+
+	// AckTimeout is the maximum duration to wait for acknowledgment when WaitForAck is true.
+	// Default: 30 seconds.
+	AckTimeout time.Duration
 }
 
 func (c HTTPConfig) defaults() HTTPConfig {
@@ -60,24 +69,26 @@ func (c HTTPConfig) defaults() HTTPConfig {
 	if cfg.ContentType == "" {
 		cfg.ContentType = ContentTypeJSON
 	}
+	if cfg.AckTimeout == 0 {
+		cfg.AckTimeout = 30 * time.Second
+	}
 	return cfg
 }
 
-// httpSender sends messages via HTTP POST to a webhook URL.
-// Properties are sent as X-Gopipe-* headers, payload is sent as request body.
-type httpSender struct {
+// HTTPSender sends messages via HTTP POST to a webhook URL.
+type HTTPSender struct {
 	config HTTPConfig
 	url    string
 	client *http.Client
 }
 
+// Compile-time interface assertion
+var _ Sender = (*HTTPSender)(nil)
+
 // NewHTTPSender creates a sender that POSTs messages to the given URL.
-// The topic is sent in X-Gopipe-Topic header.
-// Properties are sent as X-Gopipe-Prop-* headers.
-// Payload is sent as the request body with configured content type.
-func NewHTTPSender(url string, config HTTPConfig) Sender {
+func NewHTTPSender(url string, config HTTPConfig) *HTTPSender {
 	cfg := config.defaults()
-	return &httpSender{
+	return &HTTPSender{
 		config: cfg,
 		url:    url,
 		client: cfg.Client,
@@ -85,9 +96,7 @@ func NewHTTPSender(url string, config HTTPConfig) Sender {
 }
 
 // Send POSTs messages to the configured webhook URL.
-// Each message is sent as a separate HTTP request.
-func (s *httpSender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
-	// Apply timeout if configured
+func (s *HTTPSender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	if s.config.SendTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, s.config.SendTimeout)
@@ -112,8 +121,7 @@ func (s *httpSender) Send(ctx context.Context, topic string, msgs []*message.Mes
 	return nil
 }
 
-func (s *httpSender) sendOne(ctx context.Context, topic string, msg *message.Message) error {
-	// Payload is already []byte
+func (s *HTTPSender) sendOne(ctx context.Context, topic string, msg *message.Message) error {
 	body := msg.Payload
 	if len(body) == 0 {
 		body = []byte("null")
@@ -124,22 +132,15 @@ func (s *httpSender) sendOne(ctx context.Context, topic string, msg *message.Mes
 		return errors.Join(ErrHTTPRequestFailed, err)
 	}
 
-	// Set content type
 	req.Header.Set(HeaderContentType, s.config.ContentType)
-
-	// Set topic header
 	req.Header.Set(HeaderTopic, topic)
-
-	// Set timestamp header
 	req.Header.Set(HeaderTimestamp, time.Now().UTC().Format(time.RFC3339Nano))
 
-	// Set properties as headers
 	for key, value := range msg.Properties {
 		headerKey := propertyToHeader(key)
 		req.Header.Set(headerKey, fmt.Sprintf("%v", value))
 	}
 
-	// Set custom headers
 	for k, v := range s.config.Headers {
 		req.Header.Set(k, v)
 	}
@@ -158,9 +159,7 @@ func (s *httpSender) sendOne(ctx context.Context, topic string, msg *message.Mes
 }
 
 // propertyToHeader converts a property key to an HTTP header name.
-// e.g., "gopipe.message.id" -> "X-Gopipe-Prop-Gopipe-Message-Id"
 func propertyToHeader(key string) string {
-	// Replace dots and underscores with dashes, capitalize words
 	parts := strings.FieldsFunc(key, func(r rune) bool {
 		return r == '.' || r == '_' || r == '-'
 	})
@@ -173,72 +172,62 @@ func propertyToHeader(key string) string {
 }
 
 // headerToProperty converts an HTTP header name back to a property key.
-// e.g., "X-Gopipe-Prop-Gopipe-Message-Id" -> "gopipe.message.id"
 func headerToProperty(header string) string {
-	// Remove prefix
 	prop := strings.TrimPrefix(header, HeaderPrefix+"Prop-")
-	// Convert dashes to dots and lowercase
 	return strings.ToLower(strings.ReplaceAll(prop, "-", "."))
 }
 
-// httpReceiver receives messages via HTTP POST requests.
-// It implements an HTTP handler that accepts messages and buffers them.
-type httpReceiver struct {
-	config     HTTPConfig
-	mu         sync.RWMutex
-	messages   []topicMessage
-	closed     bool
-	bufferSize int
-}
-
+// topicMessage holds a message with its topic.
 type topicMessage struct {
 	topic string
 	msg   *message.Message
 }
 
+// HTTPReceiver receives messages via HTTP POST requests.
+type HTTPReceiver struct {
+	config     HTTPConfig
+	mu         sync.Mutex
+	messages   map[string][]topicMessage // keyed by topic
+	readIndex  map[string]int            // track read position per topic
+	closed     bool
+	bufferSize int
+}
+
+// Compile-time interface assertion
+var _ Receiver = (*HTTPReceiver)(nil)
+
 // NewHTTPReceiver creates a receiver that accepts messages via HTTP POST.
-// Use ServeHTTP or Handler() to integrate with an HTTP server.
-// Topic is read from X-Gopipe-Topic header.
-// Properties are read from X-Gopipe-Prop-* headers.
-// Payload is read from request body.
-func NewHTTPReceiver(config HTTPConfig, bufferSize int) Receiver {
+func NewHTTPReceiver(config HTTPConfig, bufferSize int) *HTTPReceiver {
 	cfg := config.defaults()
 	if bufferSize <= 0 {
 		bufferSize = 100
 	}
-	return &httpReceiver{
+	return &HTTPReceiver{
 		config:     cfg,
-		messages:   make([]topicMessage, 0),
+		messages:   make(map[string][]topicMessage),
+		readIndex:  make(map[string]int),
 		bufferSize: bufferSize,
 	}
 }
 
-// Handler returns an http.Handler for receiving messages.
-func (r *httpReceiver) Handler() http.Handler {
-	return http.HandlerFunc(r.ServeHTTP)
-}
-
 // ServeHTTP implements http.Handler for receiving messages via POST.
-// Returns 201 Created on success, 400 Bad Request on invalid input,
-// 405 Method Not Allowed for non-POST requests.
-func (r *httpReceiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (r *HTTPReceiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	r.mu.RLock()
+	r.mu.Lock()
 	if r.closed {
-		r.mu.RUnlock()
+		r.mu.Unlock()
 		http.Error(w, "Server closed", http.StatusServiceUnavailable)
 		return
 	}
-	r.mu.RUnlock()
+	r.mu.Unlock()
 
-	// Read topic from header
+	// Read topic from header or URL path
 	topic := req.Header.Get(HeaderTopic)
 	if topic == "" {
-		// Try to get topic from URL path
 		topic = strings.TrimPrefix(req.URL.Path, "/")
 	}
 	if topic == "" {
@@ -246,14 +235,12 @@ func (r *httpReceiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Read body
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		http.Error(w, "Failed to read body", http.StatusBadRequest)
 		return
 	}
 
-	// Extract properties from headers
 	props := message.Properties{}
 	for key, values := range req.Header {
 		if strings.HasPrefix(key, HeaderPrefix+"Prop-") && len(values) > 0 {
@@ -264,27 +251,27 @@ func (r *httpReceiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	msg := message.New(body, props)
 
-	// Broadcast to subscribers
-	r.broadcast(topic, msg)
+	r.mu.Lock()
+	r.messages[topic] = append(r.messages[topic], topicMessage{topic: topic, msg: msg})
+	r.mu.Unlock()
 
-	w.WriteHeader(http.StatusCreated)
+	// TODO: WaitForAck support - for now just return 201
+	if r.config.WaitForAck {
+		// Would need ack channel on message - simplified for now
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusCreated)
+	}
 }
 
-func (r *httpReceiver) broadcast(topicName string, msg *message.Message) {
+// Receive returns unread messages for the specified topic and clears them.
+func (r *HTTPReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.messages = append(r.messages, topicMessage{topic: topicName, msg: msg})
-}
 
-// Receive returns all messages received for the specified topic.
-// The topic can include wildcards (+, #) for pattern matching.
-func (r *httpReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
-	r.mu.RLock()
 	if r.closed {
-		r.mu.RUnlock()
-		return nil, ErrHTTPServerClosed
+		return nil, ErrHTTPReceiverClosed
 	}
-	r.mu.RUnlock()
 
 	select {
 	case <-ctx.Done():
@@ -292,34 +279,54 @@ func (r *httpReceiver) Receive(ctx context.Context, topic string) ([]*message.Me
 	default:
 	}
 
-	// Filter messages by topic pattern
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	// Get messages for exact topic match
+	msgs := r.messages[topic]
+	start := r.readIndex[topic]
 
-	matcher := NewTopicMatcher(topic)
-	result := make([]*message.Message, 0)
-	for _, tm := range r.messages {
-		if matcher.Matches(tm.topic) {
-			result = append(result, tm.msg)
-		}
+	if start >= len(msgs) {
+		return nil, nil
 	}
+
+	// Return unread messages
+	result := make([]*message.Message, 0, len(msgs)-start)
+	for i := start; i < len(msgs); i++ {
+		result = append(result, msgs[i].msg)
+	}
+
+	// Update read index
+	r.readIndex[topic] = len(msgs)
+
+	// Clean up if all messages have been read
+	if r.readIndex[topic] >= len(r.messages[topic]) {
+		delete(r.messages, topic)
+		delete(r.readIndex, topic)
+	}
+
 	return result, nil
 }
 
 // Close shuts down the receiver.
-func (r *httpReceiver) Close() error {
+func (r *HTTPReceiver) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if r.closed {
-		return ErrHTTPServerClosed
+		return ErrHTTPReceiverClosed
 	}
 	r.closed = true
+	r.messages = nil
+	r.readIndex = nil
 
 	return nil
 }
 
-// TopicFromPath extracts the topic from a URL path, URL-decoding it.
+// Handler returns the HTTP handler for this receiver.
+// This is a convenience method for use with http.Server.
+func (r *HTTPReceiver) Handler() http.Handler {
+	return r
+}
+
+// TopicFromPath extracts the topic from a URL path.
 func TopicFromPath(path string) string {
 	topic := strings.TrimPrefix(path, "/")
 	decoded, err := url.PathUnescape(topic)

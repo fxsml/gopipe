@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/pubsub"
@@ -17,6 +18,7 @@ func TestMultiplexSender_Basic(t *testing.T) {
 	memorySender := newMockSender()
 	fallbackSender := newMockSender()
 
+	// Use "/" separator for prefix matching
 	selector := pubsub.PrefixSenderSelector("internal", memorySender)
 	multiplex := pubsub.NewMultiplexSender(selector, fallbackSender)
 
@@ -27,10 +29,10 @@ func TestMultiplexSender_Basic(t *testing.T) {
 		topic          string
 		expectedSender *mockSender
 	}{
-		{"internal.events", memorySender},
-		{"internal.cache", memorySender},
-		{"external.api", fallbackSender},
-		{"orders.created", fallbackSender},
+		{"internal/events", memorySender},
+		{"internal/cache", memorySender},
+		{"external/api", fallbackSender},
+		{"orders/created", fallbackSender},
 	}
 
 	for _, tt := range tests {
@@ -82,7 +84,7 @@ func TestMultiplexSender_ErrorPropagation(t *testing.T) {
 	ctx := context.Background()
 	msg := message.New([]byte("test"), message.Properties{})
 
-	err := multiplex.Send(ctx, "fail.topic", []*message.Message{msg})
+	err := multiplex.Send(ctx, "fail/topic", []*message.Message{msg})
 	if err != expectedErr {
 		t.Errorf("expected error %v, got %v", expectedErr, err)
 	}
@@ -105,10 +107,10 @@ func TestMultiplexReceiver_Basic(t *testing.T) {
 		topic            string
 		expectedReceiver *mockReceiver
 	}{
-		{"internal.events", memoryReceiver},
-		{"internal.cache", memoryReceiver},
-		{"external.api", fallbackReceiver},
-		{"orders.created", fallbackReceiver},
+		{"internal/events", memoryReceiver},
+		{"internal/cache", memoryReceiver},
+		{"external/api", fallbackReceiver},
+		{"orders/created", fallbackReceiver},
 	}
 
 	for _, tt := range tests {
@@ -141,59 +143,35 @@ func TestMultiplexReceiver_NilFallbackPanics(t *testing.T) {
 }
 
 // ============================================================================
-// Pattern Matching Tests
+// Exact Match Tests (no pattern matching)
 // ============================================================================
 
-func TestTopicPatternMatching(t *testing.T) {
+func TestTopicExactMatch(t *testing.T) {
 	tests := []struct {
-		pattern string
-		topic   string
-		matches bool
+		routeTopic string
+		topic      string
+		matches    bool
 	}{
-		// Single segment wildcard (*)
-		{"internal.*", "internal.cache", true},
-		{"internal.*", "internal.events", true},
-		{"internal.*", "internal.cache.update", false},
-
-		// Multi-segment wildcard (**)
-		{"audit.**", "audit.log", true},
-		{"audit.**", "audit.us.log", true},
-		{"audit.**", "audit.us.2024.log", true},
-
-		// Pattern with wildcards in middle
-		{"orders.*.created", "orders.us.created", true},
-		{"orders.*.created", "orders.eu.created", true},
-		{"orders.*.created", "orders.created", false},
-		{"orders.*.created", "orders.us.eu.created", false},
-
-		// Pattern with prefix and wildcard
-		{"events.us.*", "events.us.order", true},
-		{"events.us.*", "events.us.user", true},
-		{"events.us.*", "events.eu.order", false},
-		{"events.us.*", "events.us.order.created", false},
-
 		// Exact match
-		{"orders.created", "orders.created", true},
-		{"orders.created", "orders.updated", false},
+		{"orders/created", "orders/created", true},
+		{"orders/created", "orders/updated", false},
 
-		// Wildcard at end
-		{"*.created", "orders.created", true},
-		{"*.created", "users.created", true},
-		{"*.created", "orders.us.created", false},
+		// Different segments
+		{"orders/us/created", "orders/us/created", true},
+		{"orders/us/created", "orders/eu/created", false},
 
-		// Wildcard at start
-		{"**.updated", "orders.updated", true},
-		{"**.updated", "orders.us.updated", true},
-		{"**.updated", "orders.us.2024.updated", true},
+		// No wildcards
+		{"orders", "orders", true},
+		{"orders", "orders/created", false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.topic+"_vs_"+tt.pattern, func(t *testing.T) {
+		t.Run(tt.topic+"_vs_"+tt.routeTopic, func(t *testing.T) {
 			sender := newMockSender()
 			fallback := newMockSender()
 
 			selector := pubsub.NewTopicSenderSelector([]pubsub.TopicSenderRoute{
-				{Pattern: tt.pattern, Sender: sender},
+				{Topic: tt.routeTopic, Sender: sender},
 			})
 
 			multiplex := pubsub.NewMultiplexSender(selector, fallback)
@@ -210,23 +188,23 @@ func TestTopicPatternMatching(t *testing.T) {
 			fallbackGotMessage := len(fallback.getSent(tt.topic)) > 0
 
 			if tt.matches && !senderGotMessage {
-				t.Errorf("expected pattern %q to match topic %q, but it didn't", tt.pattern, tt.topic)
+				t.Errorf("expected route %q to match topic %q, but it didn't", tt.routeTopic, tt.topic)
 			}
 			if !tt.matches && !fallbackGotMessage {
-				t.Errorf("expected pattern %q to NOT match topic %q (should use fallback), but it did", tt.pattern, tt.topic)
+				t.Errorf("expected route %q to NOT match topic %q (should use fallback), but it did", tt.routeTopic, tt.topic)
 			}
 		})
 	}
 }
 
-func TestPatternMatching_FirstMatchWins(t *testing.T) {
+func TestExactMatch_FirstMatchWins(t *testing.T) {
 	sender1 := newMockSender()
 	sender2 := newMockSender()
 	fallback := newMockSender()
 
 	selector := pubsub.NewTopicSenderSelector([]pubsub.TopicSenderRoute{
-		{Pattern: "*.created", Sender: sender1},  // Should match first
-		{Pattern: "orders.**", Sender: sender2},  // Would also match but second
+		{Topic: "orders/created", Sender: sender1}, // Should match first
+		{Topic: "orders/created", Sender: sender2}, // Duplicate, should never be reached
 	})
 
 	multiplex := pubsub.NewMultiplexSender(selector, fallback)
@@ -234,17 +212,17 @@ func TestPatternMatching_FirstMatchWins(t *testing.T) {
 	ctx := context.Background()
 	msg := message.New([]byte("test"), message.Properties{})
 
-	err := multiplex.Send(ctx, "orders.created", []*message.Message{msg})
+	err := multiplex.Send(ctx, "orders/created", []*message.Message{msg})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Should go to sender1 (first match)
-	if len(sender1.getSent("orders.created")) == 0 {
+	if len(sender1.getSent("orders/created")) == 0 {
 		t.Error("expected sender1 to receive message (first match)")
 	}
-	if len(sender2.getSent("orders.created")) > 0 {
-		t.Error("sender2 should not receive message (second pattern should not be checked)")
+	if len(sender2.getSent("orders/created")) > 0 {
+		t.Error("sender2 should not receive message (second route should not be checked)")
 	}
 }
 
@@ -264,8 +242,8 @@ func TestPrefixSelector(t *testing.T) {
 		expectedSender *mockSender
 	}{
 		{"internal", sender},
-		{"internal.cache", sender},
-		{"internal.events.created", sender},
+		{"internal/cache", sender},
+		{"internal/events/created", sender},
 		{"external", fallback},
 		{"intl", fallback},
 	}
@@ -312,11 +290,11 @@ func TestChainedSelectors(t *testing.T) {
 		topic          string
 		expectedSender *mockSender
 	}{
-		{"audit.log", auditSender},
-		{"audit.us.log", auditSender},
-		{"internal.cache", internalSender},
-		{"internal.events", internalSender},
-		{"external.api", fallback},
+		{"audit/log", auditSender},
+		{"audit/us/log", auditSender},
+		{"internal/cache", internalSender},
+		{"internal/events", internalSender},
+		{"external/api", fallback},
 	}
 
 	ctx := context.Background()
@@ -355,7 +333,7 @@ func TestChainedSelectors_FirstMatchWins(t *testing.T) {
 	sender2 := newMockSender()
 	fallback := newMockSender()
 
-	// Both match "internal.*" but first one should win
+	// Both match "internal/*" but first one should win
 	selector := pubsub.ChainSenderSelectors(
 		pubsub.PrefixSenderSelector("internal", sender1),
 		pubsub.PrefixSenderSelector("internal", sender2), // This should never be reached
@@ -366,15 +344,15 @@ func TestChainedSelectors_FirstMatchWins(t *testing.T) {
 	ctx := context.Background()
 	msg := message.New([]byte("test"), message.Properties{})
 
-	err := multiplex.Send(ctx, "internal.cache", []*message.Message{msg})
+	err := multiplex.Send(ctx, "internal/cache", []*message.Message{msg})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(sender1.getSent("internal.cache")) == 0 {
+	if len(sender1.getSent("internal/cache")) == 0 {
 		t.Error("expected sender1 (first match) to receive message")
 	}
-	if len(sender2.getSent("internal.cache")) > 0 {
+	if len(sender2.getSent("internal/cache")) > 0 {
 		t.Error("sender2 should not receive message (second selector should not be checked)")
 	}
 }
@@ -384,9 +362,9 @@ func TestChainedSelectors_FirstMatchWins(t *testing.T) {
 // ============================================================================
 
 func TestIntegration_WithPublisher(t *testing.T) {
-	// Create mock brokers
-	memoryBroker := pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{})
-	externalBroker := pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{})
+	// Create brokers
+	memoryBroker := pubsub.NewBroker(pubsub.BrokerConfig{})
+	externalBroker := pubsub.NewBroker(pubsub.BrokerConfig{})
 
 	// Create multiplex sender
 	selector := pubsub.PrefixSenderSelector("internal", memoryBroker)
@@ -408,10 +386,10 @@ func TestIntegration_WithPublisher(t *testing.T) {
 
 	// Send messages with different topics
 	msgs <- message.New([]byte("internal-1"), message.Properties{
-		message.PropTopic: "internal.cache",
+		message.PropTopic: "internal/cache",
 	})
 	msgs <- message.New([]byte("external-1"), message.Properties{
-		message.PropTopic: "external.api",
+		message.PropTopic: "external/api",
 	})
 
 	close(msgs)
@@ -421,44 +399,41 @@ func TestIntegration_WithPublisher(t *testing.T) {
 }
 
 func TestIntegration_WithSubscriber(t *testing.T) {
-	// Create mock brokers with messages
-	memoryBroker := pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{})
-	externalBroker := pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{})
+	// Create brokers
+	memoryBroker := pubsub.NewBroker(pubsub.BrokerConfig{})
+	externalBroker := pubsub.NewBroker(pubsub.BrokerConfig{})
 
-	// Pre-populate brokers with messages
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
-	// Send to memory broker
-	memoryBroker.Send(ctx, "internal.events", []*message.Message{
+	// Subscribe first (messages only delivered to active subscriptions)
+	internalCh := memoryBroker.Subscribe(ctx, "internal/events")
+	externalCh := externalBroker.Subscribe(ctx, "external/api")
+
+	// Send messages to brokers
+	memoryBroker.Send(ctx, "internal/events", []*message.Message{
 		message.New([]byte("internal-msg"), message.Properties{}),
 	})
-
-	// Send to external broker
-	externalBroker.Send(ctx, "external.api", []*message.Message{
+	externalBroker.Send(ctx, "external/api", []*message.Message{
 		message.New([]byte("external-msg"), message.Properties{}),
 	})
 
-	// Create multiplex receiver
-	selector := pubsub.PrefixReceiverSelector("internal", memoryBroker)
-	multiplexReceiver := pubsub.NewMultiplexReceiver(selector, externalBroker)
-
-	// Subscribe to internal topic (should use memory broker)
-	internalMsgs, err := multiplexReceiver.Receive(ctx, "internal.events")
-	if err != nil {
-		t.Fatalf("failed to receive internal messages: %v", err)
+	// Read from subscriptions with timeout
+	select {
+	case msg := <-internalCh:
+		if msg == nil {
+			t.Error("expected internal message, got nil")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("timeout waiting for internal message")
 	}
 
-	if len(internalMsgs) != 1 {
-		t.Errorf("expected 1 internal message, got %d", len(internalMsgs))
-	}
-
-	// Subscribe to external topic (should use external broker)
-	externalMsgs, err := multiplexReceiver.Receive(ctx, "external.api")
-	if err != nil {
-		t.Fatalf("failed to receive external messages: %v", err)
-	}
-
-	if len(externalMsgs) != 1 {
-		t.Errorf("expected 1 external message, got %d", len(externalMsgs))
+	select {
+	case msg := <-externalCh:
+		if msg == nil {
+			t.Error("expected external message, got nil")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("timeout waiting for external message")
 	}
 }

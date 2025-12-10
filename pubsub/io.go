@@ -175,11 +175,6 @@ func NewIOReceiver(r io.Reader, config IOConfig) Receiver {
 // Receive reads messages from the reader that match the specified topic.
 // If topic is empty, all messages are returned.
 func (r *ioReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
-	var matcher *TopicMatcher
-	if topic != "" {
-		matcher = NewTopicMatcher(topic)
-	}
-
 	var result []*message.Message
 	timeout := r.config.ReceiveTimeout
 	if timeout == 0 {
@@ -207,8 +202,8 @@ func (r *ioReceiver) Receive(ctx context.Context, topic string) ([]*message.Mess
 			continue
 		}
 
-		// Filter by topic if specified
-		if matcher != nil && !matcher.Matches(msgTopic) {
+		// Filter by topic if specified (exact match only)
+		if topic != "" && msgTopic != topic {
 			continue
 		}
 
@@ -261,34 +256,40 @@ func (r *ioReceiver) Close() error {
 	return nil
 }
 
-// ioBroker combines Sender and Receiver for bidirectional streaming.
-type ioBroker struct {
+// IOBroker combines Sender and Receiver for bidirectional streaming.
+type IOBroker struct {
 	sender   *ioSender
 	receiver *ioReceiver
 }
 
+// Compile-time interface assertions
+var (
+	_ Sender   = (*IOBroker)(nil)
+	_ Receiver = (*IOBroker)(nil)
+)
+
 // NewIOBroker creates a broker that reads from r and writes to w.
 // This is useful for pipe-based IPC or file-based messaging.
-func NewIOBroker(r io.Reader, w io.Writer, config IOConfig) Broker {
+func NewIOBroker(r io.Reader, w io.Writer, config IOConfig) *IOBroker {
 	cfg := config.defaults()
-	return &ioBroker{
+	return &IOBroker{
 		sender:   NewIOSender(w, cfg).(*ioSender),
 		receiver: NewIOReceiver(r, cfg).(*ioReceiver),
 	}
 }
 
 // Send writes messages to the underlying writer.
-func (b *ioBroker) Send(ctx context.Context, topic string, msgs []*message.Message) error {
+func (b *IOBroker) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	return b.sender.Send(ctx, topic, msgs)
 }
 
 // Receive reads messages from the underlying reader.
-func (b *ioBroker) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
+func (b *IOBroker) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
 	return b.receiver.Receive(ctx, topic)
 }
 
 // Close closes both sender and receiver.
-func (b *ioBroker) Close() error {
+func (b *IOBroker) Close() error {
 	err1 := b.sender.Close()
 	err2 := b.receiver.Close()
 	return errors.Join(err1, err2)

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -45,7 +44,7 @@ func TestIOCompatibility(t *testing.T) {
 				message.New([]byte(`"order created"`), message.Properties{"type": "order"}),
 				message.New([]byte(`"user registered"`), message.Properties{"type": "user"}),
 			},
-			topic: "events/#",
+			topic: "events/all",
 		},
 	}
 
@@ -148,18 +147,10 @@ func TestIOPipeCompatibility(t *testing.T) {
 func TestHTTPCompatibility(t *testing.T) {
 	// Create HTTP receiver
 	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 100)
-	defer func() {
-		if closer, ok := receiver.(interface{ Close() error }); ok {
-			closer.Close()
-		}
-	}()
+	defer receiver.Close()
 
 	// Start test HTTP server with receiver handler
-	receiverHandler, ok := receiver.(interface{ Handler() http.Handler })
-	if !ok {
-		t.Fatal("Receiver doesn't implement Handler()")
-	}
-	server := httptest.NewServer(receiverHandler.Handler())
+	server := httptest.NewServer(receiver.Handler())
 	defer server.Close()
 
 	// Create HTTP sender pointing to test server
@@ -222,17 +213,9 @@ func TestHTTPCompatibility(t *testing.T) {
 // TestHTTPTopicRouting tests HTTP sender/receiver with different topics
 func TestHTTPTopicRouting(t *testing.T) {
 	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 100)
-	defer func() {
-		if closer, ok := receiver.(interface{ Close() error }); ok {
-			closer.Close()
-		}
-	}()
+	defer receiver.Close()
 
-	receiverHandler, ok := receiver.(interface{ Handler() http.Handler })
-	if !ok {
-		t.Fatal("Receiver doesn't implement Handler()")
-	}
-	server := httptest.NewServer(receiverHandler.Handler())
+	server := httptest.NewServer(receiver.Handler())
 	defer server.Close()
 
 	sender := pubsub.NewHTTPSender(server.URL, pubsub.HTTPConfig{})
@@ -254,18 +237,18 @@ func TestHTTPTopicRouting(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	// Receive all orders messages using wildcard
+	// Receive from specific topic (exact match only)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	received, err := receiver.Receive(ctx, "orders/#")
+	received, err := receiver.Receive(ctx, "orders/created")
 	if err != nil && err != context.Canceled {
 		t.Fatalf("Receive failed: %v", err)
 	}
 
-	// Should receive 2 orders messages (orders/created, orders/updated)
-	if len(received) != 2 {
-		t.Errorf("Expected 2 orders messages, got %d", len(received))
+	// Should receive 1 message (exact match)
+	if len(received) != 1 {
+		t.Errorf("Expected 1 orders/created message, got %d", len(received))
 	}
 }
 
@@ -303,17 +286,9 @@ func TestIOHTTPRoundTrip(t *testing.T) {
 
 	// Step 3: Send via HTTP
 	httpReceiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 100)
-	defer func() {
-		if closer, ok := httpReceiver.(interface{ Close() error }); ok {
-			closer.Close()
-		}
-	}()
+	defer httpReceiver.Close()
 
-	receiverHandler, ok := httpReceiver.(interface{ Handler() http.Handler })
-	if !ok {
-		t.Fatal("Receiver doesn't implement Handler()")
-	}
-	server := httptest.NewServer(receiverHandler.Handler())
+	server := httptest.NewServer(httpReceiver.Handler())
 	defer server.Close()
 
 	httpSender := pubsub.NewHTTPSender(server.URL, pubsub.HTTPConfig{})

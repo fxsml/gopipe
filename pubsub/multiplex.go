@@ -21,6 +21,9 @@ type MultiplexSender struct {
 	fallback Sender
 }
 
+// Compile-time interface assertion
+var _ Sender = (*MultiplexSender)(nil)
+
 // NewMultiplexSender creates a multiplexing Sender.
 // Panics if fallback is nil.
 func NewMultiplexSender(selector SenderSelector, fallback Sender) *MultiplexSender {
@@ -48,6 +51,9 @@ type MultiplexReceiver struct {
 	fallback Receiver
 }
 
+// Compile-time interface assertion
+var _ Receiver = (*MultiplexReceiver)(nil)
+
 // NewMultiplexReceiver creates a multiplexing Receiver.
 // Panics if fallback is nil.
 func NewMultiplexReceiver(selector ReceiverSelector, fallback Receiver) *MultiplexReceiver {
@@ -73,48 +79,50 @@ func (m *MultiplexReceiver) Receive(ctx context.Context, topic string) ([]*messa
 // Helper Functions for Common Routing Patterns
 // ============================================================================
 
-// TopicSenderRoute defines a topic pattern and its associated Sender.
+// TopicSenderRoute defines a topic and its associated Sender.
 type TopicSenderRoute struct {
-	Pattern string
-	Sender  Sender
+	Topic  string
+	Sender Sender
 }
 
-// NewTopicSenderSelector creates a selector that matches topics against dot-separated patterns.
-// Patterns: "*" matches one segment, "**" matches multiple. First match wins.
+// NewTopicSenderSelector creates a selector that matches topics exactly.
+// First match wins.
 func NewTopicSenderSelector(routes []TopicSenderRoute) SenderSelector {
 	return func(topic string) Sender {
 		for _, route := range routes {
-			if matchTopicPattern(route.Pattern, topic) {
+			if route.Topic == topic {
 				return route.Sender
 			}
 		}
-		return nil // No match, use fallback
+		return nil
 	}
 }
 
-// TopicReceiverRoute defines a topic pattern and its associated Receiver.
+// TopicReceiverRoute defines a topic and its associated Receiver.
 type TopicReceiverRoute struct {
-	Pattern  string
+	Topic    string
 	Receiver Receiver
 }
 
-// NewTopicReceiverSelector creates a selector that matches topics against patterns.
-// See NewTopicSenderSelector for pattern syntax.
+// NewTopicReceiverSelector creates a selector that matches topics exactly.
+// First match wins.
 func NewTopicReceiverSelector(routes []TopicReceiverRoute) ReceiverSelector {
 	return func(topic string) Receiver {
 		for _, route := range routes {
-			if matchTopicPattern(route.Pattern, topic) {
+			if route.Topic == topic {
 				return route.Receiver
 			}
 		}
-		return nil // No match, use fallback
+		return nil
 	}
 }
 
 // PrefixSenderSelector creates a selector that routes topics starting with prefix.
+// Topics use "/" as separator (e.g., prefix "orders" matches "orders/created").
 func PrefixSenderSelector(prefix string, sender Sender) SenderSelector {
+	prefixWithSep := prefix + "/"
 	return func(topic string) Sender {
-		if strings.HasPrefix(topic, prefix) {
+		if topic == prefix || strings.HasPrefix(topic, prefixWithSep) {
 			return sender
 		}
 		return nil
@@ -122,9 +130,11 @@ func PrefixSenderSelector(prefix string, sender Sender) SenderSelector {
 }
 
 // PrefixReceiverSelector creates a selector based on topic prefix.
+// Topics use "/" as separator (e.g., prefix "orders" matches "orders/created").
 func PrefixReceiverSelector(prefix string, receiver Receiver) ReceiverSelector {
+	prefixWithSep := prefix + "/"
 	return func(topic string) Receiver {
-		if strings.HasPrefix(topic, prefix) {
+		if topic == prefix || strings.HasPrefix(topic, prefixWithSep) {
 			return receiver
 		}
 		return nil
@@ -153,68 +163,4 @@ func ChainReceiverSelectors(selectors ...ReceiverSelector) ReceiverSelector {
 		}
 		return nil
 	}
-}
-
-// ============================================================================
-// Pattern Matching
-// ============================================================================
-
-// matchTopicPattern matches a topic against a dot-separated pattern.
-// "*" matches one segment, "**" matches zero or more segments.
-func matchTopicPattern(pattern, topic string) bool {
-	// Fast path: exact match
-	if pattern == topic {
-		return true
-	}
-
-	// Fast path: no wildcards
-	if !strings.Contains(pattern, "*") {
-		return false
-	}
-
-	patternParts := strings.Split(pattern, ".")
-	topicParts := strings.Split(topic, ".")
-
-	return matchParts(patternParts, topicParts)
-}
-
-func matchParts(patternParts, topicParts []string) bool {
-	pIdx := 0 // pattern index
-	tIdx := 0 // topic index
-
-	for pIdx < len(patternParts) && tIdx < len(topicParts) {
-		patternPart := patternParts[pIdx]
-
-		if patternPart == "**" {
-			// Multi-segment wildcard
-			// If this is the last pattern part, it matches everything remaining
-			if pIdx == len(patternParts)-1 {
-				return true
-			}
-
-			// Try to match the rest of the pattern starting from each remaining topic segment
-			for i := tIdx; i < len(topicParts); i++ {
-				if matchParts(patternParts[pIdx+1:], topicParts[i:]) {
-					return true
-				}
-			}
-			return false
-
-		} else if patternPart == "*" {
-			// Single segment wildcard - matches exactly one segment
-			pIdx++
-			tIdx++
-
-		} else {
-			// Exact match required
-			if patternPart != topicParts[tIdx] {
-				return false
-			}
-			pIdx++
-			tIdx++
-		}
-	}
-
-	// Both must be exhausted for a match (unless pattern ends with **)
-	return pIdx == len(patternParts) && tIdx == len(topicParts)
 }
