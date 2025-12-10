@@ -120,20 +120,22 @@ func (b *Broker) Subscribe(ctx context.Context, topic string) <-chan *message.Me
 
 	// Forward messages from internal channel to output channel
 	go func() {
-		defer func() {
-			b.mu.Lock()
-			delete(b.subs, id)
-			b.mu.Unlock()
-			close(sub.ch)
-			close(out)
-		}()
+		defer close(out)
 
 		for {
 			select {
 			case <-ctx.Done():
+				// Context canceled - remove subscription
+				b.mu.Lock()
+				if _, exists := b.subs[id]; exists {
+					delete(b.subs, id)
+					close(sub.ch)
+				}
+				b.mu.Unlock()
 				return
 			case msg, ok := <-sub.ch:
 				if !ok {
+					// Channel closed by broker.Close() - subscription already removed
 					return
 				}
 				select {
@@ -229,9 +231,11 @@ func (b *Broker) Receive(ctx context.Context, topic string) ([]*message.Message,
 
 	defer func() {
 		b.mu.Lock()
-		delete(b.subs, id)
+		if _, exists := b.subs[id]; exists {
+			delete(b.subs, id)
+			close(sub.ch)
+		}
 		b.mu.Unlock()
-		close(sub.ch)
 	}()
 
 	for {

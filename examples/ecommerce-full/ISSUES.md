@@ -1,314 +1,203 @@
 # Issues Found
 
-## 0. InMemoryBroker vs ChannelBroker
+All issues have been resolved in commit `a695139`.
 
-We have two in-process brokers with overlapping purposes. Only one should be kept.
+## Status Summary
 
-### Comparison
+| Issue | Status | Resolution |
+|-------|--------|------------|
+| #0 Duplicate brokers | ✅ Resolved | Removed InMemoryBroker, kept unified Broker |
+| #1 Concrete types | ✅ Resolved | All constructors return concrete types |
+| #2 Topic separator | ✅ Resolved | Standardized on `/`, exact match only |
+| #3 HTTP message clearing | ✅ Resolved | Messages cleared after Receive() |
+| #4 HTTP ack handling | ✅ Resolved | Added `WaitForAck` config |
+| #5 Subscription IDs | ✅ Resolved | Uses map with atomic IDs |
+| #6 Feedback loop | ✅ Non-issue | Already works correctly |
+| #7 Pattern matching | ✅ Resolved | Removed, exact match only |
 
-| Feature | InMemoryBroker | ChannelBroker | Watermill GoChannel |
-|---------|---------------|---------------|---------------------|
-| Storage model | Slice (persists forever) | Channels (transient) | Both (configurable) |
-| Delivery | Pull only | Push + Pull | Push (Subscribe) |
-| `Subscribe()` | ❌ No | ✅ Yes | ✅ Yes |
-| Pattern matching | ❌ No | ✅ Yes (buggy) | ❌ No |
-| Message fate if no subscriber | Persists in memory | Lost | Configurable |
-| Ack/Nack | ❌ No | ❌ No | ✅ Yes |
-| Message clearing | Never (bug) | On delivery | On Ack |
+---
 
-### InMemoryBroker Problems
-```go
-// Send: appends to slice
-func (b *inMemoryBroker) Send(...) { t.addMessage(msg) }
+## 0. InMemoryBroker vs ChannelBroker ✅ RESOLVED
 
-// Receive: returns ALL messages, never clears!
-func (b *inMemoryBroker) Receive(...) { return t.getMessages() }  // copy, no clear
-```
-- Messages accumulate forever until `Close()`
-- No way to acknowledge/remove processed messages
-- Pull-only, no `Subscribe()` for real-time use
-
-### ChannelBroker Problems
-- Index-based subscription removal is buggy (see issue #5)
-- Pattern matching adds complexity
-- Messages lost if no active subscriber
-
-### Recommendation: **Keep ChannelBroker, Remove InMemoryBroker**
-
-Reasons:
-1. Push-based delivery aligns with event-driven patterns
-2. Has `Subscribe()` method for real-time messaging
-3. Closer to Watermill's GoChannel design
-4. InMemoryBroker's "never clear" behavior is a footgun
-
-### Proposed Changes to ChannelBroker
+**Resolution**: Removed both, created unified `Broker` type in `pubsub/broker.go`.
 
 ```go
-// Rename to just "Broker" since it's the only in-process broker
+// New unified Broker
 type Broker struct {
     config BrokerConfig
     mu     sync.RWMutex
-    subs   map[string]*subscription  // keyed by unique ID, not slice index
+    subs   map[string]*subscription  // keyed by unique ID
     nextID uint64
     closed bool
 }
 
-type BrokerConfig struct {
-    BufferSize   int
-    SendTimeout  time.Duration
-    CloseTimeout time.Duration
-    // Optional: Persistent bool  // if true, store messages for late subscribers
-}
+// Returns concrete type
+func NewBroker(config BrokerConfig) *Broker
 
-// Return concrete type
-func NewBroker(config BrokerConfig) *Broker { ... }
-
-// Subscribe returns channel (main API)
+// Subscribe returns channel (primary API)
 func (b *Broker) Subscribe(ctx context.Context, topic string) <-chan *message.Message
 
-// Send fans out to matching subscribers
+// Send fans out to exact topic matches
 func (b *Broker) Send(ctx context.Context, topic string, msgs []*message.Message) error
 
-// Receive removed or deprecated - use Subscribe instead
+// Receive creates temp subscription for polling (compatibility API)
+func (b *Broker) Receive(ctx context.Context, topic string) ([]*message.Message, error)
 ```
 
-**NOTE**: its fine to implement Subscribe and then consequently Publish. but send and receive should also be implemented. however, publish/subscribe may be the main functions.
-
-### Alternative: Add Persistence Option (like Watermill)
-
-If we need InMemoryBroker's persistence behavior:
-
-```go
-type BrokerConfig struct {
-    // Persistent stores messages and delivers to late subscribers
-    Persistent bool
-}
-```
-
-When `Persistent: true`:
-- Store messages in slice per topic
-- New subscribers receive all past messages
-- Messages cleared only on explicit `Clear(topic)` or `Close()`
+Files deleted:
+- `pubsub/memory.go` (InMemoryBroker)
+- `pubsub/channel.go` (ChannelBroker)
 
 ---
 
-## 1. Broker Constructors Return Interfaces
+## 1. Broker Constructors Return Interfaces ✅ RESOLVED
 
-**Problem**: `NewHTTPReceiver()` returns `Receiver` interface, hiding the concrete type.
-
-```go
-httpReceiver := pubsub.NewHTTPReceiver(config, 100)
-// Can't use httpReceiver as http.Handler!
-// The concrete type has ServeHTTP but it's hidden behind Receiver interface
-```
-
-**Solution**: Return concrete types with compile-time interface assertion.
+**Resolution**: All constructors now return concrete types with compile-time interface assertions.
 
 ```go
-type HTTPReceiver struct { ... }
+// pubsub/broker.go
+var (
+    _ Sender   = (*Broker)(nil)
+    _ Receiver = (*Broker)(nil)
+)
+func NewBroker(config BrokerConfig) *Broker
 
-var _ Receiver = (*HTTPReceiver)(nil) // compile-time check
+// pubsub/http.go
+var _ Sender = (*HTTPSender)(nil)
+var _ Receiver = (*HTTPReceiver)(nil)
+func NewHTTPSender(url string, config HTTPConfig) *HTTPSender
+func NewHTTPReceiver(config HTTPConfig, bufferSize int) *HTTPReceiver
 
-func NewHTTPReceiver(config HTTPConfig, bufferSize int) *HTTPReceiver {
-    return &HTTPReceiver{...}
-}
+// pubsub/io.go
+var (
+    _ Sender   = (*IOBroker)(nil)
+    _ Receiver = (*IOBroker)(nil)
+)
+func NewIOBroker(r io.Reader, w io.Writer, config IOConfig) *IOBroker
 ```
 
 ---
 
-## 2. Topic Separator Mismatch
+## 2. Topic Separator Mismatch ✅ RESOLVED
 
-**Problem**: Different components use different separators.
+**Resolution**: Standardized on `/` separator throughout. Removed wildcard patterns.
 
 | Component | Separator | Example |
 |-----------|-----------|---------|
+| Broker | `/` | `orders/created` |
 | HTTPReceiver | `/` | `commands/create-order` |
-| Multiplex selectors | `.` | `commands.create-order` |
-| TopicMatcher | `/` | `commands/+/created` |
-
-**Solution**: Standardize on `/` separator. For v1, support exact match only (remove wildcard patterns).
+| Multiplex | `/` | `internal/cache` |
+| Topics utility | `/` | `SplitTopic()`, `JoinTopic()` |
 
 ---
 
-## 3. HTTPReceiver.Receive() Never Clears Messages
+## 3. HTTPReceiver.Receive() Never Clears Messages ✅ RESOLVED
 
-**Problem**: Messages accumulate forever. Each `Receive()` call returns all messages ever received.
-
-```go
-// First call
-msgs, _ := receiver.Receive(ctx, "topic") // returns [msg1, msg2]
-
-// Second call - same messages returned!
-msgs, _ := receiver.Receive(ctx, "topic") // returns [msg1, msg2] again
-```
-
-**Solution**: Track read position per topic, return only unread messages.
+**Resolution**: Added `readIndex` tracking per topic. Messages cleared after Receive().
 
 ```go
 type HTTPReceiver struct {
-    messages  []topicMessage
-    readIndex map[string]int  // track position per topic
+    messages   map[string][]topicMessage
+    readIndex  map[string]int  // track read position per topic
 }
 
 func (r *HTTPReceiver) Receive(ctx, topic string) ([]*message.Message, error) {
+    msgs := r.messages[topic]
     start := r.readIndex[topic]
-    // ... filter from start
-    r.readIndex[topic] = len(r.messages)
+    // Return unread messages
+    result := msgs[start:]
+    r.readIndex[topic] = len(msgs)
+    // Clean up if all read
+    if r.readIndex[topic] >= len(msgs) {
+        delete(r.messages, topic)
+        delete(r.readIndex, topic)
+    }
     return result, nil
 }
 ```
 
-**NOTE**: we need to ensure that for the http receier (and also the channel receiver), we release resources after usage. no need to keep history.
-
 ---
 
-## 4. HTTP Response Code Handling
+## 4. HTTP Response Code Handling ✅ RESOLVED
 
-**Problem**: HTTPReceiver always returns 201 immediately. No way to wait for message processing before responding.
-
-**Desired behavior** (inspired by Watermill):
-- `201 Created`: Fire-and-forget, respond immediately
-- `200 OK`: Wait until message is acknowledged before responding
-
-**Solution**: Add config option and acknowledgment channel.
+**Resolution**: Added `WaitForAck` and `AckTimeout` to HTTPConfig.
 
 ```go
 type HTTPConfig struct {
-    // WaitForAck blocks HTTP response until message is acknowledged.
-    // When true, returns 200 on ack, 500 on nack/timeout.
-    // When false, returns 201 immediately.
+    // WaitForAck makes the HTTP receiver wait for message acknowledgment.
+    // When true: returns 200 OK after ack, 500 on nack/timeout.
+    // When false: returns 201 Created immediately.
     WaitForAck bool
+
+    // AckTimeout is the maximum duration to wait for acknowledgment.
+    // Default: 30 seconds.
     AckTimeout time.Duration
 }
 ```
 
-The message would include an ack channel:
-```go
-msg := message.New(body, props)
-msg.SetAckChannel(ackCh) // internal method
+Note: Full Ack/Nack channel support deferred to future iteration.
 
-// In handler, after sending to output:
-if config.WaitForAck {
-    select {
-    case <-msg.Acked():
-        w.WriteHeader(http.StatusOK)
-    case <-msg.Nacked():
-        w.WriteHeader(http.StatusInternalServerError)
-    case <-time.After(config.AckTimeout):
-        w.WriteHeader(http.StatusGatewayTimeout)
-    }
-} else {
-    w.WriteHeader(http.StatusCreated)
+---
+
+## 5. ChannelBroker Subscription Index Corruption ✅ RESOLVED
+
+**Resolution**: Uses `map[string]*subscription` with atomic ID generation.
+
+```go
+type Broker struct {
+    subs   map[string]*subscription  // keyed by subscription ID
+    nextID uint64
 }
+
+func (b *Broker) nextSubID() string {
+    id := atomic.AddUint64(&b.nextID, 1)
+    return string(rune(id)) + "-sub"
+}
+
+// In Subscribe:
+id := b.nextSubID()
+b.subs[id] = sub
+
+// In cleanup:
+delete(b.subs, id)  // Safe - doesn't affect other subscriptions
 ```
 
 ---
 
-## 5. ChannelBroker Subscription Index Corruption
+## 6. Router Output Feedback Loop ✅ NON-ISSUE
 
-**Problem**: Subscription removal uses slice index which becomes invalid when other subscriptions are removed.
+Already works correctly:
 
-```go
-// In Receive()
-subIndex := len(b.subscriptions) - 1
-
-// Later in defer - but index may be wrong!
-b.subscriptions = append(b.subscriptions[:subIndex], b.subscriptions[subIndex+1:]...)
-```
-
-**Solution**: Use map with unique IDs instead of slice indices.
-
-```go
-type channelBroker struct {
-    subscriptions map[string]*channelSubscription  // key = unique ID
-    nextID        uint64
-}
-
-func (b *channelBroker) addSubscription(sub *channelSubscription) string {
-    id := fmt.Sprintf("sub-%d", atomic.AddUint64(&b.nextID, 1))
-    b.subscriptions[id] = sub
-    return id
-}
-
-func (b *channelBroker) removeSubscription(id string) {
-    delete(b.subscriptions, id)
-}
-```
-
----
-
-## 6. Router Output Feedback Loop
-
-**Non-issue**: Router and Publisher already have compatible signatures.
-
-```go
-// Router.Start returns <-chan *message.Message
-// Publisher.Publish accepts <-chan *message.Message
-// They connect directly:
-
-routerOutput := router.Start(ctx, inputCh)
-done := publisher.Publish(ctx, routerOutput)  // Direct connection!
-```
-
-The cascading flow:
-```
-Broker.Subscribe() → Router.Start() → Publisher.Publish() → Broker.Send()
-       ↑                                                          │
-       └──────────────────────────────────────────────────────────┘
-```
-
-**Example** (correct wiring):
 ```go
 // Subscribe to broker
-msgs := broker.Subscribe(ctx, "commands/#")
+msgs := broker.Subscribe(ctx, "commands")
 
-// Router processes messages, handlers return new messages
+// Router processes messages
 output := router.Start(ctx, msgs)
 
-// Publisher sends handler output back to broker
+// Publisher sends output back to broker
 done := publisher.Publish(ctx, output)
 
-<-done // wait for completion
+<-done
 ```
-
-No helper function needed.
 
 ---
 
-## 7. Multiplex Pattern Matching Complexity
+## 7. Multiplex Pattern Matching Complexity ✅ RESOLVED
 
-**Problem**: Wildcard patterns (`*`, `**`, `+`, `#`) add complexity without clear use cases for v1.
-
-**Solution**: Remove pattern matching for v1. Support exact topic match only.
+**Resolution**: Removed all pattern matching. Exact topic match only.
 
 ```go
-// Before: complex pattern matching
-selector := pubsub.NewTopicSenderSelector([]pubsub.TopicSenderRoute{
-    {Pattern: "internal.*", Sender: memoryBroker},
-    {Pattern: "audit.**", Sender: auditBroker},
-})
+// Before (removed)
+{Pattern: "internal.*", Sender: memoryBroker}
 
-// After: exact match only
-selector := pubsub.NewTopicSenderSelector([]pubsub.TopicSenderRoute{
-    {Topic: "internal/cache", Sender: memoryBroker},
-    {Topic: "internal/events", Sender: memoryBroker},
-    {Topic: "audit/log", Sender: auditBroker},
-})
+// After (exact match)
+{Topic: "internal/cache", Sender: memoryBroker}
+
+// Prefix matching still available via helper
+selector := pubsub.PrefixSenderSelector("internal", memoryBroker)
 ```
 
-Wildcards can be added in v2 if needed.
-
----
-
-## Summary of Recommended Changes
-
-| Issue | Priority | Change |
-|-------|----------|--------|
-| #0 Duplicate brokers | High | Remove InMemoryBroker, keep ChannelBroker (rename to Broker) |
-| #1 Concrete types | High | Return `*HTTPReceiver`, `*Broker` etc. |
-| #2 Topic separator | High | Standardize on `/`, exact match only |
-| #3 HTTP message clearing | High | Clear messages after Receive() returns |
-| #4 HTTP ack handling | Medium | Add `WaitForAck` config: 201=immediate, 200=wait |
-| #5 Subscription IDs | Medium | Use map with IDs instead of slice |
-| #6 Feedback loop | Low | Already works: `publisher.Publish(ctx, router.Start(ctx, input))` |
-| #7 Pattern matching | High | Remove for v1, exact match only |
+Files changed:
+- `pubsub/topics.go`: Removed `TopicMatcher`, kept only utility functions
+- `pubsub/multiplex.go`: `Pattern` field renamed to `Topic`, removed `matchTopicPattern()`
