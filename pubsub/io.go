@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/pubsub/cloudevents"
 )
 
 var (
@@ -23,14 +24,6 @@ var (
 	ErrUnmarshalFailed = errors.New("unmarshal failed")
 )
 
-// Envelope wraps a message for wire transmission per CloudEvents structured format.
-// It includes the topic, attributes, and JSON-encoded data.
-type Envelope struct {
-	Topic      string          `json:"topic"`
-	Attributes map[string]any  `json:"attributes,omitempty"`
-	Data       json.RawMessage `json:"data"`
-	Timestamp  time.Time       `json:"time"`
-}
 
 // Marshaler handles message serialization.
 type Marshaler interface {
@@ -62,6 +55,9 @@ type IOConfig struct {
 
 	// BufferSize for the reader. Defaults to 64KB.
 	BufferSize int
+
+	// Source is the default CloudEvents source for messages. Defaults to "gopipe://io".
+	Source string
 }
 
 func (c IOConfig) defaults() IOConfig {
@@ -71,6 +67,9 @@ func (c IOConfig) defaults() IOConfig {
 	}
 	if cfg.BufferSize == 0 {
 		cfg.BufferSize = 64 * 1024
+	}
+	if cfg.Source == "" {
+		cfg.Source = "gopipe://io"
 	}
 	return cfg
 }
@@ -97,7 +96,8 @@ func NewIOSender(w io.Writer, config IOConfig) Sender {
 	}
 }
 
-// Send writes messages to the underlying writer.
+// Send writes messages to the underlying writer in CloudEvents JSON format.
+// Each message is encoded as one CloudEvent per line (JSONL).
 func (s *ioSender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -123,20 +123,11 @@ func (s *ioSender) Send(ctx context.Context, topic string, msgs []*message.Messa
 		default:
 		}
 
-		// Extract attributes
-		attrs := make(map[string]any)
-		for k, v := range msg.Attributes {
-			attrs[k] = v
-		}
+		// Convert message to CloudEvent
+		event := cloudevents.FromMessage(msg, topic, s.config.Source)
 
-		env := Envelope{
-			Topic:      topic,
-			Attributes: attrs,
-			Data:       msg.Data,
-			Timestamp:  time.Now(),
-		}
-
-		if err := s.encoder.Encode(env); err != nil {
+		// Encode as JSON line
+		if err := s.encoder.Encode(event); err != nil {
 			return errors.Join(ErrMarshalFailed, err)
 		}
 	}
@@ -212,7 +203,7 @@ func (r *ioReceiver) Receive(ctx context.Context, topic string) ([]*message.Mess
 	}
 }
 
-// readOne reads a single message from the reader.
+// readOne reads a single CloudEvent from the reader.
 func (r *ioReceiver) readOne(ctx context.Context) (*message.Message, string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -227,25 +218,19 @@ func (r *ioReceiver) readOne(ctx context.Context) (*message.Message, string, err
 		return nil, "", err
 	}
 
-	// Decode envelope
-	var env Envelope
-	if err := json.Unmarshal(line, &env); err != nil {
+	// Decode CloudEvent
+	var event cloudevents.Event
+	if err := json.Unmarshal(line, &event); err != nil {
 		return nil, "", errors.Join(ErrUnmarshalFailed, err)
 	}
 
-	// Build message with attributes
-	attrs := message.Attributes{}
-	for key, value := range env.Attributes {
-		if strVal, ok := value.(string); ok {
-			attrs[key] = strVal
-		}
+	// Convert CloudEvent to message
+	msg, topic, err := cloudevents.ToMessage(&event)
+	if err != nil {
+		return nil, "", errors.Join(ErrUnmarshalFailed, err)
 	}
 
-	// Convert json.RawMessage to []byte explicitly
-	data := []byte(env.Data)
-	msg := message.New(data, attrs)
-
-	return msg, env.Topic, nil
+	return msg, topic, nil
 }
 
 // Close marks the receiver as closed. It does not close the underlying reader.

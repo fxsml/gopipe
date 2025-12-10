@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/pubsub/cloudevents"
 )
 
 var (
@@ -130,48 +131,6 @@ func (c HTTPConfig) defaults() HTTPConfig {
 	return cfg
 }
 
-// cloudEvent represents a CloudEvent structure for JSON marshaling.
-type cloudEvent struct {
-	ID              string                 `json:"id"`
-	Source          string                 `json:"source"`
-	SpecVersion     string                 `json:"specversion"`
-	Type            string                 `json:"type"`
-	Subject         string                 `json:"subject,omitempty"`
-	Time            string                 `json:"time,omitempty"`
-	DataContentType string                 `json:"datacontenttype,omitempty"`
-	Data            any                    `json:"data,omitempty"`
-	Extensions      map[string]interface{} `json:"-"`
-}
-
-// MarshalJSON implements custom JSON marshaling to include extensions at top level.
-func (c *cloudEvent) MarshalJSON() ([]byte, error) {
-	type Alias cloudEvent
-	aux := &struct {
-		*Alias
-	}{
-		Alias: (*Alias)(c),
-	}
-
-	data, err := json.Marshal(aux)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(c.Extensions) == 0 {
-		return data, nil
-	}
-
-	var m map[string]interface{}
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, err
-	}
-
-	for k, v := range c.Extensions {
-		m[k] = v
-	}
-
-	return json.Marshal(m)
-}
 
 // percentEncodeHeader encodes a string value for use in HTTP headers per CloudEvents spec.
 // Characters outside printable ASCII (U+0021-U+007E) and space, quote, percent are percent-encoded.
@@ -329,7 +288,7 @@ func (s *HTTPSender) sendBatch(ctx context.Context, topic string, msgs []*messag
 	default:
 	}
 
-	events := make([]*cloudEvent, len(msgs))
+	events := make([]*cloudevents.Event, len(msgs))
 	for i, msg := range msgs {
 		events[i] = s.messageToCloudEvent(topic, msg)
 	}
@@ -356,134 +315,36 @@ func (s *HTTPSender) sendBatch(ctx context.Context, topic string, msgs []*messag
 
 // setCloudEventsHeaders sets CloudEvents attributes as HTTP headers for binary mode.
 func (s *HTTPSender) setCloudEventsHeaders(req *http.Request, topic string, msg *message.Message) {
+	// Create CloudEvent and extract all attributes
+	event := cloudevents.FromMessage(msg, topic, s.url)
+
 	// Set required attributes
-	id, _ := msg.Attributes.ID()
-	if id == "" {
-		id = generateID()
-	}
-	req.Header.Set(ceID, percentEncodeHeader(id))
-
-	source, _ := msg.Attributes.Source()
-	if source == "" {
-		source = s.url
-	}
-	req.Header.Set(ceSource, percentEncodeHeader(source))
-
-	req.Header.Set(ceSpecVersion, cloudEventsVersion)
-
-	eventType, _ := msg.Attributes.Type()
-	if eventType == "" {
-		eventType = "com.gopipe.message"
-	}
-	req.Header.Set(ceType, percentEncodeHeader(eventType))
+	req.Header.Set(ceID, percentEncodeHeader(event.ID))
+	req.Header.Set(ceSource, percentEncodeHeader(event.Source))
+	req.Header.Set(ceSpecVersion, event.SpecVersion)
+	req.Header.Set(ceType, percentEncodeHeader(event.Type))
 
 	// Set optional standard attributes
-	if subject, ok := msg.Attributes.Subject(); ok {
-		req.Header.Set(ceSubject, percentEncodeHeader(subject))
+	if event.Subject != "" {
+		req.Header.Set(ceSubject, percentEncodeHeader(event.Subject))
 	}
 
-	if t, ok := msg.Attributes.EventTime(); ok {
-		req.Header.Set(ceTime, t.Format(time.RFC3339Nano))
+	if event.Time != "" {
+		req.Header.Set(ceTime, event.Time)
 	}
 
 	// Note: datacontenttype goes in Content-Type, not ce-datacontenttype header per spec
 
-	// Set gopipe extension attributes
-	if topic != "" {
-		req.Header.Set(ceTopic, percentEncodeHeader(topic))
-	}
-
-	if correlationID, ok := msg.Attributes.CorrelationID(); ok {
-		req.Header.Set(ceCorrelationID, percentEncodeHeader(correlationID))
-	}
-
-	if deadline, ok := msg.Attributes.Deadline(); ok {
-		req.Header.Set(ceDeadline, deadline.Format(time.RFC3339Nano))
-	}
-
-	// Set other extension attributes
-	for key, value := range msg.Attributes {
-		// Skip already-set standard attributes
-		if isStandardAttribute(key) {
-			continue
-		}
+	// Set extension attributes
+	for key, value := range event.Extensions {
 		headerName := ceHeaderPrefix + strings.ToLower(key)
 		req.Header.Set(headerName, percentEncodeHeader(fmt.Sprintf("%v", value)))
 	}
 }
 
 // messageToCloudEvent converts a message to CloudEvent structure.
-func (s *HTTPSender) messageToCloudEvent(topic string, msg *message.Message) *cloudEvent {
-	ce := &cloudEvent{
-		SpecVersion: cloudEventsVersion,
-		Extensions:  make(map[string]interface{}),
-	}
-
-	// Set required attributes
-	id, _ := msg.Attributes.ID()
-	if id == "" {
-		id = generateID()
-	}
-	ce.ID = id
-
-	source, _ := msg.Attributes.Source()
-	if source == "" {
-		source = s.url
-	}
-	ce.Source = source
-
-	eventType, _ := msg.Attributes.Type()
-	if eventType == "" {
-		eventType = "com.gopipe.message"
-	}
-	ce.Type = eventType
-
-	// Set optional standard attributes
-	if subject, ok := msg.Attributes.Subject(); ok {
-		ce.Subject = subject
-	}
-
-	if t, ok := msg.Attributes.EventTime(); ok {
-		ce.Time = t.Format(time.RFC3339Nano)
-	}
-
-	if dct, ok := msg.Attributes.DataContentType(); ok {
-		ce.DataContentType = dct
-	}
-
-	// Set data - try to unmarshal as JSON if data content type indicates JSON
-	if ce.DataContentType == "" || strings.Contains(ce.DataContentType, "json") {
-		var jsonData interface{}
-		if err := json.Unmarshal(msg.Data, &jsonData); err == nil {
-			ce.Data = jsonData
-		} else {
-			ce.Data = string(msg.Data)
-		}
-	} else {
-		ce.Data = string(msg.Data)
-	}
-
-	// Add gopipe extensions
-	if topic != "" {
-		ce.Extensions["topic"] = topic
-	}
-
-	if correlationID, ok := msg.Attributes.CorrelationID(); ok {
-		ce.Extensions["correlationid"] = correlationID
-	}
-
-	if deadline, ok := msg.Attributes.Deadline(); ok {
-		ce.Extensions["deadline"] = deadline.Format(time.RFC3339Nano)
-	}
-
-	// Add other extension attributes
-	for key, value := range msg.Attributes {
-		if !isStandardAttribute(key) {
-			ce.Extensions[key] = value
-		}
-	}
-
-	return ce
+func (s *HTTPSender) messageToCloudEvent(topic string, msg *message.Message) *cloudevents.Event {
+	return cloudevents.FromMessage(msg, topic, s.url)
 }
 
 // doRequest executes the HTTP request and checks the response.
@@ -501,21 +362,6 @@ func (s *HTTPSender) doRequest(req *http.Request) error {
 	return nil
 }
 
-// isStandardAttribute checks if an attribute key is a CloudEvents standard attribute.
-func isStandardAttribute(key string) bool {
-	switch key {
-	case message.AttrID, message.AttrSource, message.AttrSpecVersion, message.AttrType,
-		message.AttrSubject, message.AttrTime, message.AttrDataContentType,
-		message.AttrTopic, message.AttrCorrelationID, message.AttrDeadline:
-		return true
-	}
-	return false
-}
-
-// generateID generates a unique ID for a CloudEvent.
-func generateID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
-}
 
 // topicMessage holds a message with its topic.
 type topicMessage struct {
@@ -687,7 +533,7 @@ func (r *HTTPReceiver) parseBinaryMode(req *http.Request, body []byte) (*message
 
 // parseStructuredMode parses a CloudEvent in structured content mode (JSON).
 func (r *HTTPReceiver) parseStructuredMode(req *http.Request, body []byte) (*message.Message, string, error) {
-	var ce map[string]interface{}
+	var ce map[string]any
 	if err := json.Unmarshal(body, &ce); err != nil {
 		return nil, "", fmt.Errorf("%w: invalid JSON: %v", ErrInvalidCloudEvent, err)
 	}
@@ -697,7 +543,7 @@ func (r *HTTPReceiver) parseStructuredMode(req *http.Request, body []byte) (*mes
 
 // parseBatchMode parses multiple CloudEvents in batch content mode.
 func (r *HTTPReceiver) parseBatchMode(req *http.Request, body []byte) ([]topicMessage, error) {
-	var batch []map[string]interface{}
+	var batch []map[string]any
 	if err := json.Unmarshal(body, &batch); err != nil {
 		return nil, fmt.Errorf("%w: invalid JSON batch: %v", ErrInvalidCloudEvent, err)
 	}
@@ -715,95 +561,23 @@ func (r *HTTPReceiver) parseBatchMode(req *http.Request, body []byte) ([]topicMe
 }
 
 // cloudEventToMessage converts a CloudEvent JSON object to a message.
-func (r *HTTPReceiver) cloudEventToMessage(ce map[string]interface{}) (*message.Message, string, error) {
-	attrs := message.Attributes{}
-
-	// Extract required attributes
-	id, ok := ce["id"].(string)
-	if !ok || id == "" {
-		return nil, "", fmt.Errorf("%w: missing or invalid 'id'", ErrInvalidCloudEvent)
-	}
-	attrs[message.AttrID] = id
-
-	source, ok := ce["source"].(string)
-	if !ok || source == "" {
-		return nil, "", fmt.Errorf("%w: missing or invalid 'source'", ErrInvalidCloudEvent)
-	}
-	attrs[message.AttrSource] = source
-
-	specversion, ok := ce["specversion"].(string)
-	if !ok || specversion == "" {
-		return nil, "", fmt.Errorf("%w: missing or invalid 'specversion'", ErrInvalidCloudEvent)
-	}
-	attrs[message.AttrSpecVersion] = specversion
-
-	eventType, ok := ce["type"].(string)
-	if !ok || eventType == "" {
-		return nil, "", fmt.Errorf("%w: missing or invalid 'type'", ErrInvalidCloudEvent)
-	}
-	attrs[message.AttrType] = eventType
-
-	// Extract optional standard attributes
-	if subject, ok := ce["subject"].(string); ok {
-		attrs[message.AttrSubject] = subject
+func (r *HTTPReceiver) cloudEventToMessage(ce map[string]any) (*message.Message, string, error) {
+	// Marshal the map to JSON, then unmarshal into CloudEvent struct
+	data, err := json.Marshal(ce)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: failed to marshal CE map: %v", ErrInvalidCloudEvent, err)
 	}
 
-	if timeStr, ok := ce["time"].(string); ok {
-		if t, err := time.Parse(time.RFC3339Nano, timeStr); err == nil {
-			attrs[message.AttrTime] = t
-		}
+	var event cloudevents.Event
+	if err := json.Unmarshal(data, &event); err != nil {
+		return nil, "", fmt.Errorf("%w: %v", ErrInvalidCloudEvent, err)
 	}
 
-	if dct, ok := ce["datacontenttype"].(string); ok {
-		attrs[message.AttrDataContentType] = dct
+	msg, topic, err := cloudevents.ToMessage(&event)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: %v", ErrInvalidCloudEvent, err)
 	}
 
-	// Extract gopipe extension attributes
-	topic := ""
-	if topicVal, ok := ce["topic"].(string); ok {
-		topic = topicVal
-		attrs[message.AttrTopic] = topicVal
-	}
-
-	if correlationID, ok := ce["correlationid"].(string); ok {
-		attrs[message.AttrCorrelationID] = correlationID
-	}
-
-	if deadlineStr, ok := ce["deadline"].(string); ok {
-		if t, err := time.Parse(time.RFC3339Nano, deadlineStr); err == nil {
-			attrs[message.AttrDeadline] = t
-		}
-	}
-
-	// Extract other extension attributes (anything not in standard set)
-	standardKeys := map[string]bool{
-		"id": true, "source": true, "specversion": true, "type": true,
-		"subject": true, "time": true, "datacontenttype": true, "data": true,
-		"topic": true, "correlationid": true, "deadline": true,
-	}
-	for key, value := range ce {
-		if !standardKeys[key] {
-			attrs[key] = value
-		}
-	}
-
-	// Extract data
-	var data []byte
-	if dataVal, ok := ce["data"]; ok {
-		switch v := dataVal.(type) {
-		case string:
-			data = []byte(v)
-		default:
-			// Marshal back to JSON
-			var err error
-			data, err = json.Marshal(v)
-			if err != nil {
-				return nil, "", fmt.Errorf("%w: failed to marshal data: %v", ErrInvalidCloudEvent, err)
-			}
-		}
-	}
-
-	msg := message.New(data, attrs)
 	return msg, topic, nil
 }
 

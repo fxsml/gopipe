@@ -158,6 +158,39 @@ customSelector := func(topic string) pubsub.Sender {
 multiplexSender := pubsub.NewMultiplexSender(customSelector, defaultBroker)
 ```
 
+## CloudEvents Package
+
+The `pubsub/cloudevents` package provides CloudEvents v1.0.2 serialization and deserialization for gopipe messages. It supports both the HTTP protocol binding and JSON format specifications.
+
+```go
+import "github.com/fxsml/gopipe/pubsub/cloudevents"
+
+// Convert message to CloudEvent
+msg := message.New([]byte(`{"order":"123"}`), message.Attributes{
+    message.AttrID:     "evt-001",
+    message.AttrSource: "orders-service",
+    message.AttrType:   "order.created",
+})
+event := cloudevents.FromMessage(msg, "orders.created", "default-source")
+
+// Marshal to JSON
+data, _ := json.Marshal(event)
+
+// Unmarshal from JSON
+var parsed cloudevents.Event
+json.Unmarshal(data, &parsed)
+
+// Convert back to message
+msg, topic, _ := cloudevents.ToMessage(&parsed)
+```
+
+The package handles:
+- Standard CloudEvents attributes (id, source, specversion, type, subject, time, datacontenttype)
+- gopipe extension attributes (topic, correlationid, deadline)
+- JSON data (stored as JSON value per spec)
+- Binary data (Base64-encoded in `data_base64` field)
+- Custom extension attributes
+
 ## Broker Implementations
 
 ### In-Memory Broker
@@ -174,17 +207,26 @@ broker := pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{
 
 ### IO Broker
 
-Stream-based broker using `io.Reader`/`io.Writer`:
+Stream-based broker using `io.Reader`/`io.Writer` with CloudEvents JSON format:
 
 ```go
-// File-based
+// File-based - messages stored as CloudEvents JSON Lines (JSONL)
 file, _ := os.Create("events.jsonl")
-broker := pubsub.NewIOBroker(file, file, pubsub.IOConfig{})
+broker := pubsub.NewIOBroker(file, file, pubsub.IOConfig{
+    Source: "gopipe://myapp", // Optional: CloudEvents source identifier
+})
 
 // Pipe-based (IPC)
 pr, pw := io.Pipe()
 broker := pubsub.NewIOBroker(pr, pw, pubsub.IOConfig{})
 ```
+
+**CloudEvents JSON Format**
+
+The IO broker uses [CloudEvents JSON format](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/formats/json-format.md) for message serialization. Each message is encoded as a single-line JSON object (JSONL) containing:
+- Standard CloudEvents attributes (id, source, specversion, type, subject, time, datacontenttype)
+- gopipe extension attributes (topic, correlationid, deadline)
+- Data payload (as JSON value, string, or Base64-encoded binary)
 
 ### HTTP Broker
 
