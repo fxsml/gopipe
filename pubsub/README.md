@@ -188,19 +188,40 @@ broker := pubsub.NewIOBroker(pr, pw, pubsub.IOConfig{})
 
 ### HTTP Broker
 
-Webhook-style broker using HTTP:
+Webhook-style broker using HTTP with CloudEvents support:
 
 ```go
-// Sender (POST to webhook)
+// Sender (POST to webhook) - Binary mode (default)
 sender := pubsub.NewHTTPSender("https://example.com/webhook", pubsub.HTTPConfig{
+    CloudEventsMode: pubsub.CloudEventsBinary,  // Default
     Headers: map[string]string{
         "Authorization": "Bearer token",
     },
 })
 
-// Receiver (accept webhook POSTs)
+// Structured content mode (full CloudEvent JSON)
+sender := pubsub.NewHTTPSender("https://example.com/webhook", pubsub.HTTPConfig{
+    CloudEventsMode: pubsub.CloudEventsStructured,
+})
+
+// Batch content mode (array of CloudEvents)
+sender := pubsub.NewHTTPSender("https://example.com/webhook", pubsub.HTTPConfig{
+    CloudEventsMode: pubsub.CloudEventsBatch,
+})
+
+// Receiver (accept webhook POSTs) - auto-detects CloudEvents mode
 receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, bufferSize)
 ```
+
+**CloudEvents Support**
+
+The HTTP broker implements the [CloudEvents HTTP Protocol Binding v1.0.2](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/bindings/http-protocol-binding.md) specification with three content modes:
+
+- **Binary Mode** (default): Event data in HTTP body, attributes as `ce-` prefixed headers
+- **Structured Mode**: Full CloudEvent JSON in body with `application/cloudevents+json` content type
+- **Batch Mode**: Array of CloudEvents in body with `application/cloudevents-batch+json` content type
+
+The receiver automatically detects the CloudEvents mode from the Content-Type header or presence of `ce-` headers. All standard CloudEvents attributes (id, source, specversion, type, subject, time, datacontenttype) are supported, along with gopipe extension attributes (topic, correlationid, deadline).
 
 ### Channel Broker
 
