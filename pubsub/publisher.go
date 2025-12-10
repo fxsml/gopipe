@@ -2,57 +2,12 @@ package pubsub
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/fxsml/gopipe"
 	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 )
-
-// RouteFunc determines the routing key (topic) for a message based on its properties.
-type RouteFunc func(message.Attributes) string
-
-// ============================================================================
-// Routing Key Helpers
-// ============================================================================
-
-// RouteBySubject returns a RouteFunc that routes by the message subject property.
-func RouteBySubject() RouteFunc {
-	return func(props message.Attributes) string {
-		subject, _ := props.Subject()
-		return subject
-	}
-}
-
-// RouteByProperty returns a RouteFunc that routes by a specific message property.
-func RouteByProperty(key string) RouteFunc {
-	return func(props message.Attributes) string {
-		value, ok := props[key].(string)
-		if !ok {
-			return ""
-		}
-		return value
-	}
-}
-
-// RouteStatic returns a RouteFunc that always routes to the same topic.
-func RouteStatic(topic string) RouteFunc {
-	return func(props message.Attributes) string {
-		return topic
-	}
-}
-
-// RouteByFormat returns a RouteFunc that formats the topic using fmt.Sprintf with property values.
-func RouteByFormat(format string, keys ...string) RouteFunc {
-	return func(props message.Attributes) string {
-		values := make([]any, len(keys))
-		for i, key := range keys {
-			values[i] = props[key]
-		}
-		return fmt.Sprintf(format, values...)
-	}
-}
 
 // Publisher provides channel-based message publishing with batching and routing.
 type Publisher struct {

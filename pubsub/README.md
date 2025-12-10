@@ -85,46 +85,6 @@ for msg := range allMsgs {
 
 Each call to Subscribe creates an independent subscription with its own polling goroutine. Use `channel.Merge` to combine multiple topic subscriptions.
 
-## Routing
-
-### Routing Functions
-
-Determine how messages map to topics:
-
-```go
-// Route by subject property
-RouteBySubject() RouteFunc
-
-// Route by specific property
-RouteByProperty(key string) RouteFunc
-
-// Route all to static topic
-RouteStatic(topic string) RouteFunc
-
-// Route using format string
-RouteByFormat(format string, keys ...string) RouteFunc
-```
-
-Example:
-
-```go
-// Route by subject
-pubsub.RouteBySubject()
-// Message with AttrSubject="orders.created" → topic "orders.created"
-
-// Route by custom property
-pubsub.RouteByProperty("region")
-// Message with Attributes{"region": "us-east"} → topic "us-east"
-
-// Route to static topic
-pubsub.RouteStatic("all-events")
-// All messages → topic "all-events"
-
-// Route by format
-pubsub.RouteByFormat("events/%s/%s", "type", "region")
-// Message with Attributes{"type": "order", "region": "us"} → topic "events/order/us"
-```
-
 ## Multiplexing
 
 Route messages to different brokers based on topic patterns:

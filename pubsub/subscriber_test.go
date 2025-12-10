@@ -251,8 +251,8 @@ func TestSubscriber_SubscribeMultipleCalls(t *testing.T) {
 	t.Run("Subscribe can be called multiple times", func(t *testing.T) {
 		mock := newMockReceiver()
 		mock.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message, error) {
-			if mock.getCallCount(topic) > 2 {
-				// Block after a few messages
+			if mock.getCallCount(topic) > 10 {
+				// Block after many messages to allow all subscriptions to get at least one
 				<-ctx.Done()
 				return nil, ctx.Err()
 			}
