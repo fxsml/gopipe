@@ -8,20 +8,6 @@ import (
 )
 
 // MessageCorrelation returns middleware that propagates correlation ID from input to output messages.
-//
-// This middleware ensures that correlation IDs are automatically carried forward from input messages
-// to all output messages, enabling request tracing across message processing pipelines.
-//
-// Example:
-//
-//	router := message.NewRouter(
-//	    message.RouterConfig{
-//	        Middleware: []gopipe.MiddlewareFunc[*message.Message, *message.Message]{
-//	            middleware.MessageCorrelation(),
-//	        },
-//	    },
-//	    handlers...,
-//	)
 func MessageCorrelation() gopipe.MiddlewareFunc[*message.Message, *message.Message] {
 	return NewMessageMiddleware(
 		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
