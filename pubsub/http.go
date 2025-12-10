@@ -70,6 +70,21 @@ const (
 	CloudEventsBatch CloudEventsMode = "batch"
 )
 
+// CloudEvents HTTP header names for binary content mode.
+// These can be used to read CloudEvents attributes from HTTP requests.
+const (
+	HeaderID              = "Ce-Id"
+	HeaderSource          = "Ce-Source"
+	HeaderSpecVersion     = "Ce-Specversion"
+	HeaderType            = "Ce-Type"
+	HeaderSubject         = "Ce-Subject"
+	HeaderTime            = "Ce-Time"
+	HeaderDataContentType = "Ce-Datacontenttype"
+	HeaderTopic           = "Ce-Topic"
+	HeaderCorrelationID   = "Ce-Correlationid"
+	HeaderDeadline        = "Ce-Deadline"
+)
+
 // HTTPConfig configures HTTP-based sender/receiver.
 type HTTPConfig struct {
 	// SendTimeout is the maximum duration for sending a message.
