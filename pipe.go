@@ -15,6 +15,25 @@ type Pipe[Pre, Out any] interface {
 	Start(ctx context.Context, pre <-chan Pre) <-chan Out
 }
 
+type appliedPipe[In, Inter, Out any] struct {
+	pipeA Pipe[In, Inter]
+	pipeB Pipe[Inter, Out]
+}
+
+func (p *appliedPipe[In, Inter, Out]) Start(ctx context.Context, in <-chan In) <-chan Out {
+	inter := p.pipeA.Start(ctx, in)
+	return p.pipeB.Start(ctx, inter)
+}
+
+// ApplyPipe combines two Pipes into one, connecting the output of the first to the input of the second.
+// The resulting Pipe takes inputs of type In and produces outputs of type Out.
+func ApplyPipe[In, Inter, Out any](a Pipe[In, Inter], b Pipe[Inter, Out]) Pipe[In, Out] {
+	return &appliedPipe[In, Inter, Out]{
+		pipeA: a,
+		pipeB: b,
+	}
+}
+
 // NewBatchPipe creates a Pipe that groups inputs into batches before processing.
 // Each batch is processed as a whole by the handle function, which can return multiple outputs.
 // Batches are created when either maxSize items are collected or maxDuration elapses since the first item.
