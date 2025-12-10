@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/pubsub"
 )
@@ -255,12 +256,11 @@ func TestSubscriber_Basic(t *testing.T) {
 		receiver,
 		pubsub.SubscriberConfig{},
 	)
-	subscriber.AddTopic("topic-a")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx)
+	msgs := subscriber.Subscribe(ctx, "topic-a")
 
 	var count int
 	for range msgs {
@@ -289,12 +289,11 @@ func TestSubscriber_ErrorHandling(t *testing.T) {
 			},
 		},
 	)
-	subscriber.AddTopic("topic-a")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx)
+	msgs := subscriber.Subscribe(ctx, "topic-a")
 
 	// Should receive no messages due to errors
 	for range msgs {
@@ -323,12 +322,11 @@ func TestSubscriber_MultipleReceives(t *testing.T) {
 		receiver,
 		pubsub.SubscriberConfig{},
 	)
-	subscriber.AddTopic("topic-a")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx)
+	msgs := subscriber.Subscribe(ctx, "topic-a")
 
 	var count int
 	for range msgs {
@@ -383,12 +381,11 @@ func TestSubscriber_WithRecover(t *testing.T) {
 			Recover: true,
 		},
 	)
-	subscriber.AddTopic("topic-a")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx)
+	msgs := subscriber.Subscribe(ctx, "topic-a")
 
 	// Should not panic due to Recover option
 	for range msgs {
@@ -426,13 +423,14 @@ func TestSubscriber_MultipleTopics(t *testing.T) {
 		receiver,
 		pubsub.SubscriberConfig{},
 	)
-	subscriber.AddTopic("topic-a")
-	subscriber.AddTopic("topic-b")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx)
+	// Subscribe to multiple topics and merge them
+	topicA := subscriber.Subscribe(ctx, "topic-a")
+	topicB := subscriber.Subscribe(ctx, "topic-b")
+	msgs := channel.Merge(topicA, topicB)
 
 	var received []string
 	for msg := range msgs {
@@ -465,19 +463,23 @@ func TestSubscriber_MultipleTopics(t *testing.T) {
 	}
 }
 
-func TestSubscriber_NoTopics(t *testing.T) {
+func TestSubscriber_NoMessages(t *testing.T) {
 	receiver := newMockReceiver()
+	receiver.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message, error) {
+		// Block forever - no messages to return
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 
 	subscriber := pubsub.NewSubscriber(
 		receiver,
 		pubsub.SubscriberConfig{},
 	)
-	// No topics added
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx)
+	msgs := subscriber.Subscribe(ctx, "topic-a")
 
 	var count int
 	for range msgs {
@@ -485,7 +487,7 @@ func TestSubscriber_NoTopics(t *testing.T) {
 	}
 
 	if count != 0 {
-		t.Errorf("Expected 0 messages when no topics registered, got %d", count)
+		t.Errorf("Expected 0 messages when receiver returns no messages, got %d", count)
 	}
 }
 

@@ -63,18 +63,27 @@ close(msgs)
 Receives messages from multiple topics as a single channel:
 
 ```go
+// Subscribe to a single topic
 subscriber := pubsub.NewSubscriber(broker, pubsub.SubscriberConfig{})
-subscriber.AddTopic("orders.created")
-subscriber.AddTopic("orders.updated")
-msgChan := subscriber.Subscribe(ctx)
+msgChan := subscriber.Subscribe(ctx, "orders.created")
 
 for msg := range msgChan {
-    // Process messages from all topics
+    // Process messages from the topic
+    fmt.Println(string(msg.Data))
+}
+
+// Subscribe to multiple topics and merge channels
+orders := subscriber.Subscribe(ctx, "orders.created")
+updates := subscriber.Subscribe(ctx, "orders.updated")
+allMsgs := channel.Merge(orders, updates)
+
+for msg := range allMsgs {
+    // Process messages from both topics
     fmt.Println(string(msg.Data))
 }
 ```
 
-Each topic is polled in a separate goroutine and messages are merged into a single output channel.
+Each call to Subscribe creates an independent subscription with its own polling goroutine. Use `channel.Merge` to combine multiple topic subscriptions.
 
 ## Routing
 

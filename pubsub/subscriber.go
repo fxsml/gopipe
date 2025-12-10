@@ -5,53 +5,24 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe"
-	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 )
 
 // Subscriber provides channel-based message consumption from a Receiver.
-// Topics must be added via AddTopic before calling Subscribe.
 type Subscriber struct {
 	receiver Receiver
-	topics   []string
 	opts     []gopipe.Option[struct{}, *message.Message]
 }
 
-// AddTopic registers a topic to subscribe to.
-// Must be called before Subscribe. Can be called multiple times
-// to subscribe to multiple topics.
-func (s *Subscriber) AddTopic(topic string) {
-	s.topics = append(s.topics, topic)
-}
-
-// Subscribe starts polling all registered topics and returns a channel
-// that emits messages from all topics. Each topic is polled in a separate
-// goroutine and messages are merged into a single output channel.
+// Subscribe creates a channel that polls the specified topic and emits received messages.
 // The channel is closed when the context is canceled.
-func (s *Subscriber) Subscribe(ctx context.Context) <-chan *message.Message {
-	if len(s.topics) == 0 {
-		// No topics registered, return closed channel
-		out := make(chan *message.Message)
-		close(out)
-		return out
-	}
-
-	if len(s.topics) == 1 {
-		// Single topic, no need for merging
-		return s.subscribeToTopic(ctx, s.topics[0])
-	}
-
-	// Multiple topics: start a goroutine for each and merge outputs
-	outputs := make([]<-chan *message.Message, len(s.topics))
-	for i, topic := range s.topics {
-		outputs[i] = s.subscribeToTopic(ctx, topic)
-	}
-
-	return channel.Merge(outputs...)
-}
-
-// subscribeToTopic creates a channel that polls a single topic.
-func (s *Subscriber) subscribeToTopic(ctx context.Context, topic string) <-chan *message.Message {
+//
+// Subscribe can be called multiple times with the same or different topics. Each call
+// creates an independent subscription with its own polling goroutine and message channel.
+// The behavior of subscribing to the same topic multiple times depends on the underlying
+// Receiver implementation - the Subscriber does not prevent or deduplicate multiple
+// subscriptions to the same topic.
+func (s *Subscriber) Subscribe(ctx context.Context, topic string) <-chan *message.Message {
 	return gopipe.NewGenerator(func(ctx context.Context) ([]*message.Message, error) {
 		return s.receiver.Receive(ctx, topic)
 	}, s.opts...).Generate(ctx)
@@ -70,17 +41,20 @@ type SubscriberConfig struct {
 }
 
 // NewSubscriber creates a Subscriber that wraps a Receiver with gopipe processing.
-// Topics must be added via AddTopic before calling Subscribe.
 //
 // Example:
 //
 //	subscriber := pubsub.NewSubscriber(broker, pubsub.SubscriberConfig{})
-//	subscriber.AddTopic("orders.created")
-//	subscriber.AddTopic("orders.updated")
-//	msgs := subscriber.Subscribe(ctx)
+//	msgs := subscriber.Subscribe(ctx, "orders.created")
 //	for msg := range msgs {
-//	    // Process messages from both topics
+//	    // Process messages from the topic
 //	}
+//
+// To subscribe to multiple topics, call Subscribe multiple times:
+//
+//	orders := subscriber.Subscribe(ctx, "orders.created")
+//	payments := subscriber.Subscribe(ctx, "payments.completed")
+//	merged := channel.Merge(orders, payments)
 func NewSubscriber(
 	receiver Receiver,
 	config SubscriberConfig,
