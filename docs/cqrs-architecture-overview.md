@@ -39,12 +39,12 @@ Simple by Default ──────► Advanced Features Pluggable
 │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
 │                                                                │
 │  • CommandProcessor, EventProcessor                           │
-│  • SagaCoordinator (interface)                                │
 │  • NewCommandHandler, NewEventHandler                         │
 │  • Marshaler (JSON, Protobuf)                                 │
+│  • SagaCoordinator (interface) - planned                      │
 │                                                                │
-│  ✅ Use this for CQRS/Saga patterns                           │
-│  ⚠️  Simple coordinators (no compensation)                    │
+│  ✅ Use this for CQRS patterns                                │
+│  ⚠️  Saga coordination planned                                │
 │                                                                │
 └────────────────────────────────────────────────────────────────┘
                               ▲
@@ -346,8 +346,10 @@ Start ──► Layer 1 (cqrs)
 **Layer 1 (cqrs) is now available:**
 - `cqrs.NewCommandHandler[Cmd, Evt]()` - Type-safe command handlers
 - `cqrs.NewEventHandler[Evt]()` - Type-safe event handlers
-- `cqrs.SagaCoordinator` interface - Workflow orchestration
 - `cqrs.JSONMarshaler` - JSON serialization (Protobuf coming soon)
+
+**Planned:**
+- `cqrs.SagaCoordinator` interface - Workflow orchestration (proposed)
 
 See `examples/cqrs-package/` for complete usage example.
 

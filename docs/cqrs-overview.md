@@ -402,7 +402,7 @@ Events → Materialized View (denormalized read model)
 ### Architecture Decision Records
 
 - [ADR 0006: CQRS Implementation](./adr/0006-cqrs-implementation.md) ✅ Implemented
-- [ADR 0007: Saga Coordinator Pattern](./adr/0007-saga-coordinator-pattern.md) ✅ Implemented
+- [ADR 0007: Saga Coordinator Pattern](./adr/0007-saga-coordinator-pattern.md) 📋 Proposed
 - [ADR 0008: Compensating Saga Pattern](./adr/0008-compensating-saga-pattern.md) 📋 Proposed
 - [ADR 0009: Transactional Outbox Pattern](./adr/0009-transactional-outbox-pattern.md) 📋 Proposed
 

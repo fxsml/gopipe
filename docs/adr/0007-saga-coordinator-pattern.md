@@ -1,7 +1,10 @@
 # ADR 0007: Saga Coordinator Pattern
 
 **Date:** 2025-12-08
-**Status:** Implemented
+**Status:** Proposed
+
+> **Note:** This ADR describes a proposed interface that is not yet implemented.
+> The `SagaCoordinator` interface and related functionality are planned for a future release.
 
 ## Context
 

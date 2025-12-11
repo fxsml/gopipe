@@ -613,7 +613,7 @@ WHERE published_at < NOW() - INTERVAL '7 days';
 │  cqrs Package (Core)                                        │
 │                                                             │
 │  ✅ CommandProcessor, EventProcessor                       │
-│  ✅ SagaCoordinator interface                              │
+│  ⚙️  SagaCoordinator interface                              │
 │  ✅ Marshaler interface                                     │
 │  ✅ Basic implementations                                   │
 └─────────────────────────────────────────────────────────────┘
@@ -785,7 +785,7 @@ handler := outbox.NewCommandHandlerWithOutbox(handle, db, outbox)
 
 ### Phase 1: Core CQRS ✅ (Current)
 - [x] CommandProcessor, EventProcessor
-- [x] SagaCoordinator interface
+- [ ] SagaCoordinator interface
 - [x] Basic implementations
 - [x] Examples
 
