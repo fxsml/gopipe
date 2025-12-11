@@ -10,6 +10,7 @@ import (
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/pubsub"
 	"github.com/fxsml/gopipe/pubsub/broker"
+	"github.com/fxsml/gopipe/pubsub/multiplex"
 )
 
 func main() {
@@ -44,8 +45,8 @@ func example1_PrefixRouting() {
 	externalBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
 
 	// Create multiplex sender with routing logic
-	selector := pubsub.PrefixSenderSelector("internal", memoryBroker)
-	multiplexSender := pubsub.NewMultiplexSender(selector, externalBroker)
+	selector := multiplex.PrefixSenderSelector("internal", memoryBroker)
+	multiplexSender := multiplex.NewSender(selector, externalBroker)
 
 	// Create publisher using multiplex sender
 	publisher := pubsub.NewPublisher(
@@ -135,13 +136,13 @@ func example2_ExactRouting() {
 	natsBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{}) // Simulated NATS
 
 	// Define routing rules (exact match only)
-	selector := pubsub.NewTopicSenderSelector([]pubsub.TopicSenderRoute{
+	selector := multiplex.NewTopicSenderSelector([]multiplex.TopicSenderRoute{
 		{Topic: "internal/cache", Sender: memoryBroker},
 		{Topic: "audit/login", Sender: auditBroker},
 		{Topic: "events/order/created", Sender: natsBroker},
 	})
 
-	multiplexSender := pubsub.NewMultiplexSender(
+	multiplexSender := multiplex.NewSender(
 		selector,
 		natsBroker, // Default: everything else → NATS
 	)
@@ -195,12 +196,12 @@ func example3_ChainedSelectors() {
 	externalBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
 
 	// Chain selectors (first match wins)
-	selector := pubsub.ChainSenderSelectors(
-		pubsub.PrefixSenderSelector("audit", auditBroker),
-		pubsub.PrefixSenderSelector("internal", internalBroker),
+	selector := multiplex.ChainSenderSelectors(
+		multiplex.PrefixSenderSelector("audit", auditBroker),
+		multiplex.PrefixSenderSelector("internal", internalBroker),
 	)
 
-	multiplexSender := pubsub.NewMultiplexSender(selector, externalBroker)
+	multiplexSender := multiplex.NewSender(selector, externalBroker)
 
 	ctx := context.Background()
 
@@ -266,8 +267,8 @@ func example4_MultiplexReceiver() {
 	})
 
 	// Create multiplex receiver
-	selector := pubsub.PrefixReceiverSelector("internal", memoryBroker)
-	multiplexReceiver := pubsub.NewMultiplexReceiver(selector, externalBroker)
+	selector := multiplex.PrefixReceiverSelector("internal", memoryBroker)
+	multiplexReceiver := multiplex.NewReceiver(selector, externalBroker)
 
 	fmt.Println("Receiver routing:")
 	fmt.Println("  internal/* → Memory broker")

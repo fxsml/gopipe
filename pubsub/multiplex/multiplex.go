@@ -1,43 +1,44 @@
-package pubsub
+package multiplex
 
 import (
 	"context"
 	"strings"
 
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/pubsub"
 )
 
 // SenderSelector determines which Sender to use for a given topic.
 // Returns the selected Sender or nil if no match (triggers fallback).
-type SenderSelector func(topic string) Sender
+type SenderSelector func(topic string) pubsub.Sender
 
 // ReceiverSelector determines which Receiver to use for a given topic.
 // Returns the selected Receiver or nil if no match (triggers fallback).
-type ReceiverSelector func(topic string) Receiver
+type ReceiverSelector func(topic string) pubsub.Receiver
 
-// MultiplexSender routes Send calls to different Senders based on topic.
-type MultiplexSender struct {
+// Sender routes Send calls to different Senders based on topic.
+type Sender struct {
 	selector SenderSelector
-	fallback Sender
+	fallback pubsub.Sender
 }
 
 // Compile-time interface assertion
-var _ Sender = (*MultiplexSender)(nil)
+var _ pubsub.Sender = (*Sender)(nil)
 
-// NewMultiplexSender creates a multiplexing Sender.
+// NewSender creates a multiplexing Sender.
 // Panics if fallback is nil.
-func NewMultiplexSender(selector SenderSelector, fallback Sender) *MultiplexSender {
+func NewSender(selector SenderSelector, fallback pubsub.Sender) *Sender {
 	if fallback == nil {
 		panic("multiplex sender requires non-nil fallback")
 	}
-	return &MultiplexSender{
+	return &Sender{
 		selector: selector,
 		fallback: fallback,
 	}
 }
 
 // Send routes the message to the appropriate Sender based on topic.
-func (m *MultiplexSender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
+func (m *Sender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	sender := m.selector(topic)
 	if sender == nil {
 		sender = m.fallback
@@ -45,29 +46,29 @@ func (m *MultiplexSender) Send(ctx context.Context, topic string, msgs []*messag
 	return sender.Send(ctx, topic, msgs)
 }
 
-// MultiplexReceiver routes Receive calls to different Receivers based on topic.
-type MultiplexReceiver struct {
+// Receiver routes Receive calls to different Receivers based on topic.
+type Receiver struct {
 	selector ReceiverSelector
-	fallback Receiver
+	fallback pubsub.Receiver
 }
 
 // Compile-time interface assertion
-var _ Receiver = (*MultiplexReceiver)(nil)
+var _ pubsub.Receiver = (*Receiver)(nil)
 
-// NewMultiplexReceiver creates a multiplexing Receiver.
+// NewReceiver creates a multiplexing Receiver.
 // Panics if fallback is nil.
-func NewMultiplexReceiver(selector ReceiverSelector, fallback Receiver) *MultiplexReceiver {
+func NewReceiver(selector ReceiverSelector, fallback pubsub.Receiver) *Receiver {
 	if fallback == nil {
 		panic("multiplex receiver requires non-nil fallback")
 	}
-	return &MultiplexReceiver{
+	return &Receiver{
 		selector: selector,
 		fallback: fallback,
 	}
 }
 
 // Receive routes the subscription to the appropriate Receiver based on topic.
-func (m *MultiplexReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
+func (m *Receiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
 	receiver := m.selector(topic)
 	if receiver == nil {
 		receiver = m.fallback
@@ -82,13 +83,13 @@ func (m *MultiplexReceiver) Receive(ctx context.Context, topic string) ([]*messa
 // TopicSenderRoute defines a topic and its associated Sender.
 type TopicSenderRoute struct {
 	Topic  string
-	Sender Sender
+	Sender pubsub.Sender
 }
 
 // NewTopicSenderSelector creates a selector that matches topics exactly.
 // First match wins.
 func NewTopicSenderSelector(routes []TopicSenderRoute) SenderSelector {
-	return func(topic string) Sender {
+	return func(topic string) pubsub.Sender {
 		for _, route := range routes {
 			if route.Topic == topic {
 				return route.Sender
@@ -101,13 +102,13 @@ func NewTopicSenderSelector(routes []TopicSenderRoute) SenderSelector {
 // TopicReceiverRoute defines a topic and its associated Receiver.
 type TopicReceiverRoute struct {
 	Topic    string
-	Receiver Receiver
+	Receiver pubsub.Receiver
 }
 
 // NewTopicReceiverSelector creates a selector that matches topics exactly.
 // First match wins.
 func NewTopicReceiverSelector(routes []TopicReceiverRoute) ReceiverSelector {
-	return func(topic string) Receiver {
+	return func(topic string) pubsub.Receiver {
 		for _, route := range routes {
 			if route.Topic == topic {
 				return route.Receiver
@@ -119,9 +120,9 @@ func NewTopicReceiverSelector(routes []TopicReceiverRoute) ReceiverSelector {
 
 // PrefixSenderSelector creates a selector that routes topics starting with prefix.
 // Topics use "/" as separator (e.g., prefix "orders" matches "orders/created").
-func PrefixSenderSelector(prefix string, sender Sender) SenderSelector {
+func PrefixSenderSelector(prefix string, sender pubsub.Sender) SenderSelector {
 	prefixWithSep := prefix + "/"
-	return func(topic string) Sender {
+	return func(topic string) pubsub.Sender {
 		if topic == prefix || strings.HasPrefix(topic, prefixWithSep) {
 			return sender
 		}
@@ -131,9 +132,9 @@ func PrefixSenderSelector(prefix string, sender Sender) SenderSelector {
 
 // PrefixReceiverSelector creates a selector based on topic prefix.
 // Topics use "/" as separator (e.g., prefix "orders" matches "orders/created").
-func PrefixReceiverSelector(prefix string, receiver Receiver) ReceiverSelector {
+func PrefixReceiverSelector(prefix string, receiver pubsub.Receiver) ReceiverSelector {
 	prefixWithSep := prefix + "/"
-	return func(topic string) Receiver {
+	return func(topic string) pubsub.Receiver {
 		if topic == prefix || strings.HasPrefix(topic, prefixWithSep) {
 			return receiver
 		}
@@ -143,7 +144,7 @@ func PrefixReceiverSelector(prefix string, receiver Receiver) ReceiverSelector {
 
 // ChainSenderSelectors combines multiple selectors; first match wins.
 func ChainSenderSelectors(selectors ...SenderSelector) SenderSelector {
-	return func(topic string) Sender {
+	return func(topic string) pubsub.Sender {
 		for _, sel := range selectors {
 			if sender := sel(topic); sender != nil {
 				return sender
@@ -155,7 +156,7 @@ func ChainSenderSelectors(selectors ...SenderSelector) SenderSelector {
 
 // ChainReceiverSelectors combines multiple selectors (first match wins).
 func ChainReceiverSelectors(selectors ...ReceiverSelector) ReceiverSelector {
-	return func(topic string) Receiver {
+	return func(topic string) pubsub.Receiver {
 		for _, sel := range selectors {
 			if receiver := sel(topic); receiver != nil {
 				return receiver

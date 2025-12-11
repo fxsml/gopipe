@@ -18,16 +18,16 @@ Create dedicated `pubsub` package at top level with broker implementations in a 
 ```
 pubsub/
 ├── broker.go       # Sender, Receiver, Broker interfaces
-├── multiplex.go    # Routing between multiple brokers
 ├── publisher.go    # Publisher with batching
 ├── subscriber.go   # Subscriber with gopipe integration
-├── topics.go       # Topic pattern matching
-├── cloudevents/    # CloudEvents serialization
-│   └── cloudevents.go
-└── broker/         # Broker implementations
-    ├── channel.go  # Channel-based in-process broker
-    ├── http.go     # HTTP webhook broker (CloudEvents)
-    └── io.go       # IO broker for debugging/bridging (JSONL)
+├── broker/         # Broker implementations
+│   ├── channel.go  # Channel-based in-process broker
+│   ├── http.go     # HTTP webhook broker (CloudEvents)
+│   └── io.go       # IO broker for debugging/bridging (JSONL)
+├── multiplex/      # Topic-based routing
+│   └── multiplex.go # Sender/Receiver routing by topic
+└── cloudevents/    # CloudEvents serialization
+    └── cloudevents.go
 ```
 
 ### IO Broker (Debug/Management)
@@ -98,6 +98,7 @@ This design:
 ## Links
 
 - Interfaces: `github.com/fxsml/gopipe/pubsub`
-- Implementations: `github.com/fxsml/gopipe/pubsub/broker`
+- Broker implementations: `github.com/fxsml/gopipe/pubsub/broker`
+- Multiplex routing: `github.com/fxsml/gopipe/pubsub/multiplex`
 - ADR 0012: Multiplex Pub/Sub
 - Supersedes: ADR-25 Interface Broker

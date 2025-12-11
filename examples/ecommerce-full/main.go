@@ -53,6 +53,7 @@ import (
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/pubsub"
 	"github.com/fxsml/gopipe/pubsub/broker"
+	"github.com/fxsml/gopipe/pubsub/multiplex"
 )
 
 // ============================================================================
@@ -458,14 +459,14 @@ func main() {
 	// This means we can't easily mix them without conversion!
 
 	// Multiplex Sender: internal/* → ChannelBroker, events/* → HTTPSender
-	senderSelector := pubsub.PrefixSenderSelector("internal", channelBroker)
-	multiplexSender := pubsub.NewMultiplexSender(senderSelector, webhookSender)
+	senderSelector := multiplex.PrefixSenderSelector("internal", channelBroker)
+	multiplexSender := multiplex.NewSender(senderSelector, webhookSender)
 
 	// Multiplex Receiver: commands/* → ChannelBroker, internal/* → ChannelBroker
 	// NOTE: We end up not using this due to design issues - see workaround below
-	_ = pubsub.ChainReceiverSelectors(
-		pubsub.PrefixReceiverSelector("commands", channelBroker),
-		pubsub.PrefixReceiverSelector("internal", channelBroker),
+	_ = multiplex.ChainReceiverSelectors(
+		multiplex.PrefixReceiverSelector("commands", channelBroker),
+		multiplex.PrefixReceiverSelector("internal", channelBroker),
 	)
 	// multiplexReceiver not used - we use channelBroker directly
 

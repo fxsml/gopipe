@@ -1,27 +1,86 @@
-package pubsub_test
+package multiplex_test
 
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/pubsub"
 	"github.com/fxsml/gopipe/pubsub/broker"
+	"github.com/fxsml/gopipe/pubsub/multiplex"
 )
 
 // ============================================================================
-// MultiplexSender Tests
+// Mock implementations
 // ============================================================================
 
-func TestMultiplexSender_Basic(t *testing.T) {
+type mockSender struct {
+	mu      sync.Mutex
+	sent    map[string][][]*message.Message
+	sendErr error
+}
+
+func newMockSender() *mockSender {
+	return &mockSender{
+		sent: make(map[string][][]*message.Message),
+	}
+}
+
+func (m *mockSender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sendErr != nil {
+		return m.sendErr
+	}
+	m.sent[topic] = append(m.sent[topic], msgs)
+	return nil
+}
+
+func (m *mockSender) getSent(topic string) [][]*message.Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sent[topic]
+}
+
+type mockReceiver struct {
+	mu       sync.Mutex
+	messages map[string][]*message.Message
+}
+
+func newMockReceiver() *mockReceiver {
+	return &mockReceiver{
+		messages: make(map[string][]*message.Message),
+	}
+}
+
+func (m *mockReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	msgs := m.messages[topic]
+	m.messages[topic] = nil
+	return msgs, nil
+}
+
+func (m *mockReceiver) addMessages(topic string, msgs ...*message.Message) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.messages[topic] = append(m.messages[topic], msgs...)
+}
+
+// ============================================================================
+// Sender Tests
+// ============================================================================
+
+func TestSender_Basic(t *testing.T) {
 	memorySender := newMockSender()
 	fallbackSender := newMockSender()
 
 	// Use "/" separator for prefix matching
-	selector := pubsub.PrefixSenderSelector("internal", memorySender)
-	multiplex := pubsub.NewMultiplexSender(selector, fallbackSender)
+	selector := multiplex.PrefixSenderSelector("internal", memorySender)
+	mux := multiplex.NewSender(selector, fallbackSender)
 
 	ctx := context.Background()
 	msg := message.New([]byte("test"), message.Attributes{})
@@ -42,7 +101,7 @@ func TestMultiplexSender_Basic(t *testing.T) {
 			memorySender.sent = make(map[string][][]*message.Message)
 			fallbackSender.sent = make(map[string][][]*message.Message)
 
-			err := multiplex.Send(ctx, tt.topic, []*message.Message{msg})
+			err := mux.Send(ctx, tt.topic, []*message.Message{msg})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -61,7 +120,7 @@ func TestMultiplexSender_Basic(t *testing.T) {
 	}
 }
 
-func TestMultiplexSender_NilFallbackPanics(t *testing.T) {
+func TestSender_NilFallbackPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
 			t.Error("expected panic for nil fallback")
@@ -69,38 +128,38 @@ func TestMultiplexSender_NilFallbackPanics(t *testing.T) {
 	}()
 
 	selector := func(topic string) pubsub.Sender { return nil }
-	pubsub.NewMultiplexSender(selector, nil) // Should panic
+	multiplex.NewSender(selector, nil) // Should panic
 }
 
-func TestMultiplexSender_ErrorPropagation(t *testing.T) {
+func TestSender_ErrorPropagation(t *testing.T) {
 	expectedErr := errors.New("send failed")
 
 	failingSender := newMockSender()
 	failingSender.sendErr = expectedErr
 
 	fallbackSender := newMockSender()
-	selector := pubsub.PrefixSenderSelector("fail", failingSender)
-	multiplex := pubsub.NewMultiplexSender(selector, fallbackSender)
+	selector := multiplex.PrefixSenderSelector("fail", failingSender)
+	mux := multiplex.NewSender(selector, fallbackSender)
 
 	ctx := context.Background()
 	msg := message.New([]byte("test"), message.Attributes{})
 
-	err := multiplex.Send(ctx, "fail/topic", []*message.Message{msg})
+	err := mux.Send(ctx, "fail/topic", []*message.Message{msg})
 	if err != expectedErr {
 		t.Errorf("expected error %v, got %v", expectedErr, err)
 	}
 }
 
 // ============================================================================
-// MultiplexReceiver Tests
+// Receiver Tests
 // ============================================================================
 
-func TestMultiplexReceiver_Basic(t *testing.T) {
+func TestReceiver_Basic(t *testing.T) {
 	memoryReceiver := newMockReceiver()
 	fallbackReceiver := newMockReceiver()
 
-	selector := pubsub.PrefixReceiverSelector("internal", memoryReceiver)
-	multiplex := pubsub.NewMultiplexReceiver(selector, fallbackReceiver)
+	selector := multiplex.PrefixReceiverSelector("internal", memoryReceiver)
+	mux := multiplex.NewReceiver(selector, fallbackReceiver)
 
 	ctx := context.Background()
 
@@ -120,7 +179,7 @@ func TestMultiplexReceiver_Basic(t *testing.T) {
 			expectedMsg := message.New([]byte("test-msg"), message.Attributes{})
 			tt.expectedReceiver.addMessages(tt.topic, expectedMsg)
 
-			msgs, err := multiplex.Receive(ctx, tt.topic)
+			msgs, err := mux.Receive(ctx, tt.topic)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -132,7 +191,7 @@ func TestMultiplexReceiver_Basic(t *testing.T) {
 	}
 }
 
-func TestMultiplexReceiver_NilFallbackPanics(t *testing.T) {
+func TestReceiver_NilFallbackPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
 			t.Error("expected panic for nil fallback")
@@ -140,7 +199,7 @@ func TestMultiplexReceiver_NilFallbackPanics(t *testing.T) {
 	}()
 
 	selector := func(topic string) pubsub.Receiver { return nil }
-	pubsub.NewMultiplexReceiver(selector, nil) // Should panic
+	multiplex.NewReceiver(selector, nil) // Should panic
 }
 
 // ============================================================================
@@ -171,16 +230,16 @@ func TestTopicExactMatch(t *testing.T) {
 			sender := newMockSender()
 			fallback := newMockSender()
 
-			selector := pubsub.NewTopicSenderSelector([]pubsub.TopicSenderRoute{
+			selector := multiplex.NewTopicSenderSelector([]multiplex.TopicSenderRoute{
 				{Topic: tt.routeTopic, Sender: sender},
 			})
 
-			multiplex := pubsub.NewMultiplexSender(selector, fallback)
+			mux := multiplex.NewSender(selector, fallback)
 
 			ctx := context.Background()
 			msg := message.New([]byte("test"), message.Attributes{})
 
-			err := multiplex.Send(ctx, tt.topic, []*message.Message{msg})
+			err := mux.Send(ctx, tt.topic, []*message.Message{msg})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -203,17 +262,17 @@ func TestExactMatch_FirstMatchWins(t *testing.T) {
 	sender2 := newMockSender()
 	fallback := newMockSender()
 
-	selector := pubsub.NewTopicSenderSelector([]pubsub.TopicSenderRoute{
+	selector := multiplex.NewTopicSenderSelector([]multiplex.TopicSenderRoute{
 		{Topic: "orders/created", Sender: sender1}, // Should match first
 		{Topic: "orders/created", Sender: sender2}, // Duplicate, should never be reached
 	})
 
-	multiplex := pubsub.NewMultiplexSender(selector, fallback)
+	mux := multiplex.NewSender(selector, fallback)
 
 	ctx := context.Background()
 	msg := message.New([]byte("test"), message.Attributes{})
 
-	err := multiplex.Send(ctx, "orders/created", []*message.Message{msg})
+	err := mux.Send(ctx, "orders/created", []*message.Message{msg})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -235,8 +294,8 @@ func TestPrefixSelector(t *testing.T) {
 	sender := newMockSender()
 	fallback := newMockSender()
 
-	selector := pubsub.PrefixSenderSelector("internal", sender)
-	multiplex := pubsub.NewMultiplexSender(selector, fallback)
+	selector := multiplex.PrefixSenderSelector("internal", sender)
+	mux := multiplex.NewSender(selector, fallback)
 
 	tests := []struct {
 		topic          string
@@ -257,7 +316,7 @@ func TestPrefixSelector(t *testing.T) {
 			sender.sent = make(map[string][][]*message.Message)
 			fallback.sent = make(map[string][][]*message.Message)
 
-			err := multiplex.Send(ctx, tt.topic, []*message.Message{msg})
+			err := mux.Send(ctx, tt.topic, []*message.Message{msg})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -280,12 +339,12 @@ func TestChainedSelectors(t *testing.T) {
 	internalSender := newMockSender()
 	fallback := newMockSender()
 
-	selector := pubsub.ChainSenderSelectors(
-		pubsub.PrefixSenderSelector("audit", auditSender),
-		pubsub.PrefixSenderSelector("internal", internalSender),
+	selector := multiplex.ChainSenderSelectors(
+		multiplex.PrefixSenderSelector("audit", auditSender),
+		multiplex.PrefixSenderSelector("internal", internalSender),
 	)
 
-	multiplex := pubsub.NewMultiplexSender(selector, fallback)
+	mux := multiplex.NewSender(selector, fallback)
 
 	tests := []struct {
 		topic          string
@@ -307,7 +366,7 @@ func TestChainedSelectors(t *testing.T) {
 			internalSender.sent = make(map[string][][]*message.Message)
 			fallback.sent = make(map[string][][]*message.Message)
 
-			err := multiplex.Send(ctx, tt.topic, []*message.Message{msg})
+			err := mux.Send(ctx, tt.topic, []*message.Message{msg})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -335,17 +394,17 @@ func TestChainedSelectors_FirstMatchWins(t *testing.T) {
 	fallback := newMockSender()
 
 	// Both match "internal/*" but first one should win
-	selector := pubsub.ChainSenderSelectors(
-		pubsub.PrefixSenderSelector("internal", sender1),
-		pubsub.PrefixSenderSelector("internal", sender2), // This should never be reached
+	selector := multiplex.ChainSenderSelectors(
+		multiplex.PrefixSenderSelector("internal", sender1),
+		multiplex.PrefixSenderSelector("internal", sender2), // This should never be reached
 	)
 
-	multiplex := pubsub.NewMultiplexSender(selector, fallback)
+	mux := multiplex.NewSender(selector, fallback)
 
 	ctx := context.Background()
 	msg := message.New([]byte("test"), message.Attributes{})
 
-	err := multiplex.Send(ctx, "internal/cache", []*message.Message{msg})
+	err := mux.Send(ctx, "internal/cache", []*message.Message{msg})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -368,8 +427,8 @@ func TestIntegration_WithPublisher(t *testing.T) {
 	externalBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
 
 	// Create multiplex sender
-	selector := pubsub.PrefixSenderSelector("internal", memoryBroker)
-	multiplexSender := pubsub.NewMultiplexSender(selector, externalBroker)
+	selector := multiplex.PrefixSenderSelector("internal", memoryBroker)
+	multiplexSender := multiplex.NewSender(selector, externalBroker)
 
 	// Create publisher using multiplex sender
 	publisher := pubsub.NewPublisher(

@@ -9,24 +9,25 @@ Applications often need to route messages to different broker implementations ba
 
 ## Decision
 
-Implement multiplexing layer for routing to different Senders/Receivers:
+Implement multiplexing layer in `pubsub/multiplex` package for routing to different Senders/Receivers:
 
 ```go
-type SenderSelector func(topic string) Sender
-type ReceiverSelector func(topic string) Receiver
+// pubsub/multiplex package
+type SenderSelector func(topic string) pubsub.Sender
+type ReceiverSelector func(topic string) pubsub.Receiver
 
-type MultiplexSender struct {
+type Sender struct {
     selector SenderSelector
-    fallback Sender  // Required, never nil
+    fallback pubsub.Sender  // Required, never nil
 }
 
-type MultiplexReceiver struct {
+type Receiver struct {
     selector ReceiverSelector
-    fallback Receiver  // Required, never nil
+    fallback pubsub.Receiver  // Required, never nil
 }
 
 // Helper selectors
-func PrefixSenderSelector(prefix string, sender Sender) SenderSelector
+func PrefixSenderSelector(prefix string, sender pubsub.Sender) SenderSelector
 func NewTopicSenderSelector(routes []TopicSenderRoute) SenderSelector
 func ChainSenderSelectors(selectors ...SenderSelector) SenderSelector
 ```
@@ -49,4 +50,4 @@ Pattern matching: "*" matches one segment, "**" matches multiple (dot-separated)
 ## Links
 
 - ADR 0010: Pub/Sub Package Structure
-- Package: `github.com/fxsml/gopipe/pubsub`
+- Package: `github.com/fxsml/gopipe/pubsub/multiplex`
