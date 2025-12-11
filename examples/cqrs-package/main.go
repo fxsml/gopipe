@@ -290,31 +290,27 @@ func main() {
 		marshaler,
 	)
 
-	commandRouter := cqrs.NewRouter(
-		cqrs.RouterConfig{
-			Concurrency: 10,
-			Recover:     true,
-		},
-		createOrderHandler,
-		chargePaymentHandler,
-		reserveInventoryHandler,
-		shipOrderHandler,
-	)
+	commandRouter := cqrs.NewRouter(cqrs.RouterConfig{
+		Concurrency: 10,
+		Recover:     true,
+	})
+	commandRouter.AddHandler(createOrderHandler)
+	commandRouter.AddHandler(chargePaymentHandler)
+	commandRouter.AddHandler(reserveInventoryHandler)
+	commandRouter.AddHandler(shipOrderHandler)
 
 	// ========================================================================
 	// Event Handlers (Side Effects)
 	// ========================================================================
 
-	sideEffectsRouter := cqrs.NewRouter(
-		cqrs.RouterConfig{
-			Concurrency: 20,
-			Recover:     true,
-		},
-		cqrs.NewEventHandler(handleOrderCreatedEmail, cqrs.Match(cqrs.MatchSubject("OrderCreated"), cqrs.MatchType("event")), marshaler),
-		cqrs.NewEventHandler(handleOrderCreatedAnalytics, cqrs.Match(cqrs.MatchSubject("OrderCreated"), cqrs.MatchType("event")), marshaler),
-		cqrs.NewEventHandler(handlePaymentChargedAnalytics, cqrs.Match(cqrs.MatchSubject("PaymentCharged"), cqrs.MatchType("event")), marshaler),
-		cqrs.NewEventHandler(handleOrderShippedEmail, cqrs.Match(cqrs.MatchSubject("OrderShipped"), cqrs.MatchType("event")), marshaler),
-	)
+	sideEffectsRouter := cqrs.NewRouter(cqrs.RouterConfig{
+		Concurrency: 20,
+		Recover:     true,
+	})
+	sideEffectsRouter.AddHandler(cqrs.NewEventHandler(handleOrderCreatedEmail, cqrs.Match(cqrs.MatchSubject("OrderCreated"), cqrs.MatchType("event")), marshaler))
+	sideEffectsRouter.AddHandler(cqrs.NewEventHandler(handleOrderCreatedAnalytics, cqrs.Match(cqrs.MatchSubject("OrderCreated"), cqrs.MatchType("event")), marshaler))
+	sideEffectsRouter.AddHandler(cqrs.NewEventHandler(handlePaymentChargedAnalytics, cqrs.Match(cqrs.MatchSubject("PaymentCharged"), cqrs.MatchType("event")), marshaler))
+	sideEffectsRouter.AddHandler(cqrs.NewEventHandler(handleOrderShippedEmail, cqrs.Match(cqrs.MatchSubject("OrderShipped"), cqrs.MatchType("event")), marshaler))
 
 	// ========================================================================
 	// Saga Coordinator
@@ -329,10 +325,8 @@ func main() {
 		},
 	)
 
-	sagaRouter := cqrs.NewRouter(
-		cqrs.RouterConfig{Recover: true},
-		sagaHandler,
-	)
+	sagaRouter := cqrs.NewRouter(cqrs.RouterConfig{Recover: true})
+	sagaRouter.AddHandler(sagaHandler)
 
 	// ========================================================================
 	// Wire Together

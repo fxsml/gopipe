@@ -482,17 +482,15 @@ func main() {
 	// Setup Router with Handlers
 	// ========================================================================
 
-	router := cqrs.NewRouter(
-		cqrs.RouterConfig{
-			Concurrency: 4,
-		},
-		// Command handlers
-		&CreateOrderHandler{storage: storage},
-		&ReserveInventoryHandler{storage: storage},
-		// Event handlers for cascading
-		&OrderCreatedHandler{storage: storage},
-		&InventoryReservedHandler{storage: storage},
-	)
+	router := cqrs.NewRouter(cqrs.RouterConfig{
+		Concurrency: 4,
+	})
+	// Command handlers
+	router.AddHandler(&CreateOrderHandler{storage: storage})
+	router.AddHandler(&ReserveInventoryHandler{storage: storage})
+	// Event handlers for cascading
+	router.AddHandler(&OrderCreatedHandler{storage: storage})
+	router.AddHandler(&InventoryReservedHandler{storage: storage})
 
 	// ========================================================================
 	// Setup Subscriber

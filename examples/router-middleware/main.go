@@ -149,20 +149,18 @@ func main() {
 
 	// Create router with configuration
 	// Middleware execution order: Validation → CorrelationID → MessageCorrelation → Logging → Metrics → Handler
-	router := cqrs.NewRouter(
-		cqrs.RouterConfig{
-			Concurrency: 2,
-			Recover:     true,
-			Middleware: []gopipe.MiddlewareFunc[*message.Message, *message.Message]{
-				ValidationMiddleware(),
-				CorrelationIDMiddleware(),   // Generate correlation ID if missing
-				middleware.MessageCorrelation(), // Propagate correlation ID to output messages
-				LoggingMiddleware(),
-				MetricsMiddleware(),
-			},
+	router := cqrs.NewRouter(cqrs.RouterConfig{
+		Concurrency: 2,
+		Recover:     true,
+		Middleware: []gopipe.MiddlewareFunc[*message.Message, *message.Message]{
+			ValidationMiddleware(),
+			CorrelationIDMiddleware(),   // Generate correlation ID if missing
+			middleware.MessageCorrelation(), // Propagate correlation ID to output messages
+			LoggingMiddleware(),
+			MetricsMiddleware(),
 		},
-		createOrderHandler,
-	)
+	})
+	router.AddHandler(createOrderHandler)
 
 	// Create test messages
 	commands := []CreateOrder{

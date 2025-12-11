@@ -85,7 +85,8 @@ func TestRouter_BasicRouting(t *testing.T) {
 		},
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{}, orderHandler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddHandler(orderHandler)
 
 	orderData, _ := json.Marshal(Order{ID: "order-1", Amount: 100})
 	in := channel.FromValues(
@@ -152,7 +153,9 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 		},
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{}, orderHandler, confirmHandler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddHandler(orderHandler)
+	router.AddHandler(confirmHandler)
 
 	orderData, _ := json.Marshal(Order{ID: "order-1", Amount: 50})
 	confirmData, _ := json.Marshal(Order{ID: "order-2", Amount: 75})
@@ -195,7 +198,8 @@ func TestRouter_NoMatchingHandler(t *testing.T) {
 		},
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{}, orderHandler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddHandler(orderHandler)
 
 	// Message with non-matching subject
 	data, _ := json.Marshal(Order{ID: "order-1"})
@@ -249,7 +253,8 @@ func TestRouter_HandlerError(t *testing.T) {
 		},
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddHandler(handler)
 
 	data, _ := json.Marshal(Order{ID: "order-1"})
 	var nackCalled bool
@@ -299,7 +304,8 @@ func TestRouter_UnmarshalError(t *testing.T) {
 		},
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddHandler(handler)
 
 	var nackCalled bool
 	var nackErr error
@@ -342,7 +348,8 @@ func TestRouter_AckOnSuccess(t *testing.T) {
 		},
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddHandler(handler)
 
 	data, _ := json.Marshal(Order{ID: "order-1"})
 	var ackCalled bool
@@ -390,7 +397,8 @@ func TestRouter_Concurrency(t *testing.T) {
 
 	router := cqrs.NewRouter(cqrs.RouterConfig{
 		Concurrency: 5,
-	}, handler)
+	})
+	router.AddHandler(handler)
 
 	in := make(chan *message.Message, 10)
 	for i := 0; i < 10; i++ {
@@ -435,7 +443,8 @@ func TestRouter_WithRecover(t *testing.T) {
 
 	router := cqrs.NewRouter(cqrs.RouterConfig{
 		Recover: true,
-	}, handler)
+	})
+	router.AddHandler(handler)
 
 	data, _ := json.Marshal(Order{ID: "order-1"})
 	in := channel.FromValues(message.New(data, nil))
@@ -467,7 +476,8 @@ func TestRouter_MultipleOutputMessages(t *testing.T) {
 		},
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddHandler(handler)
 
 	data, _ := json.Marshal(Order{ID: "order", Amount: 100})
 	in := channel.FromValues(message.New(data, nil))
@@ -506,7 +516,8 @@ func TestRouter_PreservesProperties(t *testing.T) {
 		},
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddHandler(handler)
 
 	data, _ := json.Marshal(Order{ID: "order-1"})
 	in := channel.FromValues(
@@ -615,7 +626,8 @@ func TestRouter_AddPipe_WithHandlers(t *testing.T) {
 		},
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{}, confirmHandler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddHandler(confirmHandler)
 	router.AddPipe(pipe, func(prop message.Attributes) bool {
 		subject, _ := prop.Subject()
 		return subject == "orders.double"
@@ -744,7 +756,8 @@ func TestRouter_AddPipe_NoMatch(t *testing.T) {
 		},
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddHandler(handler)
 	router.AddPipe(pipe, func(prop message.Attributes) bool {
 		subject, _ := prop.Subject()
 		return subject == "orders.double"
@@ -841,7 +854,8 @@ func TestRouter_AddHandlerAfterStart(t *testing.T) {
 		},
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddHandler(handler)
 
 	// AddHandler before Start should succeed
 	ok := router.AddHandler(handler)
@@ -876,7 +890,8 @@ func TestRouter_AddPipeAfterStart(t *testing.T) {
 		},
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddHandler(handler)
 
 	// Create a simple passthrough pipe for testing
 	pipe := gopipe.NewTransformPipe(func(ctx context.Context, msg *message.Message) (*message.Message, error) {
@@ -916,7 +931,8 @@ func TestRouter_StartTwice(t *testing.T) {
 		},
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
+	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router.AddHandler(handler)
 
 	// First Start should succeed
 	in1 := make(chan *message.Message)

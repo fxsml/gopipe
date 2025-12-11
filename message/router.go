@@ -33,11 +33,11 @@ type pipeEntry struct {
 	match func(attrs Attributes) bool
 }
 
-// NewRouter creates a router with the given configuration and handlers.
-func NewRouter(config RouterConfig, handlers ...Handler) *Router {
+// NewRouter creates a router with the given configuration.
+// Use AddHandler to add handlers before calling Start.
+func NewRouter(config RouterConfig) *Router {
 	return &Router{
-		handlers: handlers,
-		config:   config,
+		config: config,
 	}
 }
 
