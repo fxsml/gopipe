@@ -6,22 +6,30 @@ import (
 	"github.com/fxsml/gopipe/message"
 )
 
-// CommandMarshaler handles serialization and attribute transformation for commands and events.
-type CommandMarshaler interface {
+// Marshaler handles serialization of messages.
+type Marshaler interface {
 	// Marshal serializes a value to bytes
 	Marshal(v any) ([]byte, error)
-
-	// Unmarshal deserializes bytes into a value
-	Unmarshal(data []byte, v any) error
 
 	// Attributes returns message attributes for the given value
 	Attributes(v any) message.Attributes
 }
 
-// EventMarshaler handles deserialization of events for event handlers.
-type EventMarshaler interface {
+// Unmarshaler handles deserialization of messages.
+type Unmarshaler interface {
 	// Unmarshal deserializes bytes into a value
 	Unmarshal(data []byte, v any) error
+}
+
+// CommandMarshaler handles serialization and attribute transformation for commands and events.
+type CommandMarshaler interface {
+	Marshaler
+	Unmarshaler
+}
+
+// EventMarshaler handles deserialization of events for event handlers.
+type EventMarshaler interface {
+	Unmarshaler
 }
 
 // ============================================================================

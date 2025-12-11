@@ -829,14 +829,291 @@ func TestRouter_NilInput(t *testing.T) {
 	// Nil input channel
 	out := router.Start(ctx, nil)
 
-	// Should handle gracefully - either return nil or closed channel
+	// Should return nil with no generators
 	if out != nil {
-		var count int
-		for range out {
-			count++
+		t.Error("Expected nil output when input is nil and no generators")
+	}
+}
+
+// simpleGenerator implements message.Generator for testing
+type simpleGenerator struct {
+	msgs []*message.Message
+}
+
+func (g *simpleGenerator) Generate(ctx context.Context) <-chan *message.Message {
+	out := make(chan *message.Message)
+	go func() {
+		defer close(out)
+		for _, msg := range g.msgs {
+			select {
+			case <-ctx.Done():
+				return
+			case out <- msg:
+			}
 		}
-		if count != 0 {
-			t.Errorf("Expected 0 results with nil input, got %d", count)
+	}()
+	return out
+}
+
+func TestRouter_AddGenerator_Basic(t *testing.T) {
+	handler := message.NewHandler(
+		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+			out := message.Copy(msg, append(msg.Data, []byte("-processed")...))
+			return []*message.Message{out}, nil
+		},
+		func(attrs message.Attributes) bool { return true },
+	)
+
+	gen := &simpleGenerator{
+		msgs: []*message.Message{
+			message.New([]byte("gen1"), message.Attributes{message.AttrSubject: "test"}),
+			message.New([]byte("gen2"), message.Attributes{message.AttrSubject: "test"}),
+		},
+	}
+
+	router := message.NewRouter(message.RouterConfig{})
+	router.AddHandler(handler)
+	router.AddGenerator(gen)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	// Start with nil input - generator should still work
+	out := router.Start(ctx, nil)
+
+	var results []*message.Message
+	for msg := range out {
+		results = append(results, msg)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("Expected 2 results from generator, got %d", len(results))
+	}
+
+	if string(results[0].Data) != "gen1-processed" && string(results[1].Data) != "gen1-processed" {
+		t.Error("Expected 'gen1-processed' in results")
+	}
+	if string(results[0].Data) != "gen2-processed" && string(results[1].Data) != "gen2-processed" {
+		t.Error("Expected 'gen2-processed' in results")
+	}
+}
+
+func TestRouter_AddGenerator_WithInput(t *testing.T) {
+	handler := message.NewHandler(
+		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+			out := message.Copy(msg, append(msg.Data, []byte("-processed")...))
+			return []*message.Message{out}, nil
+		},
+		func(attrs message.Attributes) bool { return true },
+	)
+
+	gen := &simpleGenerator{
+		msgs: []*message.Message{
+			message.New([]byte("gen"), message.Attributes{message.AttrSubject: "test"}),
+		},
+	}
+
+	router := message.NewRouter(message.RouterConfig{})
+	router.AddHandler(handler)
+	router.AddGenerator(gen)
+
+	// Input channel also provides messages
+	in := channel.FromValues(
+		message.New([]byte("input"), message.Attributes{message.AttrSubject: "test"}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	out := router.Start(ctx, in)
+
+	var results []string
+	for msg := range out {
+		results = append(results, string(msg.Data))
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("Expected 2 results (1 from input, 1 from generator), got %d", len(results))
+	}
+
+	hasInput := false
+	hasGen := false
+	for _, r := range results {
+		if r == "input-processed" {
+			hasInput = true
 		}
+		if r == "gen-processed" {
+			hasGen = true
+		}
+	}
+
+	if !hasInput {
+		t.Error("Expected 'input-processed' in results")
+	}
+	if !hasGen {
+		t.Error("Expected 'gen-processed' in results")
+	}
+}
+
+func TestRouter_AddGenerator_Multiple(t *testing.T) {
+	handler := message.NewHandler(
+		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+			return []*message.Message{msg}, nil
+		},
+		func(attrs message.Attributes) bool { return true },
+	)
+
+	gen1 := &simpleGenerator{
+		msgs: []*message.Message{
+			message.New([]byte("gen1"), message.Attributes{message.AttrSubject: "test"}),
+		},
+	}
+	gen2 := &simpleGenerator{
+		msgs: []*message.Message{
+			message.New([]byte("gen2"), message.Attributes{message.AttrSubject: "test"}),
+		},
+	}
+
+	router := message.NewRouter(message.RouterConfig{})
+	router.AddHandler(handler)
+	router.AddGenerator(gen1)
+	router.AddGenerator(gen2)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	out := router.Start(ctx, nil)
+
+	var results []string
+	for msg := range out {
+		results = append(results, string(msg.Data))
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("Expected 2 results from generators, got %d", len(results))
+	}
+
+	hasGen1 := false
+	hasGen2 := false
+	for _, r := range results {
+		if r == "gen1" {
+			hasGen1 = true
+		}
+		if r == "gen2" {
+			hasGen2 = true
+		}
+	}
+
+	if !hasGen1 || !hasGen2 {
+		t.Errorf("Expected both 'gen1' and 'gen2' in results, got %v", results)
+	}
+}
+
+func TestRouter_AddGenerator_WithPipe(t *testing.T) {
+	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+		out := message.Copy(msg, append(msg.Data, []byte("-piped")...))
+		return []*message.Message{out}, nil
+	})
+
+	handler := message.NewHandler(
+		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+			out := message.Copy(msg, append(msg.Data, []byte("-handled")...))
+			return []*message.Message{out}, nil
+		},
+		func(attrs message.Attributes) bool { return true },
+	)
+
+	gen := &simpleGenerator{
+		msgs: []*message.Message{
+			message.New([]byte("gen-pipe"), message.Attributes{message.AttrSubject: "pipe-input"}),
+			message.New([]byte("gen-handler"), message.Attributes{message.AttrSubject: "other"}),
+		},
+	}
+
+	router := message.NewRouter(message.RouterConfig{})
+	router.AddHandler(handler)
+	router.AddPipe(message.NewPipe(pipe, message.MatchSubject("pipe-input")))
+	router.AddGenerator(gen)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	out := router.Start(ctx, nil)
+
+	results := make(map[string]bool)
+	for msg := range out {
+		results[string(msg.Data)] = true
+	}
+
+	if !results["gen-pipe-piped"] {
+		t.Error("Expected 'gen-pipe-piped' in results")
+	}
+	if !results["gen-handler-handled"] {
+		t.Error("Expected 'gen-handler-handled' in results")
+	}
+}
+
+func TestRouter_AddGeneratorAfterStart(t *testing.T) {
+	gen := &simpleGenerator{
+		msgs: []*message.Message{
+			message.New([]byte("test"), nil),
+		},
+	}
+
+	router := message.NewRouter(message.RouterConfig{})
+
+	// AddGenerator before Start should succeed
+	ok := router.AddGenerator(gen)
+	if !ok {
+		t.Error("AddGenerator before Start should return true")
+	}
+
+	// Start the router
+	in := make(chan *message.Message)
+	close(in)
+	router.Start(context.Background(), in)
+
+	// AddGenerator after Start should fail
+	ok = router.AddGenerator(gen)
+	if ok {
+		t.Error("AddGenerator after Start should return false")
+	}
+}
+
+func TestRouter_NilInputWithGenerator(t *testing.T) {
+	handler := message.NewHandler(
+		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+			return []*message.Message{msg}, nil
+		},
+		func(attrs message.Attributes) bool { return true },
+	)
+
+	gen := &simpleGenerator{
+		msgs: []*message.Message{
+			message.New([]byte("from-generator"), nil),
+		},
+	}
+
+	router := message.NewRouter(message.RouterConfig{})
+	router.AddHandler(handler)
+	router.AddGenerator(gen)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	// With a generator, nil input should still work
+	out := router.Start(ctx, nil)
+
+	if out == nil {
+		t.Fatal("Expected non-nil output when generator is present")
+	}
+
+	var count int
+	for range out {
+		count++
+	}
+
+	if count != 1 {
+		t.Errorf("Expected 1 result from generator, got %d", count)
 	}
 }

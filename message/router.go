@@ -16,16 +16,17 @@ type RouterConfig struct {
 	Timeout     time.Duration
 	Retry       *gopipe.RetryConfig
 	Recover     bool
-	Middleware  []gopipe.MiddlewareFunc[*Message, *Message]
+	Middleware  []MiddlewareFunc
 }
 
 // Router dispatches messages to handlers based on attribute matching.
 type Router struct {
-	mu       sync.Mutex
-	handlers []Handler
-	pipes    []Pipe
-	config   RouterConfig
-	started  bool
+	mu         sync.Mutex
+	handlers   []Handler
+	pipes      []Pipe
+	generators []Generator
+	config     RouterConfig
+	started    bool
 }
 
 // NewRouter creates a router with the given configuration.
@@ -62,28 +63,60 @@ func (r *Router) AddPipe(pipe Pipe) bool {
 	return true
 }
 
+// AddGenerator adds a generator that produces messages for the router.
+// Returns false if the router has already started.
+func (r *Router) AddGenerator(generator Generator) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.started {
+		return false
+	}
+	r.generators = append(r.generators, generator)
+	return true
+}
+
 // Start processes messages through matched handlers and pipes.
 // Can only be called once. Subsequent calls return nil.
-// Returns nil if msgs is nil.
+// Returns nil if msgs is nil and no generators are configured.
 func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Message {
-	if msgs == nil {
-		return nil
-	}
-
 	r.mu.Lock()
 	if r.started {
 		r.mu.Unlock()
 		return nil
 	}
 	r.started = true
-	// Take a snapshot of handlers and pipes under lock
+	// Take a snapshot of handlers, pipes, and generators under lock
 	handlers := r.handlers
 	pipes := r.pipes
+	generators := r.generators
 	r.mu.Unlock()
+
+	// Return nil if no input and no generators
+	if msgs == nil && len(generators) == 0 {
+		return nil
+	}
+
+	// Start all generators and merge with input
+	var allInputs []<-chan *Message
+	if msgs != nil {
+		allInputs = append(allInputs, msgs)
+	}
+	for _, gen := range generators {
+		allInputs = append(allInputs, gen.Generate(ctx))
+	}
+
+	// Merge all inputs into a single channel
+	var mergedInput <-chan *Message
+	if len(allInputs) == 1 {
+		mergedInput = allInputs[0]
+	} else {
+		mergedInput = channel.Merge(allInputs...)
+	}
 
 	// If no pipes, use simple handler-based routing
 	if len(pipes) == 0 {
-		return r.startWithHandlers(ctx, msgs, handlers)
+		return r.startWithHandlers(ctx, mergedInput, handlers)
 	}
 
 	// Start all pipes and create their input channels
@@ -109,7 +142,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Messag
 			close(handlerInput)
 		}()
 
-		for msg := range msgs {
+		for msg := range mergedInput {
 			// Check if message matches any pipe
 			matched := false
 			for i, pe := range pipes {
@@ -159,6 +192,7 @@ func (r *Router) startWithHandlers(ctx context.Context, msgs <-chan *Message, ha
 			if corr, ok := msg.Attributes.CorrelationID(); ok {
 				metadata[AttrCorrelationID] = corr
 			}
+
 			return metadata
 		}),
 	}
