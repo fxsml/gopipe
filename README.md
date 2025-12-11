@@ -486,3 +486,54 @@ func main() {
 }
 ```
 
+
+## Documentation
+
+### For Contributors
+
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Human contributor guide
+  - Development workflow
+  - Documentation requirements
+  - Testing guidelines
+  - Code style standards
+  - Pre-commit checklist
+
+### For AI Assistants
+
+- **[CLAUDE.md](CLAUDE.md)** - AI assistant procedures
+  - Feature branch documentation
+  - Systematic integration procedures
+  - Documentation requirements
+  - Git workflow and best practices
+
+### Architecture & Features
+
+- **[docs/features/](docs/features/)** - Feature documentation
+  - Feature integration guide
+  - 8 detailed feature documents
+  - Implementation examples
+  - Usage patterns
+
+- **[docs/adr/](docs/adr/)** - Architecture Decision Records
+  - ADR organization by status
+  - 18 architectural decisions
+  - Reading order guide
+  - Feature mapping
+
+### Changelog
+
+- **[CHANGELOG.md](CHANGELOG.md)** - Project changelog
+  - All features from feat/pubsub branch
+  - Breaking changes
+  - Migration guide
+  - Integration order
+
+## License
+
+[License information to be added]
+
+## Contributing
+
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+For questions or issues, please open an issue on GitHub.
