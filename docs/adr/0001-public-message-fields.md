@@ -1,6 +1,6 @@
 # ADR 0001: Public Message Fields
 
-**Date:** 2024-11-01
+**Date:** 2025-11-01
 **Status:** Implemented
 
 ## Context

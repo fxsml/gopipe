@@ -1,7 +1,10 @@
 # ADR 0011: CloudEvents Compatibility
 
-**Date:** 2024-12-08
+**Date:** 2025-12-08
 **Status:** Superseded by ADR 0018
+
+> **Historical Note:** This ADR proposed a separate CloudEvent type. The actual implementation
+> integrated CloudEvents attributes directly into `message.Attributes`. See ADR 0018.
 
 ## Context
 

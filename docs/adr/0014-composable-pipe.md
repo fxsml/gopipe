@@ -1,6 +1,6 @@
 # ADR 0014: Composable Pipe Architecture
 
-**Date:** 2024-10-01
+**Date:** 2025-10-01
 **Status:** Implemented
 
 ## Context

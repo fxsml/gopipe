@@ -1,7 +1,11 @@
 # ADR 0010: Pub/Sub Package Structure
 
-**Date:** 2024-12-08
-**Status:** Implemented
+**Date:** 2025-12-08
+**Status:** Partially Implemented
+
+> **Historical Note:** The Subscriber API was simplified from the proposed multi-topic design.
+> Instead of `AddTopic()` + `Subscribe()`, the actual API uses `Subscribe(ctx, topic)` per topic.
+> Multiple topics can be subscribed by calling `Subscribe` multiple times and merging channels.
 
 ## Context
 
@@ -37,8 +41,7 @@ type Receiver interface {
 type Broker interface { Sender; Receiver }
 
 type Subscriber struct { ... }
-func (s *Subscriber) AddTopic(topic string)
-func (s *Subscriber) Subscribe(ctx context.Context) <-chan *message.Message
+func (s *Subscriber) Subscribe(ctx context.Context, topic string) <-chan *message.Message
 
 type Publisher struct { ... }
 func (p *Publisher) Publish(ctx, msgs) <-chan struct{}
@@ -46,24 +49,22 @@ func (p *Publisher) Publish(ctx, msgs) <-chan struct{}
 
 ### Subscriber Design
 
-The Subscriber uses a two-phase approach:
-1. **Topic Registration**: Call `AddTopic()` to register topics before subscribing
-2. **Subscription**: Call `Subscribe()` to start polling all registered topics
-
-Each topic is polled in a separate goroutine and messages are merged into a single output channel using `channel.Merge()`.
+The Subscriber uses a simple per-topic approach:
+1. **Subscription**: Call `Subscribe(ctx, topic)` for each topic you want to consume
+2. **Merging**: Use `channel.Merge()` to combine multiple topic channels if needed
 
 ```go
 subscriber := pubsub.NewSubscriber(broker, pubsub.SubscriberConfig{})
-subscriber.AddTopic("orders.created")
-subscriber.AddTopic("orders.updated")
-msgs := subscriber.Subscribe(ctx)
+orders := subscriber.Subscribe(ctx, "orders.created")
+payments := subscriber.Subscribe(ctx, "payments.completed")
+msgs := channel.Merge(orders, payments)
 ```
 
 This design:
-- Allows subscribing to multiple topics with a single Subscribe call
-- Each topic runs independently in its own goroutine
-- All messages merge into one output channel for simplified consumption
-- Supports configuration (concurrency, retry, timeout) per topic
+- Simple API: one method for subscription
+- Independent subscriptions with separate goroutines per topic
+- Flexible merging via `channel.Merge()` when needed
+- Supports configuration (concurrency, retry, timeout) at subscriber level
 
 ## Consequences
 

@@ -1,7 +1,7 @@
 # Production Readiness Review - gopipe v1.0
 
-**Date:** 2024-12-10
-**Updated:** 2024-12-11 - Critical, high, and medium issues addressed
+**Date:** 2025-12-10
+**Updated:** 2025-12-11 - Critical, high, and medium issues addressed
 **Reviewer:** Comprehensive automated code review
 **Scope:** cqrs, middleware, message, pubsub packages + examples + documentation
 **Status:** ✅ PRODUCTION READY - Critical and high issues resolved
@@ -25,7 +25,7 @@ The gopipe project demonstrates **excellent architectural design** with clear se
 
 **Status:** Critical, high, and medium priority issues have been addressed.
 
-### Issues Resolved (2024-12-11)
+### Issues Resolved (2025-12-11)
 
 **Critical Issues Fixed:**
 - ✅ ChannelBroker.nextSubID() - Fixed invalid UTF-8 generation by using `fmt.Sprintf`
@@ -53,6 +53,13 @@ The gopipe project demonstrates **excellent architectural design** with clear se
 - ✅ Added TestRouter_AddPipeAfterStart - tests AddPipe returns false after Start
 - ✅ Added TestRouter_StartTwice - tests Start returns nil on second call
 - ✅ Added TestHTTPReceiver_WaitForAck - tests ack (200), nack (500), timeout (504), and disabled (201) scenarios
+- ✅ Added TestMessage_SharedAcking_Nack - tests shared acking nack behavior
+- ✅ Added TestNewAcking_Validation - tests Acking constructor validation
+
+**Low Priority Issues Fixed:**
+- ✅ ADR 0002, 0003, 0011 - Added historical notes about terminology changes
+- ✅ ADR 0010 - Updated to reflect actual Subscriber API implementation
+- ✅ All doc dates corrected from 2024 to 2025
 
 ---
 
@@ -442,34 +449,36 @@ if !ok {
 - [x] No SQL injection vectors
 - [x] No XSS vulnerabilities
 - [x] No command injection
-- [x] Proper input validation (mostly)
-- [ ] ⚠️ HTTP receiver needs rate limiting
-- [ ] ⚠️ HTTP receiver needs max body size limits
+- [x] Proper input validation
+- [ ] ⚠️ HTTP receiver needs rate limiting (v1.1)
+- [ ] ⚠️ HTTP receiver needs max body size limits (v1.1)
 
-### Reliability ⚠️
-- [ ] ❌ Memory leaks (HTTPReceiver)
-- [x] Proper error handling (mostly)
-- [ ] ⚠️ Missing error paths in tests
+### Reliability ✅
+- [x] Memory leaks fixed (HTTPReceiver max buffer limit)
+- [x] Proper error handling
+- [x] Error paths tested (handler unmarshal, router edge cases)
 - [x] Graceful shutdown (channel closing)
-- [ ] ⚠️ Resource cleanup needs verification
+- [x] Thread-safe Router (mutex, started flag)
+- [x] WaitForAck fully implemented with timeout
 
 ### Performance ✅
 - [x] No obvious performance issues
 - [x] Proper use of sync primitives
 - [x] Efficient channel patterns
 - [x] Minimal allocations
+- [x] Shared acking for batch messages
 
 ### Observability ⚠️
 - [x] Structured logging available
 - [x] Context propagation
-- [ ] ⚠️ No metrics/tracing built-in
-- [ ] ⚠️ No debug logging levels
+- [ ] ⚠️ No metrics/tracing built-in (v1.1)
+- [ ] ⚠️ No debug logging levels (v1.1)
 
 ### Maintainability ✅
 - [x] Clear package structure
 - [x] Good separation of concerns
 - [x] Consistent naming
-- [ ] ⚠️ Documentation needs updates
+- [x] Documentation updated (README, ADRs with historical notes)
 
 ---
 
@@ -548,19 +557,19 @@ if !ok {
 
 ## 9. RISK ASSESSMENT
 
-### High Risk 🔴
-- **Memory leaks in HTTPReceiver** - Could cause production outages
-- **Invalid UTF-8 generation** - Could cause JSON serialization failures
-- **Silent error handling** - Could lead to data corruption
+### High Risk 🔴 → ✅ RESOLVED
+- ~~**Memory leaks in HTTPReceiver**~~ - Fixed with max buffer limit
+- ~~**Invalid UTF-8 generation**~~ - Fixed with fmt.Sprintf
+- ~~**Silent error handling**~~ - Removed util.go
 
-### Medium Risk 🟠
-- **Missing tests** - Bugs may slip through to production
-- **Incomplete features** - User confusion (WaitForAck)
-- **Documentation outdated** - Poor developer experience
+### Medium Risk 🟠 → ✅ RESOLVED
+- ~~**Missing tests**~~ - Error path tests added
+- ~~**Incomplete features**~~ - WaitForAck fully implemented
+- ~~**Documentation outdated**~~ - README and ADRs updated
 
-### Low Risk 🟢
-- **Historical ADRs** - No impact on users
-- **Terminology in tests** - Cosmetic only
+### Low Risk 🟢 → ✅ RESOLVED
+- ~~**Historical ADRs**~~ - Added historical notes
+- ~~**Terminology in tests**~~ - Fixed
 
 ---
 
@@ -568,30 +577,33 @@ if !ok {
 
 ### Is This Ready for Production?
 
-**Answer: NO - Not yet** ❌
+**Answer: YES** ✅
 
-**Blockers:**
-1. 5 critical bugs must be fixed
-2. HTTPReceiver memory leak is a show-stopper
-3. Silent error handling in CreateCommand is dangerous
-4. Missing test coverage for error paths
+All critical, high, medium, and low priority issues have been addressed:
 
-**Timeline to Production Ready:**
-- Critical fixes: **1-2 days**
-- High-priority fixes: **1 day**
-- Testing: **1 day**
-- Documentation: **0.5 days**
+**Completed:**
+- ✅ All 5 critical bugs fixed
+- ✅ HTTPReceiver memory leak resolved (max buffer limit)
+- ✅ CreateCommand removed (functionality in examples)
+- ✅ Error path tests added
+- ✅ WaitForAck fully implemented
+- ✅ Router thread-safety added
+- ✅ Documentation updated with historical notes
+- ✅ ADRs updated to reflect actual implementation
 
-**Total: 3-4 days** to production-ready v1.0
+**Deferred to v1.1:**
+- ⚠️ HTTP rate limiting
+- ⚠️ HTTP max body size limits
+- ⚠️ Metrics/tracing hooks
+- ⚠️ Debug logging levels
 
-### What Would Make It Production Ready?
+### Production Readiness Achieved
 
-✅ **Fix all critical bugs** (mandatory)
-✅ **Fix high-priority API issues** (mandatory)
-✅ **Update critical documentation** (mandatory)
-✅ **Add error path tests** (mandatory)
-⚠️ **Add observability hooks** (strongly recommended)
-⚠️ **Add rate limiting to HTTP** (strongly recommended)
+✅ **All critical bugs fixed**
+✅ **All high-priority API issues resolved**
+✅ **Documentation updated**
+✅ **Error path tests added**
+✅ **Low priority ADR updates completed**
 
 ---
 
@@ -635,5 +647,5 @@ The gopipe project is **well-architected and close to production ready**. The is
 
 ---
 
-**Review completed:** 2024-12-10
+**Review completed:** 2025-12-10
 **Next review recommended:** After critical fixes are applied

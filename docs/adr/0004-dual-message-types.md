@@ -1,6 +1,6 @@
 # ADR 0004: Dual Message Types
 
-**Date:** 2024-12-07
+**Date:** 2025-12-07
 **Status:** Implemented
 
 ## Context

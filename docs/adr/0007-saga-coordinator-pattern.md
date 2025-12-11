@@ -1,6 +1,6 @@
 # ADR 0007: Saga Coordinator Pattern
 
-**Date:** 2024-12-08
+**Date:** 2025-12-08
 **Status:** Implemented
 
 ## Context

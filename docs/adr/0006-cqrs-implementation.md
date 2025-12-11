@@ -1,6 +1,6 @@
 # ADR 0006: CQRS Implementation
 
-**Date:** 2024-12-08
+**Date:** 2025-12-08
 **Status:** Implemented
 
 ## Context

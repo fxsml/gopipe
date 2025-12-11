@@ -1,6 +1,6 @@
 # ADR 0005: Remove Functional Options from Message Construction
 
-**Date:** 2024-12-07
+**Date:** 2025-12-07
 **Status:** Implemented
 
 ## Context

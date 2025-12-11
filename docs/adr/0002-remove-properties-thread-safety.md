@@ -1,7 +1,10 @@
 # ADR 0002: Remove Attributes Thread-Safety
 
-**Date:** 2024-11-01
+**Date:** 2025-11-01
 **Status:** Implemented
+
+> **Historical Note:** This ADR references an intermediate API with `*Props` suffix functions.
+> The current API uses methods on `Attributes` type (e.g., `msg.Attributes.ID()`).
 
 ## Context
 Attributes was a struct with `sync.RWMutex` and methods `Get/Set/Delete/Range`. This added complexity and overhead for most use cases where messages are not shared across goroutines.
