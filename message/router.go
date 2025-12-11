@@ -56,7 +56,7 @@ func (r *Router) AddHandler(handler Handler) bool {
 
 // AddPipe adds a pipe that receives matching messages.
 // Returns false if the router has already started.
-func (r *Router) AddPipe(pipe gopipe.Pipe[*Message, *Message], match func(attrs Attributes) bool) bool {
+func (r *Router) AddPipe(pipe Pipe, match func(attrs Attributes) bool) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
