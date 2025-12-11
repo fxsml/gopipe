@@ -1,4 +1,4 @@
-package pubsub_test
+package broker_test
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub"
+	"github.com/fxsml/gopipe/pubsub/broker"
 )
 
 // TestIOCompatibility ensures IO sender and receiver are compatible:
@@ -54,7 +54,7 @@ func TestIOCompatibility(t *testing.T) {
 			var buf bytes.Buffer
 
 			// Create sender and write messages
-			sender := pubsub.NewIOSender(&buf, pubsub.IOConfig{})
+			sender := broker.NewIOSender(&buf, broker.IOConfig{})
 			ctx := context.Background()
 
 			for _, msg := range tt.messages {
@@ -65,7 +65,7 @@ func TestIOCompatibility(t *testing.T) {
 
 			// Create receiver and read messages
 			reader := bytes.NewReader(buf.Bytes())
-			receiver := pubsub.NewIOReceiver(reader, pubsub.IOConfig{})
+			receiver := broker.NewIOReceiver(reader, broker.IOConfig{})
 
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
@@ -93,13 +93,13 @@ func TestIOCompatibility(t *testing.T) {
 	}
 }
 
-// TestIOPipeCompatibility tests IO broker with pipes for IPC
+// TestIOPipeCompatibility tests IO b with pipes for IPC
 func TestIOPipeCompatibility(t *testing.T) {
 	pr, pw := io.Pipe()
 	defer pr.Close()
 	defer pw.Close()
 
-	broker := pubsub.NewIOBroker(pr, pw, pubsub.IOConfig{})
+	b := broker.NewIOBroker(pr, pw, broker.IOConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -110,7 +110,7 @@ func TestIOPipeCompatibility(t *testing.T) {
 
 	// Receiver goroutine
 	go func() {
-		msgs, err := broker.Receive(ctx, "pipe/test")
+		msgs, err := b.Receive(ctx, "pipe/test")
 		if err != nil && err != context.Canceled && err != io.EOF {
 			t.Errorf("Receive error: %v", err)
 		}
@@ -121,7 +121,7 @@ func TestIOPipeCompatibility(t *testing.T) {
 	go func() {
 		time.Sleep(50 * time.Millisecond) // Let receiver start
 		msg := message.New([]byte(`"pipe message"`), message.Attributes{"via": "pipe"})
-		if err := broker.Send(ctx, "pipe/test", []*message.Message{msg}); err != nil {
+		if err := b.Send(ctx, "pipe/test", []*message.Message{msg}); err != nil {
 			t.Errorf("Send error: %v", err)
 		}
 		pw.Close() // Close to signal EOF
@@ -146,7 +146,7 @@ func TestIOPipeCompatibility(t *testing.T) {
 // - Properties are preserved through HTTP transport
 func TestHTTPCompatibility(t *testing.T) {
 	// Create HTTP receiver
-	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 100)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	defer receiver.Close()
 
 	// Start test HTTP server with receiver handler
@@ -154,7 +154,7 @@ func TestHTTPCompatibility(t *testing.T) {
 	defer server.Close()
 
 	// Create HTTP sender pointing to test server
-	sender := pubsub.NewHTTPSender(server.URL, pubsub.HTTPConfig{
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{
 		SendTimeout: time.Second,
 	})
 
@@ -212,13 +212,13 @@ func TestHTTPCompatibility(t *testing.T) {
 
 // TestHTTPTopicRouting tests HTTP sender/receiver with different topics
 func TestHTTPTopicRouting(t *testing.T) {
-	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 100)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	defer receiver.Close()
 
 	server := httptest.NewServer(receiver.Handler())
 	defer server.Close()
 
-	sender := pubsub.NewHTTPSender(server.URL, pubsub.HTTPConfig{})
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{})
 	ctx := context.Background()
 
 	// Send to different topics
@@ -256,7 +256,7 @@ func TestHTTPTopicRouting(t *testing.T) {
 func TestIOHTTPRoundTrip(t *testing.T) {
 	// Step 1: Write messages to IO
 	var buf bytes.Buffer
-	ioSender := pubsub.NewIOSender(&buf, pubsub.IOConfig{})
+	ioSender := broker.NewIOSender(&buf, broker.IOConfig{})
 	ctx := context.Background()
 
 	originalMsg := message.New([]byte(`"test message"`), message.Attributes{
@@ -270,7 +270,7 @@ func TestIOHTTPRoundTrip(t *testing.T) {
 
 	// Step 2: Read from IO
 	reader := bytes.NewReader(buf.Bytes())
-	ioReceiver := pubsub.NewIOReceiver(reader, pubsub.IOConfig{})
+	ioReceiver := broker.NewIOReceiver(reader, broker.IOConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -285,13 +285,13 @@ func TestIOHTTPRoundTrip(t *testing.T) {
 	}
 
 	// Step 3: Send via HTTP
-	httpReceiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 100)
+	httpReceiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	defer httpReceiver.Close()
 
 	server := httptest.NewServer(httpReceiver.Handler())
 	defer server.Close()
 
-	httpSender := pubsub.NewHTTPSender(server.URL, pubsub.HTTPConfig{})
+	httpSender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{})
 
 	// Transform message: add new property
 	transformedMsg := message.New(ioMessages[0].Data, message.Attributes{
@@ -331,7 +331,7 @@ func TestIOHTTPRoundTrip(t *testing.T) {
 // - Receive with specific topic filters by exact match
 func TestIOTopicFiltering(t *testing.T) {
 	var buf bytes.Buffer
-	sender := pubsub.NewIOSender(&buf, pubsub.IOConfig{})
+	sender := broker.NewIOSender(&buf, broker.IOConfig{})
 	ctx := context.Background()
 
 	// Write messages with different topics
@@ -349,7 +349,7 @@ func TestIOTopicFiltering(t *testing.T) {
 
 	t.Run("empty topic returns all messages", func(t *testing.T) {
 		reader := bytes.NewReader(buf.Bytes())
-		receiver := pubsub.NewIOReceiver(reader, pubsub.IOConfig{})
+		receiver := broker.NewIOReceiver(reader, broker.IOConfig{})
 
 		ctx, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
@@ -366,7 +366,7 @@ func TestIOTopicFiltering(t *testing.T) {
 
 	t.Run("specific topic filters by exact match", func(t *testing.T) {
 		reader := bytes.NewReader(buf.Bytes())
-		receiver := pubsub.NewIOReceiver(reader, pubsub.IOConfig{})
+		receiver := broker.NewIOReceiver(reader, broker.IOConfig{})
 
 		ctx, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
@@ -386,7 +386,7 @@ func TestIOTopicFiltering(t *testing.T) {
 
 	t.Run("non-matching topic returns empty", func(t *testing.T) {
 		reader := bytes.NewReader(buf.Bytes())
-		receiver := pubsub.NewIOReceiver(reader, pubsub.IOConfig{})
+		receiver := broker.NewIOReceiver(reader, broker.IOConfig{})
 
 		ctx, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
@@ -406,7 +406,7 @@ func TestIOTopicFiltering(t *testing.T) {
 // so they can be used for routing when republishing to a real broker.
 func TestIOTopicPreservation(t *testing.T) {
 	var buf bytes.Buffer
-	sender := pubsub.NewIOSender(&buf, pubsub.IOConfig{})
+	sender := broker.NewIOSender(&buf, broker.IOConfig{})
 	ctx := context.Background()
 
 	originalTopic := "orders.created"
@@ -418,7 +418,7 @@ func TestIOTopicPreservation(t *testing.T) {
 
 	// Read back and verify topic is preserved in attributes
 	reader := bytes.NewReader(buf.Bytes())
-	receiver := pubsub.NewIOReceiver(reader, pubsub.IOConfig{})
+	receiver := broker.NewIOReceiver(reader, broker.IOConfig{})
 
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()

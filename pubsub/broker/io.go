@@ -1,4 +1,4 @@
-package pubsub
+package broker
 
 // IO Broker - Debug and Management Tool
 //
@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/pubsub"
 	"github.com/fxsml/gopipe/pubsub/cloudevents"
 )
 
@@ -60,7 +61,6 @@ var (
 	// ErrUnmarshalFailed is returned when message unmarshalling fails.
 	ErrUnmarshalFailed = errors.New("unmarshal failed")
 )
-
 
 // Marshaler handles message serialization.
 type Marshaler interface {
@@ -301,10 +301,10 @@ type IOBroker struct {
 
 // Compile-time interface assertions
 var (
-	_ Sender   = (*IOSender)(nil)
-	_ Receiver = (*IOReceiver)(nil)
-	_ Sender   = (*IOBroker)(nil)
-	_ Receiver = (*IOBroker)(nil)
+	_ pubsub.Sender   = (*IOSender)(nil)
+	_ pubsub.Receiver = (*IOReceiver)(nil)
+	_ pubsub.Sender   = (*IOBroker)(nil)
+	_ pubsub.Receiver = (*IOBroker)(nil)
 )
 
 // NewIOBroker creates a broker that reads from r and writes to w.

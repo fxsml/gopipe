@@ -1,4 +1,4 @@
-package pubsub_test
+package broker_test
 
 import (
 	"bytes"
@@ -10,18 +10,18 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub"
+	"github.com/fxsml/gopipe/pubsub/broker"
 )
 
 func TestHTTPCloudEvents_BinaryMode(t *testing.T) {
-	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 10)
 	defer receiver.Close()
 
 	server := httptest.NewServer(receiver)
 	defer server.Close()
 
-	sender := pubsub.NewHTTPSender(server.URL, pubsub.HTTPConfig{
-		CloudEventsMode: pubsub.CloudEventsBinary,
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{
+		CloudEventsMode: broker.CloudEventsBinary,
 		ContentType:     "application/json",
 	})
 
@@ -77,14 +77,14 @@ func TestHTTPCloudEvents_BinaryMode(t *testing.T) {
 }
 
 func TestHTTPCloudEvents_BinaryMode_PercentEncoding(t *testing.T) {
-	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 10)
 	defer receiver.Close()
 
 	server := httptest.NewServer(receiver)
 	defer server.Close()
 
-	sender := pubsub.NewHTTPSender(server.URL, pubsub.HTTPConfig{
-		CloudEventsMode: pubsub.CloudEventsBinary,
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{
+		CloudEventsMode: broker.CloudEventsBinary,
 	})
 
 	ctx := context.Background()
@@ -123,14 +123,14 @@ func TestHTTPCloudEvents_BinaryMode_PercentEncoding(t *testing.T) {
 }
 
 func TestHTTPCloudEvents_StructuredMode(t *testing.T) {
-	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 10)
 	defer receiver.Close()
 
 	server := httptest.NewServer(receiver)
 	defer server.Close()
 
-	sender := pubsub.NewHTTPSender(server.URL, pubsub.HTTPConfig{
-		CloudEventsMode: pubsub.CloudEventsStructured,
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{
+		CloudEventsMode: broker.CloudEventsStructured,
 	})
 
 	ctx := context.Background()
@@ -181,14 +181,14 @@ func TestHTTPCloudEvents_StructuredMode(t *testing.T) {
 }
 
 func TestHTTPCloudEvents_BatchMode(t *testing.T) {
-	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 10)
 	defer receiver.Close()
 
 	server := httptest.NewServer(receiver)
 	defer server.Close()
 
-	sender := pubsub.NewHTTPSender(server.URL, pubsub.HTTPConfig{
-		CloudEventsMode: pubsub.CloudEventsBatch,
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{
+		CloudEventsMode: broker.CloudEventsBatch,
 	})
 
 	ctx := context.Background()
@@ -237,14 +237,14 @@ func TestHTTPCloudEvents_BatchMode(t *testing.T) {
 }
 
 func TestHTTPCloudEvents_ExtensionAttributes(t *testing.T) {
-	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 10)
 	defer receiver.Close()
 
 	server := httptest.NewServer(receiver)
 	defer server.Close()
 
-	sender := pubsub.NewHTTPSender(server.URL, pubsub.HTTPConfig{
-		CloudEventsMode: pubsub.CloudEventsBinary,
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{
+		CloudEventsMode: broker.CloudEventsBinary,
 	})
 
 	ctx := context.Background()
@@ -297,14 +297,14 @@ func TestHTTPCloudEvents_ExtensionAttributes(t *testing.T) {
 }
 
 func TestHTTPCloudEvents_DefaultAttributes(t *testing.T) {
-	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 10)
 	defer receiver.Close()
 
 	server := httptest.NewServer(receiver)
 	defer server.Close()
 
-	sender := pubsub.NewHTTPSender(server.URL, pubsub.HTTPConfig{
-		CloudEventsMode: pubsub.CloudEventsBinary,
+	sender := broker.NewHTTPSender(server.URL, broker.HTTPConfig{
+		CloudEventsMode: broker.CloudEventsBinary,
 	})
 
 	ctx := context.Background()
@@ -350,7 +350,7 @@ func TestHTTPCloudEvents_DefaultAttributes(t *testing.T) {
 }
 
 func TestHTTPCloudEvents_ReceiverDetectsMode(t *testing.T) {
-	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 10)
 	defer receiver.Close()
 
 	server := httptest.NewServer(receiver)
@@ -464,7 +464,7 @@ func TestHTTPCloudEvents_ReceiverDetectsMode(t *testing.T) {
 }
 
 func TestHTTPCloudEvents_InvalidEvent(t *testing.T) {
-	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 10)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 10)
 	defer receiver.Close()
 
 	server := httptest.NewServer(receiver)

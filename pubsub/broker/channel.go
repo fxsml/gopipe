@@ -1,4 +1,4 @@
-package pubsub
+package broker
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/pubsub"
 )
 
 var (
@@ -64,8 +65,8 @@ type ChannelBroker struct {
 
 // Compile-time interface assertions
 var (
-	_ Sender   = (*ChannelBroker)(nil)
-	_ Receiver = (*ChannelBroker)(nil)
+	_ pubsub.Sender   = (*ChannelBroker)(nil)
+	_ pubsub.Receiver = (*ChannelBroker)(nil)
 )
 
 // NewChannelBroker creates a new in-process message broker.

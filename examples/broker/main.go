@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub"
+	"github.com/fxsml/gopipe/pubsub/broker"
 )
 
 func main() {
@@ -17,7 +17,7 @@ func main() {
 	fmt.Println()
 
 	// Create channel broker with configuration
-	b := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{
+	b := broker.NewChannelBroker(broker.ChannelBrokerConfig{
 		CloseTimeout: 5 * time.Second,
 		SendTimeout:  time.Second,
 		BufferSize:   50,
@@ -64,7 +64,7 @@ func main() {
 	fmt.Println("\n=== All examples completed ===")
 }
 
-func basicPubSubSubscribe(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.WaitGroup) {
+func basicPubSubSubscribe(ctx context.Context, b *broker.ChannelBroker, wg *sync.WaitGroup) {
 	// Subscribe FIRST - returns a channel for real-time message delivery
 	ch := b.Subscribe(ctx, "greetings")
 
@@ -97,7 +97,7 @@ func basicPubSubSubscribe(ctx context.Context, b *pubsub.ChannelBroker, wg *sync
 	})
 }
 
-func multipleSubscribers(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.WaitGroup) {
+func multipleSubscribers(ctx context.Context, b *broker.ChannelBroker, wg *sync.WaitGroup) {
 	// Create multiple subscribers for the same topic
 	ch1 := b.Subscribe(ctx, "events")
 	ch2 := b.Subscribe(ctx, "events")
@@ -130,7 +130,7 @@ func multipleSubscribers(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.
 	})
 }
 
-func hierarchicalTopics(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.WaitGroup) {
+func hierarchicalTopics(ctx context.Context, b *broker.ChannelBroker, wg *sync.WaitGroup) {
 	// Subscribe to specific topics (exact match only - no wildcards)
 	chOrders := b.Subscribe(ctx, "orders/created")
 	chUpdates := b.Subscribe(ctx, "orders/updated")
@@ -177,7 +177,7 @@ func hierarchicalTopics(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.W
 	})
 }
 
-func receivePollingMode(ctx context.Context, b *pubsub.ChannelBroker, wg *sync.WaitGroup) {
+func receivePollingMode(ctx context.Context, b *broker.ChannelBroker, wg *sync.WaitGroup) {
 	// Receive() creates a temporary subscription and polls for ~100ms
 	// Use this for one-shot polling or compatibility with existing code
 
@@ -212,7 +212,7 @@ func ioBrokerExample() {
 
 	// Write messages to a buffer (could be a file)
 	var buf bytes.Buffer
-	sender := pubsub.NewIOSender(&buf, pubsub.IOConfig{
+	sender := broker.NewIOSender(&buf, broker.IOConfig{
 		Source: "gopipe://examples/broker", // CloudEvents source identifier
 	})
 
@@ -233,7 +233,7 @@ func ioBrokerExample() {
 
 	// Read messages back (simulating reading from a file)
 	reader := bytes.NewReader(buf.Bytes())
-	receiver := pubsub.NewIOReceiver(reader, pubsub.IOConfig{})
+	receiver := broker.NewIOReceiver(reader, broker.IOConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -257,7 +257,7 @@ func ioBrokerPipeExample() {
 	// Messages are streamed as CloudEvents JSONL between reader and writer
 
 	pr, pw := io.Pipe()
-	b := pubsub.NewIOBroker(pr, pw, pubsub.IOConfig{
+	b := broker.NewIOBroker(pr, pw, broker.IOConfig{
 		Source: "gopipe://ipc/sender", // CloudEvents source identifier
 	})
 
@@ -301,7 +301,7 @@ func httpBrokerExample() {
 	// - Batch mode: application/cloudevents-batch+json Content-Type
 	// Returns 201 Created on success (or 200 if WaitForAck is true)
 
-	receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 100)
+	receiver := broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 	defer receiver.Close()
 
 	// The receiver implements http.Handler and auto-detects CloudEvents mode

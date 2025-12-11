@@ -1,4 +1,4 @@
-package pubsub
+package broker
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/pubsub"
 	"github.com/fxsml/gopipe/pubsub/cloudevents"
 )
 
@@ -131,7 +132,6 @@ func (c HTTPConfig) defaults() HTTPConfig {
 	return cfg
 }
 
-
 // percentEncodeHeader encodes a string value for use in HTTP headers per CloudEvents spec.
 // Characters outside printable ASCII (U+0021-U+007E) and space, quote, percent are percent-encoded.
 func percentEncodeHeader(s string) string {
@@ -166,7 +166,7 @@ type HTTPSender struct {
 }
 
 // Compile-time interface assertion
-var _ Sender = (*HTTPSender)(nil)
+var _ pubsub.Sender = (*HTTPSender)(nil)
 
 // NewHTTPSender creates a sender that POSTs messages to the given URL.
 func NewHTTPSender(url string, config HTTPConfig) *HTTPSender {
@@ -362,7 +362,6 @@ func (s *HTTPSender) doRequest(req *http.Request) error {
 	return nil
 }
 
-
 // topicMessage holds a message with its topic.
 type topicMessage struct {
 	topic string
@@ -371,17 +370,17 @@ type topicMessage struct {
 
 // HTTPReceiver receives messages via HTTP POST requests.
 type HTTPReceiver struct {
-	config          HTTPConfig
-	mu              sync.Mutex
-	messages        map[string][]topicMessage // keyed by topic
-	readIndex       map[string]int            // track read position per topic
-	closed          bool
-	bufferSize      int
+	config            HTTPConfig
+	mu                sync.Mutex
+	messages          map[string][]topicMessage // keyed by topic
+	readIndex         map[string]int            // track read position per topic
+	closed            bool
+	bufferSize        int
 	maxBufferPerTopic int
 }
 
 // Compile-time interface assertion
-var _ Receiver = (*HTTPReceiver)(nil)
+var _ pubsub.Receiver = (*HTTPReceiver)(nil)
 
 // NewHTTPReceiver creates a receiver that accepts messages via HTTP POST.
 // The bufferSize parameter controls the initial buffer capacity.

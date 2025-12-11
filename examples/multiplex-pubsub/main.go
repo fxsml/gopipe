@@ -9,6 +9,7 @@ import (
 
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/pubsub"
+	"github.com/fxsml/gopipe/pubsub/broker"
 )
 
 func main() {
@@ -39,8 +40,8 @@ func example1_PrefixRouting() {
 	fmt.Println()
 
 	// Create brokers
-	memoryBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
-	externalBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
+	memoryBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
+	externalBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
 
 	// Create multiplex sender with routing logic
 	selector := pubsub.PrefixSenderSelector("internal", memoryBroker)
@@ -129,9 +130,9 @@ func example2_ExactRouting() {
 	fmt.Println()
 
 	// Create brokers for different purposes
-	memoryBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
-	auditBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
-	natsBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{}) // Simulated NATS
+	memoryBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
+	auditBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
+	natsBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{}) // Simulated NATS
 
 	// Define routing rules (exact match only)
 	selector := pubsub.NewTopicSenderSelector([]pubsub.TopicSenderRoute{
@@ -189,9 +190,9 @@ func example3_ChainedSelectors() {
 	fmt.Println()
 
 	// Create brokers
-	auditBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
-	internalBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
-	externalBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
+	auditBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
+	internalBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
+	externalBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
 
 	// Chain selectors (first match wins)
 	selector := pubsub.ChainSenderSelectors(
@@ -204,8 +205,8 @@ func example3_ChainedSelectors() {
 	ctx := context.Background()
 
 	testCases := []struct {
-		topic   string
-		broker  string
+		topic  string
+		broker string
 	}{
 		{"audit/security", "Audit"},
 		{"audit/financial", "Audit"},
@@ -244,8 +245,8 @@ func example4_MultiplexReceiver() {
 	fmt.Println()
 
 	// Create brokers and populate with messages
-	memoryBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
-	externalBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
+	memoryBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
+	externalBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

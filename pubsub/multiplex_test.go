@@ -8,6 +8,7 @@ import (
 
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/pubsub"
+	"github.com/fxsml/gopipe/pubsub/broker"
 )
 
 // ============================================================================
@@ -363,8 +364,8 @@ func TestChainedSelectors_FirstMatchWins(t *testing.T) {
 
 func TestIntegration_WithPublisher(t *testing.T) {
 	// Create brokers
-	memoryBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
-	externalBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
+	memoryBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
+	externalBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
 
 	// Create multiplex sender
 	selector := pubsub.PrefixSenderSelector("internal", memoryBroker)
@@ -400,8 +401,8 @@ func TestIntegration_WithPublisher(t *testing.T) {
 
 func TestIntegration_WithSubscriber(t *testing.T) {
 	// Create brokers
-	memoryBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
-	externalBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
+	memoryBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
+	externalBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

@@ -52,6 +52,7 @@ import (
 	"github.com/fxsml/gopipe/cqrs"
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/pubsub"
+	"github.com/fxsml/gopipe/pubsub/broker"
 )
 
 // ============================================================================
@@ -370,7 +371,7 @@ func startWebhookServer(ctx context.Context, addr string, ready chan<- struct{},
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		topic := r.Header.Get(pubsub.HeaderTopic)
+		topic := r.Header.Get(broker.HeaderTopic)
 		subject := r.Header.Get("X-Gopipe-Prop-Gopipe-Message-Subject")
 
 		fmt.Println()
@@ -435,15 +436,15 @@ func main() {
 
 	// 1. HTTP Receiver for incoming commands (port 8080)
 	// NOTE: We create it but end up not using it due to design issues (see below)
-	_ = pubsub.NewHTTPReceiver(pubsub.HTTPConfig{}, 100)
+	_ = broker.NewHTTPReceiver(broker.HTTPConfig{}, 100)
 
 	// 2. Channel Broker for internal messaging
-	channelBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{
+	channelBroker := broker.NewChannelBroker(broker.ChannelBrokerConfig{
 		BufferSize: 100,
 	})
 
 	// 3. HTTP Sender for webhooks (to port 8081)
-	webhookSender := pubsub.NewHTTPSender("http://localhost:8081/webhook", pubsub.HTTPConfig{
+	webhookSender := broker.NewHTTPSender("http://localhost:8081/webhook", broker.HTTPConfig{
 		SendTimeout: 5 * time.Second,
 	})
 
@@ -524,9 +525,9 @@ func main() {
 		// Extract topic from path: /commands/create-order -> commands/create-order
 		topic := strings.TrimPrefix(r.URL.Path, "/")
 		if topic == "" {
-			topic = r.Header.Get(pubsub.HeaderTopic)
+			topic = r.Header.Get(broker.HeaderTopic)
 		}
-		r.Header.Set(pubsub.HeaderTopic, topic)
+		r.Header.Set(broker.HeaderTopic, topic)
 
 		log.Printf("[HTTP] Received request for topic: %s", topic)
 
