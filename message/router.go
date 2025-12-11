@@ -192,6 +192,18 @@ func (r *Router) startWithHandlers(ctx context.Context, msgs <-chan *Message, ha
 			if corr, ok := msg.Attributes.CorrelationID(); ok {
 				metadata[AttrCorrelationID] = corr
 			}
+			if subject, ok := msg.Attributes.Subject(); ok {
+				metadata[AttrSubject] = subject
+			}
+			if eventType, ok := msg.Attributes.Type(); ok {
+				metadata[AttrType] = eventType
+			}
+			if source, ok := msg.Attributes.Source(); ok {
+				metadata[AttrSource] = source
+			}
+			if eventTime, ok := msg.Attributes.EventTime(); ok {
+				metadata[AttrTime] = eventTime
+			}
 
 			return metadata
 		}),
