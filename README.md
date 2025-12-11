@@ -1,23 +1,67 @@
 # gopipe
 
-A lightweight, generic Go library for orchestrating complex data pipelines using composable pipes.
-`gopipe` provides powerful orchestration primitives for building robust, concurrent, and context-aware pipelines.
-The `channel` package offers low-level helpers for basic operations and wiring.
+A lightweight, generic Go library for building composable data pipelines, message routers, and pub/sub systems.
+
+gopipe provides three core packages for building robust, concurrent applications:
+
+- **gopipe**: Composable pipe orchestration with concurrency, batching, and error handling
+- **channel**: Channel utilities (Merge, Filter, Transform, GroupBy, etc.)
+- **message**: Message handling with pub/sub, routing, CQRS, and CloudEvents support
+
+## Core Components
+
+### gopipe - Pipe Orchestration
+
+The foundation is simple pipe composition:
+```go
+type Pipe[In, Out any] func(ctx context.Context, in <-chan In) <-chan Out
+```
+
+Build robust pipelines with:
+- **Concurrency & Batching**: Parallel processing and batching
+- **Context-awareness**: Native cancellation and timeout support
+- **Error Handling**: Retry, recover, and error propagation
+- **Middleware**: Custom logging and metrics
+- **Zero Dependencies**: 100% Go standard library
+
+### Channel Package
+
+Utilities for channel operations:
+- **Transform**: `Filter`, `Transform`, `Process`
+- **Routing**: `Route`, `Merge`, `Broadcast`
+- **Batching**: `Collect`, `Buffer`, `GroupBy`
+- **Lifecycle**: `Sink`, `Drain`, `Cancel`
+
+See [examples/](examples/) for usage patterns.
+
+### Message Package
+
+Complete message handling system:
+- **Pub/Sub**: Publisher/Subscriber with multiple broker implementations
+- **Routing**: Attribute-based message dispatch with handlers
+- **CQRS**: Type-safe command and event handlers
+- **CloudEvents**: CloudEvents v1.0.2 HTTP Protocol Binding support
+- **Middleware**: Correlation IDs, logging, and custom middleware
+
+**Broker Implementations:**
+- `broker.NewChannelBroker()` - In-memory for testing
+- `broker.NewHTTPSender/Receiver()` - HTTP webhooks with CloudEvents
+- `broker.NewIOBroker()` - Debug/logging broker (JSONL)
+
+**Advanced Features:**
+- [Message Router](docs/features/04-message-router.md) - Attribute-based routing
+- [CQRS Handlers](docs/features/05-message-cqrs.md) - Command/event patterns
+- [CloudEvents](docs/features/06-message-cloudevents.md) - CloudEvents support
+- [Multiplex](docs/features/07-message-multiplex.md) - Topic-based routing
+- [Middleware](docs/features/08-middleware-package.md) - Reusable middleware
 
 ## Why gopipe?
 
-Manual channel wiring in Go is error-prone and hard to scale for complex workflows.  
-**gopipe** abstracts away the boilerplate, letting you focus on your business logic while providing:
-
-- **Orchestration**: Compose multi-stage pipelines with clear configuration.
-- **Context-awareness**: Native support for cancellation, timeouts, and context propagation.
-- **Concurrency & Batching**: Easily parallelize and batch processing.
-- **Middleware & Logging**: Integrate custom middleware, logging, and metrics.
-- **Error Handling**: Robust error and panic recovery.
-- **Message Acknowledgment**: Automatic ack/nack for reliable message broker integration.
-- **Basic Channel Operations**: The `channel` package provides basic channel operations without abstraction overhead.
-- **Generic API**: Works with any data type (Go 1.18+).
-- **Zero Dependencies**: 100% Go, no external dependencies.
+Manual channel wiring is error-prone and doesn't scale. gopipe provides:
+- **Type-safe pipelines**: Generic API works with any data type
+- **Battle-tested patterns**: Pub/sub, CQRS, event sourcing
+- **Production-ready**: Comprehensive testing and CloudEvents compliance
+- **Zero dependencies**: Pure Go, no external dependencies
 
 ## Full Feature List of Pipe Options
 
@@ -305,6 +349,68 @@ func main() {
 	})
 }
 ```
+
+### Message Pub/Sub with CloudEvents
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/fxsml/gopipe/channel"
+	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/message/broker"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// Create in-memory broker
+	brk := broker.NewChannelBroker()
+
+	// Setup publisher with batching
+	pub := message.NewPublisher(brk, message.PublisherConfig{
+		MaxBatchSize: 100,
+		MaxDuration:  time.Second,
+	})
+
+	// Setup subscriber
+	sub := message.NewSubscriber(brk, message.SubscriberConfig{
+		PollInterval: 100 * time.Millisecond,
+	})
+
+	// Subscribe to topic
+	msgs := sub.Subscribe(ctx, "orders")
+
+	// Publish messages
+	pub.Publish(ctx, []*message.Message{
+		{
+			Data: []byte(`{"orderId": "123", "amount": 100}`),
+			Attributes: message.Attributes{
+				message.AttrID:      "evt-1",
+				message.AttrType:    "order.created",
+				message.AttrSubject: "orders",
+			},
+		},
+	})
+
+	// Consume messages
+	timeout := time.After(2 * time.Second)
+	select {
+	case msg := <-msgs:
+		fmt.Printf("Received: %s (type: %s)\n",
+			string(msg.Data),
+			msg.Attributes[message.AttrType])
+	case <-timeout:
+		fmt.Println("No messages received")
+	}
+}
+```
+
+See [docs/features/03-message-pubsub.md](docs/features/03-message-pubsub.md) for more pub/sub patterns.
 
 ### Message Acknowledgment for Reliable Processing
 

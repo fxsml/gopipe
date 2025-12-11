@@ -431,3 +431,225 @@ go build ./examples/...
 **Document Version**: 1.0
 **Last Updated**: 2025-12-11
 **Maintainer**: gopipe team
+
+## Documentation Requirements
+
+**CRITICAL**: These requirements must be followed for ALL commits.
+
+### Before Pushing ANY Code
+
+1. **Check Documentation Completeness**:
+   - [ ] Feature documentation exists in `docs/features/`
+   - [ ] CHANGELOG.md updated
+   - [ ] ADRs created for architectural decisions
+   - [ ] README.md updated for core component changes
+   - [ ] Public API has precise, concise godoc
+
+2. **Verify Documentation Quality**:
+   - [ ] Godoc: Precise, concise, NO example implementations
+   - [ ] Godoc: References concepts using links to feature docs
+   - [ ] Examples: All code examples tested and up-to-date
+   - [ ] CHANGELOG: Entry added under [Unreleased]
+   - [ ] Feature docs: Include implementation, usage, files changed
+
+3. **On Documentation Deviations**:
+   - Refactor documentation to meet standards
+   - Do not push until documentation is correct
+   - Review all links and references
+
+### Required Documentation Files
+
+For any feature or significant change:
+
+#### 1. Feature Documentation (`docs/features/NN-name.md`)
+**When**: Adding new feature or major functionality
+
+Template:
+```markdown
+# Feature: <Name>
+
+**Package:** `package-name`
+**Status:** ✅ Implemented | 🔄 Proposed | ⛔ Superseded
+**Related ADRs:** [ADR NNNN](../adr/NNNN-name.md)
+
+## Summary
+Brief description (2-3 sentences)
+
+## Implementation
+Key types and functions with code examples
+
+## Usage Example
+Tested example code
+
+## Files Changed
+- path/to/file.go - Description
+
+## Related Features
+- [NN-other-feature](NN-other-feature.md)
+```
+
+#### 2. CHANGELOG.md Entry
+**When**: Every code change
+
+Format:
+```markdown
+## [Unreleased]
+
+### Added
+- New feature X - See [docs/features/NN-name.md](docs/features/NN-name.md)
+
+### Changed  
+- **BREAKING**: Description - See migration guide
+
+### Fixed
+- Bug fix description
+```
+
+#### 3. Architecture Decision Record (`docs/adr/NNNN-name.md`)
+**When**: Architectural or design decisions
+
+Template:
+```markdown
+# ADR NNNN: Title
+
+**Date:** YYYY-MM-DD
+**Status:** Proposed | Accepted | Implemented | Superseded
+
+## Context
+What problem are we facing?
+
+## Decision
+What did we decide?
+
+## Consequences
+Positive and negative impacts
+
+## Links
+Related features, ADRs, code
+```
+
+#### 4. README.md Updates
+**When**: Adding/changing core components
+
+Requirements:
+- Update Core Components section
+- Add tested, working examples
+- Link to feature docs for advanced usage
+- Keep examples minimal and focused
+
+#### 5. CONTRIBUTING.md
+**Purpose**: Human contributor guide (not AI-focused)
+
+Update when:
+- Development workflow changes
+- New testing requirements
+- Documentation standards evolve
+
+### Godoc Standards
+
+**DO:**
+```go
+// GroupBy aggregates items from the input channel by key, emitting batches
+// when size or time limits are reached.
+//
+// For usage examples and patterns, see docs/features/01-channel-groupby.md.
+func GroupBy[K comparable, V any](
+    in <-chan V,
+    keyFunc func(V) K,
+    config GroupByConfig,
+) <-chan Group[K, V]
+```
+
+**DON'T:**
+```go
+// GroupBy aggregates items. Example usage:
+//
+//    grouped := GroupBy(msgs, func(m Msg) string {
+//        return m.Topic
+//    }, GroupByConfig{MaxBatchSize: 100})
+//
+// This will batch messages by topic...
+func GroupBy[K comparable, V any](...) <-chan Group[K, V]
+```
+
+### Example Validation
+
+**Before pushing, verify all README examples:**
+
+```bash
+# Extract example from README
+# Save to temporary file
+# Attempt to run
+
+# OR: Run all examples
+go build ./examples/...
+go run ./examples/broker/main.go
+go run ./examples/cqrs-package/main.go
+```
+
+**In CI/CD**: Add example validation step
+
+### Pre-Push Checklist
+
+Run this before EVERY push:
+
+```bash
+# 1. Tests pass
+go test ./...
+
+# 2. Examples build
+go build ./examples/...
+
+# 3. Documentation exists
+ls docs/features/*.md
+grep -q "Unreleased" CHANGELOG.md
+
+# 4. Godoc check (manual)
+# - No example code in godoc
+# - Links to feature docs present
+# - Precise and concise
+
+# 5. Git check
+git status  # No untracked important files
+git diff    # Review all changes
+```
+
+### Deviation Handling
+
+**If documentation is incomplete or incorrect:**
+
+1. **STOP** - Do not push
+2. **FIX** - Create/update required docs
+3. **REVIEW** - Check all requirements
+4. **COMMIT** - Separate doc commit if needed
+5. **PUSH** - Only when complete
+
+**If discovered after push:**
+
+1. Create immediate follow-up commit
+2. Fix all documentation issues
+3. Update CHANGELOG with correction
+4. Learn and improve process
+
+## Summary: Documentation Workflow
+
+For every feature:
+
+1. **Write code** with tests
+2. **Create feature doc** in docs/features/
+3. **Update CHANGELOG** with entry
+4. **Create ADR** (if architectural)
+5. **Update README** (if core component)
+6. **Write godoc** (precise, links to docs)
+7. **Test examples** in README
+8. **Review checklist** above
+9. **Commit** with reference to docs
+10. **Push** when complete
+
+This workflow ensures:
+- Complete documentation
+- Tested examples
+- Clear API reference
+- Easy maintenance
+- Future contributor success
+
