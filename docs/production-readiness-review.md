@@ -70,7 +70,7 @@ The gopipe project demonstrates **excellent architectural design** with clear se
 
 ### 1.1 Bug: Invalid UTF-8 in ChannelBroker Subscription IDs
 
-**File:** `/cqrs/pubsub/channel.go:253-256`
+**File:** `/pubsub/broker/channel.go`
 **Severity:** 🔴 CRITICAL
 
 **Issue:**
@@ -153,7 +153,7 @@ attrs[message.AttrType] = t.Name()
 
 ### 1.4 HTTPReceiver Unbounded Memory Growth
 
-**File:** `/pubsub/http.go:449-453`
+**File:** `/pubsub/broker/http.go`
 **Severity:** 🔴 CRITICAL
 
 **Issue:**
@@ -258,7 +258,7 @@ func MatchType(msgType string) Matcher {
 
 ### 2.2 ~~Incomplete Feature: WaitForAck in HTTPSender~~ ✅ RESOLVED
 
-**File:** `/pubsub/http.go`
+**File:** `/pubsub/broker/http.go`
 **Severity:** 🟠 HIGH → ✅ RESOLVED
 
 **Issue:** WaitForAck config option existed but didn't actually wait for acknowledgment.
@@ -301,7 +301,7 @@ func TestMessage_ConcurrentAcking(t *testing.T) { ... }
 
 **Fix:** Replace all occurrences with:
 ```go
-broker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
+broker := broker.NewChannelBroker(broker.ChannelBrokerConfig{})
 ```
 
 ---

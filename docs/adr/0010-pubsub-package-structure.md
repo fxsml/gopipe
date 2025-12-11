@@ -1,7 +1,7 @@
 # ADR 0010: Pub/Sub Package Structure
 
 **Date:** 2025-12-08
-**Status:** Partially Implemented
+**Status:** Implemented
 
 > **Historical Note:** The Subscriber API was simplified from the proposed multi-topic design.
 > Instead of `AddTopic()` + `Subscribe()`, the actual API uses `Subscribe(ctx, topic)` per topic.
@@ -13,19 +13,21 @@ Broker implementation was in `message/broker/` with interfaces in `message/pubsu
 
 ## Decision
 
-Create dedicated `pubsub` package at top level:
+Create dedicated `pubsub` package at top level with broker implementations in a subpackage:
 
 ```
 pubsub/
 ├── broker.go       # Sender, Receiver, Broker interfaces
-├── memory.go       # In-memory broker
-├── channel.go      # Channel-based broker
-├── io.go           # IO broker for debugging/bridging (JSONL format)
-├── http.go         # HTTP webhook broker (CloudEvents)
 ├── multiplex.go    # Routing between multiple brokers
 ├── publisher.go    # Publisher with batching
 ├── subscriber.go   # Subscriber with gopipe integration
-└── topics.go       # Topic pattern matching
+├── topics.go       # Topic pattern matching
+├── cloudevents/    # CloudEvents serialization
+│   └── cloudevents.go
+└── broker/         # Broker implementations
+    ├── channel.go  # Channel-based in-process broker
+    ├── http.go     # HTTP webhook broker (CloudEvents)
+    └── io.go       # IO broker for debugging/bridging (JSONL)
 ```
 
 ### IO Broker (Debug/Management)
@@ -83,9 +85,9 @@ This design:
 ## Consequences
 
 **Positive:**
-- Clear separation: core `message` vs `pubsub`
-- Descriptive constructors: `NewInMemoryBroker()`, `NewChannelBroker()`
-- Clean import paths
+- Clear separation: core `message` vs `pubsub` vs `pubsub/broker`
+- Descriptive constructors: `broker.NewChannelBroker()`, `broker.NewHTTPSender()`
+- Clean import paths: interfaces in `pubsub`, implementations in `pubsub/broker`
 - Extensible: easy to add new broker implementations
 - Subscriber supports multi-topic subscription with merged output
 
@@ -95,6 +97,7 @@ This design:
 
 ## Links
 
-- Package: `github.com/fxsml/gopipe/pubsub`
+- Interfaces: `github.com/fxsml/gopipe/pubsub`
+- Implementations: `github.com/fxsml/gopipe/pubsub/broker`
 - ADR 0012: Multiplex Pub/Sub
 - Supersedes: ADR-25 Interface Broker

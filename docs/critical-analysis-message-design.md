@@ -1,7 +1,11 @@
 # Critical Analysis: gopipe Message Design
 
 **Date:** 2025-12-08
-**Status:** Analysis & Recommendations
+**Status:** Historical (Superseded by Implementation)
+
+> **Note:** This document was an analysis that informed the actual implementation.
+> The final structure differs slightly - see [ADR 0010](./adr/0010-pubsub-package-structure.md) for the
+> actual package structure: interfaces in `pubsub/`, implementations in `pubsub/broker/`.
 
 This document provides a critical analysis of gopipe's current message design and broker architecture, examining three key areas:
 
