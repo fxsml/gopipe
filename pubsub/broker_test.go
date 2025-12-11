@@ -3,6 +3,7 @@ package pubsub_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -590,6 +591,201 @@ func TestHTTPReceiver_WaitForAck(t *testing.T) {
 			t.Errorf("Expected status 201, got %d", rr.Code)
 		}
 	})
+
+	t.Run("Batch mode all messages must be acked", func(t *testing.T) {
+		receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{
+			WaitForAck: true,
+			AckTimeout: 5 * time.Second,
+		}, 100)
+		defer receiver.Close()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			time.Sleep(50 * time.Millisecond)
+
+			ctx := context.Background()
+			msgs, err := receiver.Receive(ctx, "test/topic")
+			if err != nil {
+				t.Errorf("Receive failed: %v", err)
+				return
+			}
+			if len(msgs) != 2 {
+				t.Errorf("Expected 2 messages, got %d", len(msgs))
+				return
+			}
+			// Ack all messages
+			for _, msg := range msgs {
+				msg.Ack()
+			}
+		}()
+
+		// Send batch request
+		req := createCloudEventBatchRequest(t, "test/topic", [][]byte{
+			[]byte(`{"id":"1"}`),
+			[]byte(`{"id":"2"}`),
+		})
+		rr := httptest.NewRecorder()
+		receiver.ServeHTTP(rr, req)
+
+		<-done
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rr.Code)
+		}
+	})
+
+	t.Run("Batch mode first nack fails request", func(t *testing.T) {
+		receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{
+			WaitForAck: true,
+			AckTimeout: 5 * time.Second,
+		}, 100)
+		defer receiver.Close()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			time.Sleep(50 * time.Millisecond)
+
+			ctx := context.Background()
+			msgs, err := receiver.Receive(ctx, "test/topic")
+			if err != nil {
+				t.Errorf("Receive failed: %v", err)
+				return
+			}
+			// Nack first message, ack second
+			if len(msgs) > 0 {
+				msgs[0].Nack(pubsub.ErrHTTPRequestFailed)
+			}
+			if len(msgs) > 1 {
+				msgs[1].Ack()
+			}
+		}()
+
+		req := createCloudEventBatchRequest(t, "test/topic", [][]byte{
+			[]byte(`{"id":"1"}`),
+			[]byte(`{"id":"2"}`),
+		})
+		rr := httptest.NewRecorder()
+		receiver.ServeHTTP(rr, req)
+
+		<-done
+
+		if rr.Code != http.StatusInternalServerError {
+			t.Errorf("Expected status 500, got %d", rr.Code)
+		}
+	})
+
+	t.Run("Message data preserved with WaitForAck", func(t *testing.T) {
+		receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{
+			WaitForAck: true,
+			AckTimeout: 5 * time.Second,
+		}, 100)
+		defer receiver.Close()
+
+		expectedData := []byte(`{"key":"value","num":42}`)
+		var receivedData []byte
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			time.Sleep(50 * time.Millisecond)
+
+			ctx := context.Background()
+			msgs, err := receiver.Receive(ctx, "test/topic")
+			if err != nil {
+				t.Errorf("Receive failed: %v", err)
+				return
+			}
+			if len(msgs) == 1 {
+				receivedData = msgs[0].Data
+				msgs[0].Ack()
+			}
+		}()
+
+		req := createCloudEventRequest(t, "test/topic", expectedData)
+		rr := httptest.NewRecorder()
+		receiver.ServeHTTP(rr, req)
+
+		<-done
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rr.Code)
+		}
+		if string(receivedData) != string(expectedData) {
+			t.Errorf("Data mismatch: expected %s, got %s", expectedData, receivedData)
+		}
+	})
+
+	t.Run("Double ack is idempotent", func(t *testing.T) {
+		receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{
+			WaitForAck: true,
+			AckTimeout: 5 * time.Second,
+		}, 100)
+		defer receiver.Close()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			time.Sleep(50 * time.Millisecond)
+
+			ctx := context.Background()
+			msgs, err := receiver.Receive(ctx, "test/topic")
+			if err != nil {
+				t.Errorf("Receive failed: %v", err)
+				return
+			}
+			if len(msgs) == 1 {
+				// Call Ack twice - should not block or panic
+				msgs[0].Ack()
+				msgs[0].Ack()
+			}
+		}()
+
+		req := createCloudEventRequest(t, "test/topic", []byte(`{"test":true}`))
+		rr := httptest.NewRecorder()
+		receiver.ServeHTTP(rr, req)
+
+		<-done
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rr.Code)
+		}
+	})
+
+	t.Run("Structured mode with WaitForAck", func(t *testing.T) {
+		receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{
+			WaitForAck: true,
+			AckTimeout: 5 * time.Second,
+		}, 100)
+		defer receiver.Close()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			time.Sleep(50 * time.Millisecond)
+
+			ctx := context.Background()
+			msgs, err := receiver.Receive(ctx, "test/topic")
+			if err != nil {
+				t.Errorf("Receive failed: %v", err)
+				return
+			}
+			for _, msg := range msgs {
+				msg.Ack()
+			}
+		}()
+
+		req := createCloudEventStructuredRequest(t, "test/topic", []byte(`{"structured":"data"}`))
+		rr := httptest.NewRecorder()
+		receiver.ServeHTTP(rr, req)
+
+		<-done
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rr.Code)
+		}
+	})
 }
 
 // createCloudEventRequest creates a CloudEvents binary mode HTTP request for testing.
@@ -602,6 +798,45 @@ func createCloudEventRequest(t *testing.T, topic string, data []byte) *http.Requ
 	req.Header.Set("Ce-Specversion", "1.0")
 	req.Header.Set("Ce-Type", "test.event")
 	req.Header.Set("Ce-Topic", topic)
+	return req
+}
+
+// createCloudEventBatchRequest creates a CloudEvents batch mode HTTP request for testing.
+func createCloudEventBatchRequest(t *testing.T, topic string, dataItems [][]byte) *http.Request {
+	t.Helper()
+	events := make([]map[string]any, len(dataItems))
+	for i, data := range dataItems {
+		events[i] = map[string]any{
+			"specversion":     "1.0",
+			"type":            "test.event",
+			"source":          "test-source",
+			"id":              "batch-id-" + string(rune('0'+i)),
+			"datacontenttype": "application/json",
+			"data":            string(data),
+			"topic":           topic,
+		}
+	}
+	body, _ := json.Marshal(events)
+	req := httptest.NewRequest(http.MethodPost, "/"+topic, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/cloudevents-batch+json")
+	return req
+}
+
+// createCloudEventStructuredRequest creates a CloudEvents structured mode HTTP request for testing.
+func createCloudEventStructuredRequest(t *testing.T, topic string, data []byte) *http.Request {
+	t.Helper()
+	event := map[string]any{
+		"specversion":     "1.0",
+		"type":            "test.event",
+		"source":          "test-source",
+		"id":              "structured-id-123",
+		"datacontenttype": "application/json",
+		"data":            string(data),
+		"topic":           topic,
+	}
+	body, _ := json.Marshal(event)
+	req := httptest.NewRequest(http.MethodPost, "/"+topic, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/cloudevents+json")
 	return req
 }
 

@@ -455,38 +455,33 @@ func (r *HTTPReceiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Create ack channels if WaitForAck is enabled
-	var ackChans []chan ackResult
-	if r.config.WaitForAck {
-		ackChans = make([]chan ackResult, len(messages))
-		for i, tm := range messages {
-			ch := make(chan ackResult, 1)
-			ackChans[i] = ch
+	// Create shared acking if WaitForAck is enabled
+	var ackChan chan ackResult
+	if r.config.WaitForAck && len(messages) > 0 {
+		ackChan = make(chan ackResult, 1)
 
-			// Wrap the message with ack/nack callbacks
-			// Capture ch in closure parameters to avoid loop variable capture bug
+		// Create shared acking - ack fires when all messages acked, nack fires immediately
+		acking := message.NewAcking(
+			func() {
+				select {
+				case ackChan <- ackResult{}:
+				default:
+				}
+			},
+			func(err error) {
+				select {
+				case ackChan <- ackResult{err: err}:
+				default:
+				}
+			},
+			len(messages),
+		)
+
+		// Wrap each message with shared acking
+		for i, tm := range messages {
 			messages[i] = topicMessage{
 				topic: tm.topic,
-				msg: message.NewWithAcking(
-					tm.msg.Data,
-					tm.msg.Attributes,
-					func(c chan ackResult) func() {
-						return func() {
-							select {
-							case c <- ackResult{}:
-							default:
-							}
-						}
-					}(ch),
-					func(c chan ackResult) func(error) {
-						return func(err error) {
-							select {
-							case c <- ackResult{err: err}:
-							default:
-							}
-						}
-					}(ch),
-				),
+				msg:   message.NewWithSharedAcking(tm.msg.Data, tm.msg.Attributes, acking),
 			}
 		}
 	}
@@ -511,25 +506,23 @@ func (r *HTTPReceiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	r.mu.Unlock()
 
-	if r.config.WaitForAck {
-		// Wait for all messages to be acknowledged
+	if r.config.WaitForAck && ackChan != nil {
+		// Wait for acknowledgment (all messages acked or first nack)
 		timeout := time.NewTimer(r.config.AckTimeout)
 		defer timeout.Stop()
 
-		for _, ackChan := range ackChans {
-			select {
-			case result := <-ackChan:
-				if result.err != nil {
-					http.Error(w, result.err.Error(), http.StatusInternalServerError)
-					return
-				}
-			case <-timeout.C:
-				http.Error(w, "acknowledgment timeout", http.StatusGatewayTimeout)
-				return
-			case <-req.Context().Done():
-				http.Error(w, "request cancelled", http.StatusServiceUnavailable)
+		select {
+		case result := <-ackChan:
+			if result.err != nil {
+				http.Error(w, result.err.Error(), http.StatusInternalServerError)
 				return
 			}
+		case <-timeout.C:
+			http.Error(w, "acknowledgment timeout", http.StatusGatewayTimeout)
+			return
+		case <-req.Context().Done():
+			http.Error(w, "request cancelled", http.StatusServiceUnavailable)
+			return
 		}
 		w.WriteHeader(http.StatusOK)
 	} else {

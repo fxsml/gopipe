@@ -182,17 +182,18 @@ func TestMessage_MultiStageAcking(t *testing.T) {
 	t.Parallel()
 
 	var ackCalled bool
-	msg := message.NewWithAcking(42, nil,
+	// Create shared acking for 2 messages
+	acking := message.NewAcking(
 		func() { ackCalled = true },
-		func(error) {})
+		func(error) {},
+		2)
 
-	// Set expected ack count to 2
-	if !msg.SetExpectedAckCount(2) {
-		t.Fatal("Expected SetExpectedAckCount to succeed")
-	}
+	// Create two messages sharing the same acking
+	msg1 := message.NewWithSharedAcking(42, nil, acking)
+	msg2 := message.NewWithSharedAcking(43, nil, acking)
 
 	// First ack should not trigger callback
-	if !msg.Ack() {
+	if !msg1.Ack() {
 		t.Error("Expected first Ack to return true")
 	}
 
@@ -201,13 +202,95 @@ func TestMessage_MultiStageAcking(t *testing.T) {
 	}
 
 	// Second ack should trigger callback
-	if !msg.Ack() {
+	if !msg2.Ack() {
 		t.Error("Expected second Ack to return true")
 	}
 
 	if !ackCalled {
 		t.Error("Expected ack callback to be called after second ack")
 	}
+}
+
+func TestMessage_SharedAcking_Nack(t *testing.T) {
+	t.Parallel()
+
+	var ackCalled bool
+	var nackCalled bool
+	var nackErr error
+
+	// Create shared acking for 3 messages
+	acking := message.NewAcking(
+		func() { ackCalled = true },
+		func(err error) { nackCalled = true; nackErr = err },
+		3)
+
+	msg1 := message.NewWithSharedAcking(1, nil, acking)
+	msg2 := message.NewWithSharedAcking(2, nil, acking)
+	msg3 := message.NewWithSharedAcking(3, nil, acking)
+
+	// First message acks
+	msg1.Ack()
+	if ackCalled || nackCalled {
+		t.Error("No callback should be called after 1/3 acks")
+	}
+
+	// Second message nacks - should trigger nack immediately
+	testErr := errors.New("processing failed")
+	msg2.Nack(testErr)
+
+	if !nackCalled {
+		t.Error("Expected nack callback to be called immediately")
+	}
+	if nackErr != testErr {
+		t.Errorf("Expected nack error %v, got %v", testErr, nackErr)
+	}
+	if ackCalled {
+		t.Error("Ack callback should not be called after nack")
+	}
+
+	// Third message tries to ack - should fail since already nacked
+	if msg3.Ack() {
+		t.Error("Expected Ack to return false after nack")
+	}
+}
+
+func TestNewAcking_Validation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("zero count returns nil", func(t *testing.T) {
+		acking := message.NewAcking(func() {}, func(error) {}, 0)
+		if acking != nil {
+			t.Error("Expected nil for zero count")
+		}
+	})
+
+	t.Run("negative count returns nil", func(t *testing.T) {
+		acking := message.NewAcking(func() {}, func(error) {}, -1)
+		if acking != nil {
+			t.Error("Expected nil for negative count")
+		}
+	})
+
+	t.Run("nil ack returns nil", func(t *testing.T) {
+		acking := message.NewAcking(nil, func(error) {}, 1)
+		if acking != nil {
+			t.Error("Expected nil for nil ack callback")
+		}
+	})
+
+	t.Run("nil nack returns nil", func(t *testing.T) {
+		acking := message.NewAcking(func() {}, nil, 1)
+		if acking != nil {
+			t.Error("Expected nil for nil nack callback")
+		}
+	})
+
+	t.Run("valid params returns non-nil", func(t *testing.T) {
+		acking := message.NewAcking(func() {}, func(error) {}, 1)
+		if acking == nil {
+			t.Error("Expected non-nil for valid params")
+		}
+	})
 }
 
 // NOTE: Concurrent access test removed - Properties is now a plain map[string]any

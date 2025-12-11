@@ -12,13 +12,34 @@ const (
 	ackTypeNack
 )
 
-type acking struct {
+// Acking coordinates acknowledgment across one or more messages.
+// When expectedAckCount messages call Ack(), the ack callback is invoked.
+// If any message calls Nack(), the nack callback is invoked immediately.
+// Acking is thread-safe and can be shared between multiple messages.
+type Acking struct {
 	mu               sync.Mutex
 	ack              func()
 	nack             func(error)
 	ackType          ackType
 	ackCount         int
 	expectedAckCount int
+}
+
+// NewAcking creates an Acking that requires expectedCount acknowledgments
+// before invoking the ack callback. The nack callback is invoked immediately
+// on the first Nack() call from any message sharing this Acking.
+//
+// Both ack and nack must be non-nil. Returns nil if expectedCount <= 0
+// or if either callback is nil.
+func NewAcking(ack func(), nack func(error), expectedCount int) *Acking {
+	if expectedCount <= 0 || ack == nil || nack == nil {
+		return nil
+	}
+	return &Acking{
+		ack:              ack,
+		nack:             nack,
+		expectedAckCount: expectedCount,
+	}
 }
 
 // Attributes is a map of message context attributes per CloudEvents spec.
@@ -37,7 +58,7 @@ type TypedMessage[T any] struct {
 	// Attributes contains the context attributes per CloudEvents spec.
 	Attributes Attributes
 
-	a *acking
+	a *Acking
 }
 
 // Message is a non-generic message with []byte data for pub/sub patterns.
@@ -61,41 +82,30 @@ func New[T any](data T, attrs Attributes) *TypedMessage[T] {
 
 // NewWithAcking creates a new typed message with the given data, attributes, and acknowledgment callbacks.
 // Both ack and nack callbacks must be provided (not nil).
+// For sharing acking across multiple messages, use NewAcking and NewWithSharedAcking instead.
 func NewWithAcking[T any](data T, attrs Attributes, ack func(), nack func(error)) *TypedMessage[T] {
 	if attrs == nil {
 		attrs = make(Attributes)
 	}
-	var a *acking
-	if ack != nil && nack != nil {
-		a = &acking{
-			ack:              ack,
-			nack:             nack,
-			expectedAckCount: 1,
-		}
+	return &TypedMessage[T]{
+		Data:       data,
+		Attributes: attrs,
+		a:          NewAcking(ack, nack, 1),
+	}
+}
+
+// NewWithSharedAcking creates a new typed message with shared acknowledgment coordination.
+// Multiple messages can share the same Acking to coordinate acknowledgment (e.g., batch processing).
+// Pass nil for acking to create a message without acknowledgment support.
+func NewWithSharedAcking[T any](data T, attrs Attributes, acking *Acking) *TypedMessage[T] {
+	if attrs == nil {
+		attrs = make(Attributes)
 	}
 	return &TypedMessage[T]{
 		Data:       data,
 		Attributes: attrs,
-		a:          a,
+		a:          acking,
 	}
-}
-
-// SetExpectedAckCount sets the number of acknowledgments required before invoking the ack callback.
-// This must be called before any stage calls Ack() to enable multi-stage pipeline coordination.
-// Returns true if the count was successfully set.
-// Returns false if no ack callbacks were provided, count is invalid (<=0), or if acking has already started.
-// Thread-safe.
-func (m *TypedMessage[T]) SetExpectedAckCount(count int) bool {
-	if m.a == nil || count <= 0 {
-		return false
-	}
-	m.a.mu.Lock()
-	defer m.a.mu.Unlock()
-	if m.a.ackCount > 0 {
-		return false
-	}
-	m.a.expectedAckCount = count
-	return true
 }
 
 // Ack acknowledges successful processing of the message.

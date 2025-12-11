@@ -427,8 +427,6 @@ if !ok {
    - `CombineAttrs` untested
 
 3. **Missing edge case tests:**
-   - `SetExpectedAckCount` called multiple times
-   - `SetExpectedAckCount` called after partial acks
    - Concurrent `Ack`/`Nack` calls
 
 4. **Error path coverage:**
