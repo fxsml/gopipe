@@ -109,7 +109,7 @@ func (s *OrderSagaCoordinator) OnEvent(
         s.marshaler.Unmarshal(msg.Data, &evt)
 
         // Workflow: What commands to trigger?
-        return cqrs.CreateCommands(s.marshaler, corrID,
+        return createCommands(s.marshaler, corrID,
             ChargePayment{OrderID: evt.ID, Amount: evt.Amount},
             ReserveInventory{OrderID: evt.ID},
         ), nil
@@ -122,7 +122,7 @@ func (s *OrderSagaCoordinator) OnEvent(
         var evt InventoryReserved
         s.marshaler.Unmarshal(msg.Data, &evt)
 
-        return cqrs.CreateCommands(s.marshaler, corrID,
+        return createCommands(s.marshaler, corrID,
             ShipOrder{OrderID: evt.OrderID},
         ), nil
 
@@ -132,6 +132,13 @@ func (s *OrderSagaCoordinator) OnEvent(
     }
 
     return nil, nil
+}
+
+// createCommands is a helper to create command messages
+func createCommands(m cqrs.Marshaler, corrID string, cmds ...any) []*message.Message {
+    // Implementation creates messages with proper attributes
+    // See examples/cqrs-package for full implementation
+    return nil
 }
 ```
 
@@ -334,10 +341,12 @@ Compensate:
 ✅ **Always track sagas with correlation IDs:**
 
 ```go
-props := message.Attributes{
+data, _ := marshaler.Marshal(CreateOrder{...})
+msg := message.New(data, message.Attributes{
     message.AttrCorrelationID: "saga-order-12345",
-}
-cmd := cqrs.CreateCommand(marshaler, CreateOrder{...}, props)
+    message.AttrSubject: "CreateOrder",
+    message.AttrType: "CreateOrder",
+})
 ```
 
 ### 2. Idempotent Operations
@@ -362,7 +371,7 @@ func handleChargePayment(ctx, cmd ChargePayment) ([]PaymentCharged, error) {
 ```go
 func (s *OrderSagaCoordinator) OnEvent(ctx, msg) ([]*Message, error) {
     // ✅ Workflow: what happens next?
-    return cqrs.CreateCommands(...)
+    return createCommands(s.marshaler, corrID, NextCommand{...}), nil
 }
 ```
 
@@ -393,7 +402,7 @@ case "OrderShipped":
 ```go
 case "PaymentFailed":
     // Option 1: Retry
-    return cqrs.CreateCommands(s.marshaler, corrID,
+    return createCommands(s.marshaler, corrID,
         ChargePayment{...},  // Retry
     ), nil
 
@@ -469,16 +478,19 @@ func handleOrderCreated(evt OrderCreated) error {
 **Problem:**
 ```go
 // ❌ Can't track saga end-to-end
-cmd := cqrs.CreateCommand(marshaler, CreateOrder{...}, nil)
+data, _ := marshaler.Marshal(CreateOrder{...})
+msg := message.New(data, nil)
 ```
 
 **Solution:**
 ```go
 // ✅ Always use correlation IDs
-props := message.Attributes{
+data, _ := marshaler.Marshal(CreateOrder{...})
+msg := message.New(data, message.Attributes{
     message.AttrCorrelationID: uuid.New().String(),
-}
-cmd := cqrs.CreateCommand(marshaler, CreateOrder{...}, props)
+    message.AttrSubject: "CreateOrder",
+    message.AttrType: "CreateOrder",
+})
 ```
 
 ### ❌ Pitfall 3: Non-Idempotent Operations

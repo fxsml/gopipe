@@ -314,8 +314,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
-	"time"
 
 	"github.com/fxsml/gopipe"
 	"github.com/fxsml/gopipe/channel"
@@ -329,53 +327,39 @@ func main() {
 	ack := func() { fmt.Println("✓ Message acknowledged") }
 	nack := func(err error) { fmt.Printf("✗ Message rejected: %v\n", err) }
 
-	// Create messages using the new functional options API
+	// Create typed messages (TypedMessage[int]) with acking support
 	in := channel.FromValues(
-		message.New(12,
-			message.WithContext[int](ctx),
-			message.WithAcking[int](ack, nack),
-			message.WithID[int]("msg-001"),
-			message.WithAttribute[int]("source", "orders-queue"),
-		),
-		message.New(42,
-			message.WithContext[int](ctx),
-			message.WithAcking[int](ack, nack),
-			message.WithID[int]("msg-002"),
-			message.WithAttribute[int]("source", "orders-queue"),
-		),
+		message.NewWithAcking(12, message.Attributes{
+			message.AttrID: "msg-001",
+		}, ack, nack),
+		message.NewWithAcking(42, message.Attributes{
+			message.AttrID: "msg-002",
+		}, ack, nack),
 	)
 
 	// Create pipe with acknowledgment
 	pipe := gopipe.NewTransformPipe(
-		func(ctx context.Context, msg *message.Message[int]) (*message.Message[int], error) {
-			defer msg.Attributes().Set("processed_at", time.Now().Format(time.RFC3339))
-
-			// Simulate processing error
-			p := msg.Data()
-			if p == 12 {
-				err := fmt.Errorf("cannot process data 12")
+		func(ctx context.Context, msg *message.TypedMessage[int]) (*message.TypedMessage[int], error) {
+			// Simulate processing error for first message
+			if msg.Data == 12 {
+				err := fmt.Errorf("cannot process value 12")
 				msg.Nack(err)
 				return nil, err
 			}
 
-			// On success
-			res := p * 2
+			// On success, double the value
 			msg.Ack()
-			return message.Copy(msg, res), nil
+			return message.Copy(msg, msg.Data*2), nil
 		},
 	)
 
-	// Process message
+	// Process messages
 	results := pipe.Start(ctx, in)
 
 	// Consume results
-	<-channel.Sink(results, func(result *message.Message[int]) {
-		var sb strings.Builder
-		result.Attributes().Range(func(key string, value any) bool {
-			sb.WriteString(fmt.Sprintf("  %s: %v\n", key, value))
-			return true
-		})
-		fmt.Printf("Data: %d\nAttributes:\n%s", result.Data(), sb.String())
+	<-channel.Sink(results, func(result *message.TypedMessage[int]) {
+		id, _ := result.Attributes.ID()
+		fmt.Printf("Processed message %s: %d\n", id, result.Data)
 	})
 }
 ```

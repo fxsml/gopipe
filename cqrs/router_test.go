@@ -825,3 +825,112 @@ func TestRouter_AddPipe_MultipleOutputs(t *testing.T) {
 		t.Fatalf("Expected 2 results, got %d", len(results))
 	}
 }
+
+// TestRouter_AddHandlerAfterStart verifies that AddHandler returns false after Start
+func TestRouter_AddHandlerAfterStart(t *testing.T) {
+	handler := testJSONHandler(
+		func(ctx context.Context, order Order) ([]OrderConfirmed, error) {
+			return []OrderConfirmed{{ID: order.ID, ConfirmedAt: time.Now()}}, nil
+		},
+		func(prop message.Attributes) bool {
+			subject, _ := prop.Subject()
+			return subject == "Order"
+		},
+		func(prop message.Attributes) message.Attributes {
+			return message.Attributes{message.AttrSubject: "OrderConfirmed"}
+		},
+	)
+
+	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
+
+	// AddHandler before Start should succeed
+	ok := router.AddHandler(handler)
+	if !ok {
+		t.Error("AddHandler before Start should return true")
+	}
+
+	// Start the router
+	in := make(chan *message.Message)
+	close(in)
+	router.Start(context.Background(), in)
+
+	// AddHandler after Start should fail
+	ok = router.AddHandler(handler)
+	if ok {
+		t.Error("AddHandler after Start should return false")
+	}
+}
+
+// TestRouter_AddPipeAfterStart verifies that AddPipe returns false after Start
+func TestRouter_AddPipeAfterStart(t *testing.T) {
+	handler := testJSONHandler(
+		func(ctx context.Context, order Order) ([]OrderConfirmed, error) {
+			return []OrderConfirmed{{ID: order.ID, ConfirmedAt: time.Now()}}, nil
+		},
+		func(prop message.Attributes) bool {
+			subject, _ := prop.Subject()
+			return subject == "Order"
+		},
+		func(prop message.Attributes) message.Attributes {
+			return message.Attributes{message.AttrSubject: "OrderConfirmed"}
+		},
+	)
+
+	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
+
+	// Create a simple passthrough pipe for testing
+	pipe := gopipe.NewTransformPipe(func(ctx context.Context, msg *message.Message) (*message.Message, error) {
+		return msg, nil
+	})
+
+	// AddPipe before Start should succeed
+	ok := router.AddPipe(pipe, func(attrs message.Attributes) bool { return false })
+	if !ok {
+		t.Error("AddPipe before Start should return true")
+	}
+
+	// Start the router
+	in := make(chan *message.Message)
+	close(in)
+	router.Start(context.Background(), in)
+
+	// AddPipe after Start should fail
+	ok = router.AddPipe(pipe, func(attrs message.Attributes) bool { return false })
+	if ok {
+		t.Error("AddPipe after Start should return false")
+	}
+}
+
+// TestRouter_StartTwice verifies that Start returns nil when called twice
+func TestRouter_StartTwice(t *testing.T) {
+	handler := testJSONHandler(
+		func(ctx context.Context, order Order) ([]OrderConfirmed, error) {
+			return []OrderConfirmed{{ID: order.ID, ConfirmedAt: time.Now()}}, nil
+		},
+		func(prop message.Attributes) bool {
+			subject, _ := prop.Subject()
+			return subject == "Order"
+		},
+		func(prop message.Attributes) message.Attributes {
+			return message.Attributes{message.AttrSubject: "OrderConfirmed"}
+		},
+	)
+
+	router := cqrs.NewRouter(cqrs.RouterConfig{}, handler)
+
+	// First Start should succeed
+	in1 := make(chan *message.Message)
+	close(in1)
+	out1 := router.Start(context.Background(), in1)
+	if out1 == nil {
+		t.Error("first Start should return non-nil channel")
+	}
+
+	// Second Start should return nil
+	in2 := make(chan *message.Message)
+	close(in2)
+	out2 := router.Start(context.Background(), in2)
+	if out2 != nil {
+		t.Error("second Start should return nil")
+	}
+}

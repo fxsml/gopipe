@@ -55,10 +55,15 @@ type PublisherConfig struct {
 // Note: Empty string is a valid topic representing the default topic. Senders should handle
 // this appropriately, either by configuring a default topic name or logging errors when
 // messages are sent to the default topic without proper configuration.
+//
+// Panics if sender is nil.
 func NewPublisher(
 	sender Sender,
 	config PublisherConfig,
 ) *Publisher {
+	if sender == nil {
+		panic("pubsub: sender cannot be nil")
+	}
 	proc := gopipe.NewProcessor(func(ctx context.Context, group channel.Group[string, *message.Message]) ([]struct{}, error) {
 		return nil, sender.Send(ctx, group.Key, group.Items)
 	}, nil)

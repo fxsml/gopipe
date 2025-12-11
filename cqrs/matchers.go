@@ -32,7 +32,7 @@ func MatchSubject(subject string) Matcher {
 // MatchType matches messages with the specified type.
 func MatchType(msgType string) Matcher {
 	return func(attrs message.Attributes) bool {
-		t, _ := attrs["type"].(string)
+		t, _ := attrs.Type()
 		return t == msgType
 	}
 }

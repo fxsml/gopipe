@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"reflect"
 	"strings"
 	"time"
 
@@ -10,6 +11,48 @@ import (
 	"github.com/fxsml/gopipe/cqrs"
 	"github.com/fxsml/gopipe/message"
 )
+
+// createCommand creates a command message from a command struct.
+func createCommand(marshaler cqrs.Marshaler, cmd any, attrs message.Attributes) *message.Message {
+	payload, err := marshaler.Marshal(cmd)
+	if err != nil {
+		log.Printf("failed to marshal command: %v", err)
+		return nil
+	}
+
+	if attrs == nil {
+		attrs = message.Attributes{}
+	}
+
+	// Extract type name from the command
+	t := reflect.TypeOf(cmd)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	attrs[message.AttrSubject] = t.Name()
+	attrs[message.AttrType] = t.Name()
+
+	return message.New(payload, attrs)
+}
+
+// createCommands creates multiple command messages with optional correlation ID.
+func createCommands(marshaler cqrs.Marshaler, correlationID string, cmds ...any) []*message.Message {
+	msgs := make([]*message.Message, 0, len(cmds))
+
+	for _, cmd := range cmds {
+		attrs := message.Attributes{}
+		if correlationID != "" {
+			attrs[message.AttrCorrelationID] = correlationID
+		}
+
+		msg := createCommand(marshaler, cmd, attrs)
+		if msg != nil {
+			msgs = append(msgs, msg)
+		}
+	}
+
+	return msgs
+}
 
 // ============================================================================
 // Domain: Order Processing
@@ -152,7 +195,7 @@ func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message
 		log.Printf("🔄 Saga: OrderCreated → triggering ChargePayment + ReserveInventory")
 
 		// ✅ One event triggers MULTIPLE commands (multistage acking!)
-		return cqrs.CreateCommands(s.marshaler, corrID,
+		return createCommands(s.marshaler, corrID,
 			ChargePayment{
 				OrderID:    evt.ID,
 				CustomerID: evt.CustomerID,
@@ -177,7 +220,7 @@ func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message
 
 		log.Printf("🔄 Saga: InventoryReserved → triggering ShipOrder")
 
-		return cqrs.CreateCommands(s.marshaler, corrID,
+		return createCommands(s.marshaler, corrID,
 			ShipOrder{
 				OrderID: evt.OrderID,
 				Address: "123 Main St",
@@ -356,7 +399,7 @@ func main() {
 	log.Println("🚀 Sending CreateOrder command...")
 	log.Println()
 
-	initialCommands <- cqrs.CreateCommand(
+	initialCommands <- createCommand(
 		marshaler,
 		CreateOrder{
 			ID:         "order-789",

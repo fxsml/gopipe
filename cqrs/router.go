@@ -3,6 +3,7 @@ package cqrs
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/fxsml/gopipe"
@@ -26,9 +27,11 @@ type RouterConfig struct {
 
 // Router dispatches messages to handlers based on attribute matching.
 type Router struct {
+	mu       sync.Mutex
 	handlers []Handler
 	pipes    []pipeEntry
 	config   RouterConfig
+	started  bool
 }
 
 type pipeEntry struct {
@@ -45,37 +48,65 @@ func NewRouter(config RouterConfig, handlers ...Handler) *Router {
 }
 
 // AddHandler adds a handler to the router.
-func (r *Router) AddHandler(handler Handler) {
+// Returns false if the router has already started.
+func (r *Router) AddHandler(handler Handler) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.started {
+		return false
+	}
 	r.handlers = append(r.handlers, handler)
+	return true
 }
 
 // AddPipe adds a pipe that receives matching messages.
-func (r *Router) AddPipe(pipe gopipe.Pipe[*message.Message, *message.Message], match func(attrs message.Attributes) bool) {
+// Returns false if the router has already started.
+func (r *Router) AddPipe(pipe gopipe.Pipe[*message.Message, *message.Message], match func(attrs message.Attributes) bool) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.started {
+		return false
+	}
 	r.pipes = append(r.pipes, pipeEntry{
 		pipe:  pipe,
 		match: match,
 	})
+	return true
 }
 
 // Start processes messages through matched handlers and pipes.
+// Can only be called once. Subsequent calls return nil.
 func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan *message.Message {
+	r.mu.Lock()
+	if r.started {
+		r.mu.Unlock()
+		return nil
+	}
+	r.started = true
+	// Take a snapshot of handlers and pipes under lock
+	handlers := r.handlers
+	pipes := r.pipes
+	r.mu.Unlock()
+
 	// If no pipes, use simple handler-based routing
-	if len(r.pipes) == 0 {
-		return r.startWithHandlersOnly(ctx, msgs)
+	if len(pipes) == 0 {
+		return r.startWithHandlers(ctx, msgs, handlers)
 	}
 
 	// Start all pipes and create their input channels
-	pipeInputs := make([]chan *message.Message, len(r.pipes))
-	pipeOutputs := make([]<-chan *message.Message, len(r.pipes))
+	pipeInputs := make([]chan *message.Message, len(pipes))
+	pipeOutputs := make([]<-chan *message.Message, len(pipes))
 
-	for i, pe := range r.pipes {
+	for i, pe := range pipes {
 		pipeInputs[i] = make(chan *message.Message)
 		pipeOutputs[i] = pe.pipe.Start(ctx, pipeInputs[i])
 	}
 
 	// Create handler input channel
 	handlerInput := make(chan *message.Message)
-	handlerOutput := r.startWithHandlersOnly(ctx, handlerInput)
+	handlerOutput := r.startWithHandlers(ctx, handlerInput, handlers)
 
 	// Route incoming messages to pipes or handlers
 	go func() {
@@ -90,7 +121,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan
 		for msg := range msgs {
 			// Check if message matches any pipe
 			matched := false
-			for i, pe := range r.pipes {
+			for i, pe := range pipes {
 				if pe.match(msg.Attributes) {
 					pipeInputs[i] <- msg
 					matched = true
@@ -110,10 +141,10 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan
 	return channel.Merge(allOutputs...)
 }
 
-// startWithHandlersOnly processes messages through handlers only (no pipes).
-func (r *Router) startWithHandlersOnly(ctx context.Context, msgs <-chan *message.Message) <-chan *message.Message {
+// startWithHandlers processes messages through the given handlers.
+func (r *Router) startWithHandlers(ctx context.Context, msgs <-chan *message.Message, handlers []Handler) <-chan *message.Message {
 	handle := func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-		for _, h := range r.handlers {
+		for _, h := range handlers {
 			if h.Match(msg.Attributes) {
 				return h.Handle(ctx, msg)
 			}

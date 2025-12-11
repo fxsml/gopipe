@@ -123,8 +123,8 @@ emailHandler := cqrs.NewEventHandler(
 )
 
 // 5. Wire together with routers
-commandRouter := message.NewRouter(message.RouterConfig{}, createOrderHandler)
-eventRouter := message.NewRouter(message.RouterConfig{}, emailHandler)
+commandRouter := cqrs.NewRouter(cqrs.RouterConfig{}, createOrderHandler)
+eventRouter := cqrs.NewRouter(cqrs.RouterConfig{}, emailHandler)
 
 commands := make(chan *message.Message, 10)
 events := commandRouter.Start(ctx, commands)
@@ -334,11 +334,12 @@ func handleOrderCreated(ctx, evt) error {
 
 ✅ **Good:** Track end-to-end flows
 ```go
-cmd := cqrs.CreateCommand(marshaler, CreateOrder{...},
-    message.Attributes{
-        message.AttrCorrelationID: "corr-123",
-    },
-)
+data, _ := marshaler.Marshal(CreateOrder{...})
+msg := message.New(data, message.Attributes{
+    message.AttrCorrelationID: "corr-123",
+    message.AttrSubject: "CreateOrder",
+    message.AttrType: "CreateOrder",
+})
 ```
 
 ### 6. One Event Can Have Multiple Handlers

@@ -55,10 +55,15 @@ type SubscriberConfig struct {
 //	orders := subscriber.Subscribe(ctx, "orders.created")
 //	payments := subscriber.Subscribe(ctx, "payments.completed")
 //	merged := channel.Merge(orders, payments)
+//
+// Panics if receiver is nil.
 func NewSubscriber(
 	receiver Receiver,
 	config SubscriberConfig,
 ) *Subscriber {
+	if receiver == nil {
+		panic("pubsub: receiver cannot be nil")
+	}
 	opts := []gopipe.Option[struct{}, *message.Message]{
 		gopipe.WithLogConfig[struct{}, *message.Message](gopipe.LogConfig{
 			MessageSuccess: "Received messages",

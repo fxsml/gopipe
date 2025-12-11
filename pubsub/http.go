@@ -371,28 +371,32 @@ type topicMessage struct {
 
 // HTTPReceiver receives messages via HTTP POST requests.
 type HTTPReceiver struct {
-	config     HTTPConfig
-	mu         sync.Mutex
-	messages   map[string][]topicMessage // keyed by topic
-	readIndex  map[string]int            // track read position per topic
-	closed     bool
-	bufferSize int
+	config          HTTPConfig
+	mu              sync.Mutex
+	messages        map[string][]topicMessage // keyed by topic
+	readIndex       map[string]int            // track read position per topic
+	closed          bool
+	bufferSize      int
+	maxBufferPerTopic int
 }
 
 // Compile-time interface assertion
 var _ Receiver = (*HTTPReceiver)(nil)
 
 // NewHTTPReceiver creates a receiver that accepts messages via HTTP POST.
+// The bufferSize parameter controls the initial buffer capacity.
+// Messages are limited to 10000 per topic to prevent unbounded memory growth.
 func NewHTTPReceiver(config HTTPConfig, bufferSize int) *HTTPReceiver {
 	cfg := config.defaults()
 	if bufferSize <= 0 {
 		bufferSize = 100
 	}
 	return &HTTPReceiver{
-		config:     cfg,
-		messages:   make(map[string][]topicMessage),
-		readIndex:  make(map[string]int),
-		bufferSize: bufferSize,
+		config:            cfg,
+		messages:          make(map[string][]topicMessage),
+		readIndex:         make(map[string]int),
+		bufferSize:        bufferSize,
+		maxBufferPerTopic: 10000,
 	}
 }
 
@@ -448,11 +452,25 @@ func (r *HTTPReceiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	r.mu.Lock()
 	for _, tm := range messages {
-		r.messages[tm.topic] = append(r.messages[tm.topic], tm)
+		msgs := r.messages[tm.topic]
+		msgs = append(msgs, tm)
+		// Enforce max buffer limit to prevent unbounded memory growth
+		if len(msgs) > r.maxBufferPerTopic {
+			// Adjust read index when evicting messages
+			evictCount := len(msgs) - r.maxBufferPerTopic
+			if r.readIndex[tm.topic] > 0 {
+				r.readIndex[tm.topic] -= evictCount
+				if r.readIndex[tm.topic] < 0 {
+					r.readIndex[tm.topic] = 0
+				}
+			}
+			msgs = msgs[evictCount:]
+		}
+		r.messages[tm.topic] = msgs
 	}
 	r.mu.Unlock()
 
-	// TODO: WaitForAck support - for now just return appropriate status
+	// Note: WaitForAck is not fully implemented - returns appropriate status only
 	if r.config.WaitForAck {
 		w.WriteHeader(http.StatusOK)
 	} else {

@@ -348,7 +348,6 @@ Start ──► Layer 1 (cqrs)
 - `cqrs.NewEventHandler[Evt]()` - Type-safe event handlers
 - `cqrs.SagaCoordinator` interface - Workflow orchestration
 - `cqrs.JSONMarshaler` - JSON serialization (Protobuf coming soon)
-- `cqrs.CreateCommand()` / `CreateCommands()` - Message utilities
 
 See `examples/cqrs-package/` for complete usage example.
 

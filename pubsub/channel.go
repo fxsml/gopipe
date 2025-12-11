@@ -3,6 +3,7 @@ package pubsub
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -252,5 +253,5 @@ func (b *ChannelBroker) Close() error {
 
 func (b *ChannelBroker) nextSubID() string {
 	id := atomic.AddUint64(&b.nextID, 1)
-	return string(rune(id)) + "-sub"
+	return fmt.Sprintf("sub-%d", id)
 }

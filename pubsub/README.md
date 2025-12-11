@@ -93,7 +93,7 @@ Route messages to different brokers based on topic patterns:
 
 ```go
 // Create brokers
-memoryBroker := pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{})
+memoryBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
 natsBroker := createNATSBroker()
 
 // Route internal topics to memory, everything else to NATS
@@ -193,12 +193,12 @@ The package handles:
 
 ## Broker Implementations
 
-### In-Memory Broker
+### Channel Broker
 
-Fast, non-durable broker for testing and local development:
+Fast, in-process broker using Go channels for testing and local development:
 
 ```go
-broker := pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{
+broker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{
     CloseTimeout: 5 * time.Second,
     SendTimeout:  time.Second,
     BufferSize:   100,
@@ -265,15 +265,6 @@ The HTTP broker implements the [CloudEvents HTTP Protocol Binding v1.0.2](https:
 
 The receiver automatically detects the CloudEvents mode from the Content-Type header or presence of `ce-` headers. All standard CloudEvents attributes (id, source, specversion, type, subject, time, datacontenttype) are supported, along with gopipe extension attributes (topic, correlationid, deadline).
 
-### Channel Broker
-
-Broker backed by Go channels (for testing):
-
-```go
-sendChan := make(chan TopicMessage, 100)
-recvChan := make(chan TopicMessage, 100)
-broker := pubsub.NewChannelBroker(sendChan, recvChan)
-```
 
 ## Common Patterns
 
@@ -282,10 +273,10 @@ broker := pubsub.NewChannelBroker(sendChan, recvChan)
 ```go
 func createBroker() pubsub.Sender {
     if os.Getenv("ENV") == "development" {
-        return pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{})
+        return pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
     }
 
-    memory := pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{})
+    memory := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
     nats := createNATSBroker()
 
     selector := pubsub.PrefixSenderSelector("internal", memory)
@@ -309,7 +300,7 @@ publisher := pubsub.NewPublisher(multiplex, config)
 
 ```go
 // Fast in-memory for high-throughput internal events
-memoryBroker := pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{
+memoryBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{
     BufferSize: 10000,
 })
 
@@ -346,7 +337,7 @@ multiplex := pubsub.NewMultiplexSender(selector, usEastBroker) // Default
 
 ```go
 func TestMessageProcessing(t *testing.T) {
-    broker := pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{})
+    broker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
 
     publisher := pubsub.NewPublisher(
         broker,
@@ -375,8 +366,8 @@ func TestMessageProcessing(t *testing.T) {
 
 ```go
 func TestMultiplexRouting(t *testing.T) {
-    memoryBroker := pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{})
-    natsBroker := pubsub.NewInMemoryBroker(pubsub.InMemoryConfig{})
+    memoryBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
+    natsBroker := pubsub.NewChannelBroker(pubsub.ChannelBrokerConfig{})
 
     selector := pubsub.PrefixSenderSelector("internal", memoryBroker)
     multiplex := pubsub.NewMultiplexSender(selector, natsBroker)

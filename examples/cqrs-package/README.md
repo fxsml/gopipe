@@ -10,7 +10,6 @@ The `cqrs` package simplifies event-driven architecture by providing:
 - **NewEventHandler**: Type-safe event → side effects handlers
 - **SagaCoordinator**: Interface for workflow orchestration
 - **Marshaler**: Pluggable serialization (JSON, Protobuf)
-- **Utility functions**: CreateCommand, CreateCommands
 
 ## Architecture
 
@@ -107,13 +106,13 @@ func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message
 
         // ✅ Workflow logic: what happens next?
         // ✅ One event → multiple commands
-        return cqrs.CreateCommands(s.marshaler, corrID,
+        return createCommands(s.marshaler, corrID,
             ChargePayment{OrderID: evt.ID, Amount: evt.Amount},
             ReserveInventory{OrderID: evt.ID, SKU: "SKU-123"},
         ), nil
 
     case "PaymentCharged":
-        return cqrs.CreateCommands(s.marshaler, corrID,
+        return createCommands(s.marshaler, corrID,
             ShipOrder{OrderID: evt.OrderID},
         ), nil
 
@@ -122,6 +121,11 @@ func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message
     }
 
     return nil, nil
+}
+
+// createCommands is a helper to create command messages (see main.go)
+func createCommands(m cqrs.Marshaler, corrID string, cmds ...any) []*message.Message {
+    // ... implementation creates messages with proper attributes
 }
 ```
 
@@ -271,7 +275,7 @@ func handleEmail(ctx, evt OrderCreated) error {
 
 // ✅ Workflow logic (saga coordinator)
 func (s *OrderSagaCoordinator) OnEvent(ctx, msg) ([]*Message, error) {
-    return cqrs.CreateCommands(...)  // Workflow here!
+    return createCommands(...)  // Workflow here!
 }
 ```
 
