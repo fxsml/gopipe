@@ -38,7 +38,9 @@ func NewCommandPipe[In, Out any](
 		}
 		msg.Ack()
 		return *in, nil
-	})
+	}, gopipe.WithLogConfig[*message.Message, In](gopipe.LogConfig{
+		MessageFailure: "Failed to unmarshal message",
+	}))
 	marshal := gopipe.NewTransformPipe(func(ctx context.Context, out Out) (*message.Message, error) {
 		data, err := marshaler.Marshal(out)
 		if err != nil {
@@ -46,7 +48,9 @@ func NewCommandPipe[In, Out any](
 		}
 		msg := message.New(data, marshaler.Attributes(out))
 		return msg, nil
-	})
+	}, gopipe.WithLogConfig[Out, *message.Message](gopipe.LogConfig{
+		MessageFailure: "Failed to marshal message",
+	}))
 	return &pipeAdapter[In, Out]{
 		pipe:      pipe,
 		unmarshal: unmarshal,
