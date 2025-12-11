@@ -113,8 +113,8 @@ func (c IOConfig) defaults() IOConfig {
 	return cfg
 }
 
-// ioSender writes messages to an io.Writer as JSON Lines (JSONL).
-type ioSender struct {
+// IOSender writes messages to an io.Writer as JSON Lines (JSONL).
+type IOSender struct {
 	config    IOConfig
 	mu        sync.Mutex
 	writer    io.Writer
@@ -130,9 +130,9 @@ type ioSender struct {
 // Messages are encoded as JSON Lines (JSONL) - one CloudEvent per line.
 //
 // Use for: debug logging, recording messages to file, pipe-based output.
-func NewIOSender(w io.Writer, config IOConfig) Sender {
+func NewIOSender(w io.Writer, config IOConfig) *IOSender {
 	cfg := config.defaults()
-	return &ioSender{
+	return &IOSender{
 		config:    cfg,
 		writer:    w,
 		encoder:   json.NewEncoder(w),
@@ -142,7 +142,7 @@ func NewIOSender(w io.Writer, config IOConfig) Sender {
 
 // Send writes all messages to the underlying writer in CloudEvents JSON format.
 // The topic is stored in the CloudEvent "topic" extension for later filtering.
-func (s *ioSender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
+func (s *IOSender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -180,15 +180,15 @@ func (s *ioSender) Send(ctx context.Context, topic string, msgs []*message.Messa
 }
 
 // Close marks the sender as closed. It does not close the underlying writer.
-func (s *ioSender) Close() error {
+func (s *IOSender) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
 	return nil
 }
 
-// ioReceiver reads messages from an io.Reader.
-type ioReceiver struct {
+// IOReceiver reads messages from an io.Reader.
+type IOReceiver struct {
 	config    IOConfig
 	mu        sync.Mutex
 	reader    *bufio.Reader
@@ -205,9 +205,9 @@ type ioReceiver struct {
 // Messages are decoded from JSON Lines (JSONL) - one CloudEvent per line.
 //
 // Use for: replay testing, reading debug logs, pipe-based input.
-func NewIOReceiver(r io.Reader, config IOConfig) Receiver {
+func NewIOReceiver(r io.Reader, config IOConfig) *IOReceiver {
 	cfg := config.defaults()
-	return &ioReceiver{
+	return &IOReceiver{
 		config:    cfg,
 		reader:    bufio.NewReaderSize(r, cfg.BufferSize),
 		marshaler: cfg.Marshaler,
@@ -216,7 +216,7 @@ func NewIOReceiver(r io.Reader, config IOConfig) Receiver {
 
 // Receive reads messages from the reader. Empty topic returns all messages;
 // non-empty topic filters by exact match on the serialized topic extension.
-func (r *ioReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
+func (r *IOReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
 	var result []*message.Message
 	timeout := r.config.ReceiveTimeout
 	if timeout == 0 {
@@ -255,7 +255,7 @@ func (r *ioReceiver) Receive(ctx context.Context, topic string) ([]*message.Mess
 }
 
 // readOne reads a single CloudEvent from the reader.
-func (r *ioReceiver) readOne(ctx context.Context) (*message.Message, string, error) {
+func (r *IOReceiver) readOne(ctx context.Context) (*message.Message, string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -285,7 +285,7 @@ func (r *ioReceiver) readOne(ctx context.Context) (*message.Message, string, err
 }
 
 // Close marks the receiver as closed. It does not close the underlying reader.
-func (r *ioReceiver) Close() error {
+func (r *IOReceiver) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.closed = true
@@ -295,12 +295,14 @@ func (r *ioReceiver) Close() error {
 // IOBroker combines Sender and Receiver for bidirectional IO streaming.
 // Primarily useful for pipe-based IPC (stdin/stdout) or testing scenarios.
 type IOBroker struct {
-	sender   *ioSender
-	receiver *ioReceiver
+	sender   *IOSender
+	receiver *IOReceiver
 }
 
 // Compile-time interface assertions
 var (
+	_ Sender   = (*IOSender)(nil)
+	_ Receiver = (*IOReceiver)(nil)
 	_ Sender   = (*IOBroker)(nil)
 	_ Receiver = (*IOBroker)(nil)
 )
@@ -316,8 +318,8 @@ var (
 func NewIOBroker(r io.Reader, w io.Writer, config IOConfig) *IOBroker {
 	cfg := config.defaults()
 	return &IOBroker{
-		sender:   NewIOSender(w, cfg).(*ioSender),
-		receiver: NewIOReceiver(r, cfg).(*ioReceiver),
+		sender:   NewIOSender(w, cfg),
+		receiver: NewIOReceiver(r, cfg),
 	}
 }
 
