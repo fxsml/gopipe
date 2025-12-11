@@ -121,7 +121,7 @@ func main() {
 
 	// Create JSON marshaler
 	marshaler := cqrs.NewJSONCommandMarshaler(
-		cqrs.WithType(),
+		cqrs.WithTypeOf(),
 	)
 
 	// Create command handler

@@ -22,7 +22,7 @@ type TestEvent struct {
 // automatically sets attributes using marshaler.Attributes()
 func TestNewCommandHandler_SetsType(t *testing.T) {
 	marshaler := NewJSONCommandMarshaler(
-		WithType(),
+		WithTypeOf(),
 	)
 
 	// Create command handler
@@ -133,7 +133,7 @@ func TestMatchTypeName_UsesType(t *testing.T) {
 		},
 	}
 
-	matcher := MatchTypeName[TestEvent]()
+	matcher := MatchGenericTypeOf[TestEvent]()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

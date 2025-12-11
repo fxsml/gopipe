@@ -37,7 +37,7 @@ type JSONCommandMarshaler struct {
 // Defaults to WithType() if no providers specified.
 func NewJSONCommandMarshaler(providers ...AttributeProvider) *JSONCommandMarshaler {
 	if len(providers) == 0 {
-		providers = []AttributeProvider{WithType()}
+		providers = []AttributeProvider{WithTypeOf()}
 	}
 	return &JSONCommandMarshaler{attrProviders: providers}
 }

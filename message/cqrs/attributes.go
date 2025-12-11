@@ -31,9 +31,9 @@ func CombineAttrs(providers ...AttributeProvider) AttributeProvider {
 // Built-in Attribute Providers
 // ============================================================================
 
-// WithType sets AttrType to the reflected type name of the value.
+// WithTypeOf sets AttrType to the reflected type name of the value.
 // Automatically applied by NewJSONCommandMarshaler if no providers specified.
-func WithType() AttributeProvider {
+func WithTypeOf() AttributeProvider {
 	return func(v any) message.Attributes {
 		t := reflect.TypeOf(v)
 		if t == nil {
@@ -43,6 +43,20 @@ func WithType() AttributeProvider {
 			t = t.Elem()
 		}
 		return message.Attributes{message.AttrType: t.Name()}
+	}
+}
+
+func WithGenericTypeOf[T any]() AttributeProvider {
+	typeName := GenericTypeOf[T]()
+	return func(v any) message.Attributes {
+		return message.Attributes{message.AttrType: typeName}
+	}
+}
+
+// WithType sets a static type attribute.
+func WithType(msgType string) AttributeProvider {
+	return func(v any) message.Attributes {
+		return message.Attributes{message.AttrType: msgType}
 	}
 }
 
@@ -73,4 +87,3 @@ func WithSource(source string) AttributeProvider {
 		return message.Attributes{message.AttrSource: source}
 	}
 }
-

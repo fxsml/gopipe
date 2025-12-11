@@ -23,14 +23,9 @@ type RouterConfig struct {
 type Router struct {
 	mu       sync.Mutex
 	handlers []Handler
-	pipes    []pipeEntry
+	pipes    []Pipe
 	config   RouterConfig
 	started  bool
-}
-
-type pipeEntry struct {
-	pipe  gopipe.Pipe[*Message, *Message]
-	match func(attrs Attributes) bool
 }
 
 // NewRouter creates a router with the given configuration.
@@ -56,17 +51,14 @@ func (r *Router) AddHandler(handler Handler) bool {
 
 // AddPipe adds a pipe that receives matching messages.
 // Returns false if the router has already started.
-func (r *Router) AddPipe(pipe Pipe, match func(attrs Attributes) bool) bool {
+func (r *Router) AddPipe(pipe Pipe) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if r.started {
 		return false
 	}
-	r.pipes = append(r.pipes, pipeEntry{
-		pipe:  pipe,
-		match: match,
-	})
+	r.pipes = append(r.pipes, pipe)
 	return true
 }
 
@@ -95,7 +87,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Messag
 
 	for i, pe := range pipes {
 		pipeInputs[i] = make(chan *Message)
-		pipeOutputs[i] = pe.pipe.Start(ctx, pipeInputs[i])
+		pipeOutputs[i] = pe.Start(ctx, pipeInputs[i])
 	}
 
 	// Create handler input channel
@@ -116,7 +108,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Messag
 			// Check if message matches any pipe
 			matched := false
 			for i, pe := range pipes {
-				if pe.match(msg.Attributes) {
+				if pe.Match(msg.Attributes) {
 					pipeInputs[i] <- msg
 					matched = true
 					break
