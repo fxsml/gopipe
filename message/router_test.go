@@ -683,3 +683,160 @@ func TestRouter_MatchCombination(t *testing.T) {
 		t.Errorf("Expected 2 nacks (partial matches), got %d", nackCount)
 	}
 }
+
+func TestRouter_NoHandlers(t *testing.T) {
+	router := message.NewRouter(message.RouterConfig{})
+	// No handlers added
+
+	var nackCalled bool
+	in := channel.FromValues(
+		message.NewWithAcking([]byte("test"), message.Attributes{message.AttrSubject: "test"},
+			func() {},
+			func(err error) { nackCalled = true }),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	out := router.Start(ctx, in)
+
+	var count int
+	for range out {
+		count++
+	}
+
+	if count != 0 {
+		t.Errorf("Expected 0 results with no handlers, got %d", count)
+	}
+	if !nackCalled {
+		t.Error("Expected nack to be called when no handler matches")
+	}
+}
+
+func TestRouter_EmptyInput(t *testing.T) {
+	handler := message.NewHandler(
+		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+			return []*message.Message{msg}, nil
+		},
+		func(attrs message.Attributes) bool { return true },
+	)
+
+	router := message.NewRouter(message.RouterConfig{})
+	router.AddHandler(handler)
+
+	// Empty input channel
+	in := make(chan *message.Message)
+	close(in)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	out := router.Start(ctx, in)
+
+	var count int
+	for range out {
+		count++
+	}
+
+	if count != 0 {
+		t.Errorf("Expected 0 results with empty input, got %d", count)
+	}
+}
+
+func TestRouter_OnlyPipes_NoHandlers(t *testing.T) {
+	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+		out := message.Copy(msg, []byte("piped"))
+		return []*message.Message{out}, nil
+	})
+
+	router := message.NewRouter(message.RouterConfig{})
+	router.AddPipe(message.NewPipe(pipe, message.MatchSubject("pipe-input")))
+	// No handlers added
+
+	in := channel.FromValues(
+		message.New([]byte("test"), message.Attributes{message.AttrSubject: "pipe-input"}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	out := router.Start(ctx, in)
+
+	var results []*message.Message
+	for msg := range out {
+		results = append(results, msg)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result from pipe, got %d", len(results))
+	}
+
+	if string(results[0].Data) != "piped" {
+		t.Errorf("Expected 'piped', got %s", string(results[0].Data))
+	}
+}
+
+func TestRouter_OnlyPipes_MessageNotMatchingPipe(t *testing.T) {
+	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+		out := message.Copy(msg, []byte("piped"))
+		return []*message.Message{out}, nil
+	})
+
+	router := message.NewRouter(message.RouterConfig{})
+	router.AddPipe(message.NewPipe(pipe, message.MatchSubject("pipe-input")))
+	// No handlers added
+
+	// Message doesn't match pipe - should fall through to handler (which doesn't exist)
+	var nackCalled bool
+	in := channel.FromValues(
+		message.NewWithAcking([]byte("test"), message.Attributes{message.AttrSubject: "other-input"},
+			func() {},
+			func(err error) { nackCalled = true }),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	out := router.Start(ctx, in)
+
+	var count int
+	for range out {
+		count++
+	}
+
+	if count != 0 {
+		t.Errorf("Expected 0 results when message doesn't match pipe, got %d", count)
+	}
+	if !nackCalled {
+		t.Error("Expected nack when message doesn't match any pipe and no handlers exist")
+	}
+}
+
+func TestRouter_NilInput(t *testing.T) {
+	handler := message.NewHandler(
+		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+			return []*message.Message{msg}, nil
+		},
+		func(attrs message.Attributes) bool { return true },
+	)
+
+	router := message.NewRouter(message.RouterConfig{})
+	router.AddHandler(handler)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	// Nil input channel
+	out := router.Start(ctx, nil)
+
+	// Should handle gracefully - either return nil or closed channel
+	if out != nil {
+		var count int
+		for range out {
+			count++
+		}
+		if count != 0 {
+			t.Errorf("Expected 0 results with nil input, got %d", count)
+		}
+	}
+}

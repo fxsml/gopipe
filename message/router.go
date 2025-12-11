@@ -64,7 +64,12 @@ func (r *Router) AddPipe(pipe Pipe) bool {
 
 // Start processes messages through matched handlers and pipes.
 // Can only be called once. Subsequent calls return nil.
+// Returns nil if msgs is nil.
 func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Message {
+	if msgs == nil {
+		return nil
+	}
+
 	r.mu.Lock()
 	if r.started {
 		r.mu.Unlock()
