@@ -238,7 +238,7 @@ Key observations:
 
 ## Implementation Notes
 
-This is a **proof-of-concept** showing how a dedicated `cqrs` package could work. The actual implementation would be in a separate package (`github.com/fxsml/gopipe/cqrs`) with:
+This is a **proof-of-concept** showing how a dedicated `cqrs` package could work. The actual implementation would be in a separate package (`github.com/fxsml/gopipe/message/cqrs`) with:
 
 1. **Marshaler interface** - Pluggable serialization (JSON, Protobuf, etc.)
 2. **CommandBus and EventBus** - Type-safe command sending and event publishing

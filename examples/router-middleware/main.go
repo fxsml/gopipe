@@ -9,7 +9,7 @@ import (
 
 	"github.com/fxsml/gopipe"
 	"github.com/fxsml/gopipe/channel"
-	"github.com/fxsml/gopipe/cqrs"
+	"github.com/fxsml/gopipe/message/cqrs"
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/middleware"
 )

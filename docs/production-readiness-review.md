@@ -189,7 +189,7 @@ r.mu.Unlock()
 
 ### 1.5 Missing Nil Validation in Constructors
 
-**File:** `/message/publisher.go:51-61`, `/message/subscriber.go:58`, `/cqrs/router.go:40`
+**File:** `/message/publisher.go:51-61`, `/message/subscriber.go:58`, `/message/router.go`
 **Severity:** 🔴 CRITICAL
 
 **Issue:**
@@ -422,7 +422,7 @@ if !ok {
 | Package | Coverage | Missing Tests |
 |---------|----------|---------------|
 | message | 85% | Concurrent acking edge cases |
-| cqrs | 70% | Error paths, util.go, matchers.go |
+| message/cqrs | 70% | Error paths, matchers.go |
 | middleware | 90% | Edge cases |
 | message/broker | 80% | HTTP receiver edge cases |
 

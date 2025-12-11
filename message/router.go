@@ -1,4 +1,4 @@
-package cqrs
+package message
 
 import (
 	"context"
@@ -8,12 +8,6 @@ import (
 
 	"github.com/fxsml/gopipe"
 	"github.com/fxsml/gopipe/channel"
-	"github.com/fxsml/gopipe/message"
-)
-
-var (
-	// ErrInvalidMessagePayload indicates message payload marshal or unmarshal failure.
-	ErrInvalidMessagePayload = fmt.Errorf("invalid message payload")
 )
 
 // RouterConfig configures message routing behavior.
@@ -22,7 +16,7 @@ type RouterConfig struct {
 	Timeout     time.Duration
 	Retry       *gopipe.RetryConfig
 	Recover     bool
-	Middleware  []gopipe.MiddlewareFunc[*message.Message, *message.Message]
+	Middleware  []gopipe.MiddlewareFunc[*Message, *Message]
 }
 
 // Router dispatches messages to handlers based on attribute matching.
@@ -35,8 +29,8 @@ type Router struct {
 }
 
 type pipeEntry struct {
-	pipe  gopipe.Pipe[*message.Message, *message.Message]
-	match func(attrs message.Attributes) bool
+	pipe  gopipe.Pipe[*Message, *Message]
+	match func(attrs Attributes) bool
 }
 
 // NewRouter creates a router with the given configuration and handlers.
@@ -62,7 +56,7 @@ func (r *Router) AddHandler(handler Handler) bool {
 
 // AddPipe adds a pipe that receives matching messages.
 // Returns false if the router has already started.
-func (r *Router) AddPipe(pipe gopipe.Pipe[*message.Message, *message.Message], match func(attrs message.Attributes) bool) bool {
+func (r *Router) AddPipe(pipe gopipe.Pipe[*Message, *Message], match func(attrs Attributes) bool) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -78,7 +72,7 @@ func (r *Router) AddPipe(pipe gopipe.Pipe[*message.Message, *message.Message], m
 
 // Start processes messages through matched handlers and pipes.
 // Can only be called once. Subsequent calls return nil.
-func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan *message.Message {
+func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Message {
 	r.mu.Lock()
 	if r.started {
 		r.mu.Unlock()
@@ -96,16 +90,16 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan
 	}
 
 	// Start all pipes and create their input channels
-	pipeInputs := make([]chan *message.Message, len(pipes))
-	pipeOutputs := make([]<-chan *message.Message, len(pipes))
+	pipeInputs := make([]chan *Message, len(pipes))
+	pipeOutputs := make([]<-chan *Message, len(pipes))
 
 	for i, pe := range pipes {
-		pipeInputs[i] = make(chan *message.Message)
+		pipeInputs[i] = make(chan *Message)
 		pipeOutputs[i] = pe.pipe.Start(ctx, pipeInputs[i])
 	}
 
 	// Create handler input channel
-	handlerInput := make(chan *message.Message)
+	handlerInput := make(chan *Message)
 	handlerOutput := r.startWithHandlers(ctx, handlerInput, handlers)
 
 	// Route incoming messages to pipes or handlers
@@ -142,8 +136,8 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *message.Message) <-chan
 }
 
 // startWithHandlers processes messages through the given handlers.
-func (r *Router) startWithHandlers(ctx context.Context, msgs <-chan *message.Message, handlers []Handler) <-chan *message.Message {
-	handle := func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+func (r *Router) startWithHandlers(ctx context.Context, msgs <-chan *Message, handlers []Handler) <-chan *Message {
+	handle := func(ctx context.Context, msg *Message) ([]*Message, error) {
 		for _, h := range handlers {
 			if h.Match(msg.Attributes) {
 				return h.Handle(ctx, msg)
@@ -154,34 +148,34 @@ func (r *Router) startWithHandlers(ctx context.Context, msgs <-chan *message.Mes
 		return nil, err
 	}
 
-	opts := []gopipe.Option[*message.Message, *message.Message]{
-		gopipe.WithLogConfig[*message.Message, *message.Message](gopipe.LogConfig{
+	opts := []gopipe.Option[*Message, *Message]{
+		gopipe.WithLogConfig[*Message, *Message](gopipe.LogConfig{
 			MessageSuccess: "Processed messages",
 			MessageFailure: "Failed to process messages",
 			MessageCancel:  "Canceled processing messages",
 		}),
-		gopipe.WithMetadataProvider[*message.Message, *message.Message](func(msg *message.Message) gopipe.Metadata {
+		gopipe.WithMetadataProvider[*Message, *Message](func(msg *Message) gopipe.Metadata {
 			metadata := gopipe.Metadata{}
 			if id, ok := msg.Attributes.ID(); ok {
-				metadata[message.AttrID] = id
+				metadata[AttrID] = id
 			}
 			if corr, ok := msg.Attributes.CorrelationID(); ok {
-				metadata[message.AttrCorrelationID] = corr
+				metadata[AttrCorrelationID] = corr
 			}
 			return metadata
 		}),
 	}
 	if r.config.Recover {
-		opts = append(opts, gopipe.WithRecover[*message.Message, *message.Message]())
+		opts = append(opts, gopipe.WithRecover[*Message, *Message]())
 	}
 	if r.config.Concurrency > 0 {
-		opts = append(opts, gopipe.WithConcurrency[*message.Message, *message.Message](r.config.Concurrency))
+		opts = append(opts, gopipe.WithConcurrency[*Message, *Message](r.config.Concurrency))
 	}
 	if r.config.Timeout > 0 {
-		opts = append(opts, gopipe.WithTimeout[*message.Message, *message.Message](r.config.Timeout))
+		opts = append(opts, gopipe.WithTimeout[*Message, *Message](r.config.Timeout))
 	}
 	if r.config.Retry != nil {
-		opts = append(opts, gopipe.WithRetryConfig[*message.Message, *message.Message](*r.config.Retry))
+		opts = append(opts, gopipe.WithRetryConfig[*Message, *Message](*r.config.Retry))
 	}
 	for _, m := range r.config.Middleware {
 		opts = append(opts, gopipe.WithMiddleware(m))

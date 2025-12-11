@@ -49,7 +49,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fxsml/gopipe/cqrs"
+	"github.com/fxsml/gopipe/message/cqrs"
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/message/broker"
 	"github.com/fxsml/gopipe/message/multiplex"

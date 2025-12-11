@@ -102,7 +102,7 @@ Simple by Default ──────► Advanced Features Pluggable
 ### Start Simple (Layer 1)
 
 ```go
-import "github.com/fxsml/gopipe/cqrs"
+import "github.com/fxsml/gopipe/message/cqrs"
 
 // Basic saga - broker handles retries
 coordinator := &OrderSagaCoordinator{}
@@ -115,8 +115,8 @@ processor := cqrs.NewEventProcessor(config, coordinator)
 
 ```go
 import (
-    "github.com/fxsml/gopipe/cqrs"
-    "github.com/fxsml/gopipe/cqrs/compensation"
+    "github.com/fxsml/gopipe/message/cqrs"
+    "github.com/fxsml/gopipe/message/cqrs/compensation"
 )
 
 // Saga with automatic compensations
@@ -132,8 +132,8 @@ processor := compensation.NewCompensatingSagaProcessor(config, coordinator)
 
 ```go
 import (
-    "github.com/fxsml/gopipe/cqrs"
-    "github.com/fxsml/gopipe/cqrs/outbox"
+    "github.com/fxsml/gopipe/message/cqrs"
+    "github.com/fxsml/gopipe/message/cqrs/outbox"
 )
 
 // Command handler with outbox

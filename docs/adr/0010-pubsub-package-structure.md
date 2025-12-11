@@ -10,7 +10,8 @@
 
 > **Update 2025-12-11:** The pub/sub functionality has been merged into the `message` package.
 > The separate `pubsub` package no longer exists. Broker implementations, multiplex routing,
-> and CloudEvents support are now subpackages of `message/`.
+> CloudEvents support, and CQRS handlers are now subpackages of `message/`. Additionally,
+> Router, Handler, and Matcher types have been moved to the `message` package.
 
 ## Context
 
@@ -25,6 +26,8 @@ Keep the `Sender` and `Receiver` interfaces in the `message` package alongside t
 ```
 message/
 ├── message.go      # Message, Attributes, Sender, Receiver interfaces
+├── handler.go      # Handler interface, Matcher, basic matchers
+├── router.go       # Router for message dispatch
 ├── publisher.go    # Publisher with batching
 ├── subscriber.go   # Subscriber with gopipe integration
 ├── broker/         # Broker implementations
@@ -33,8 +36,12 @@ message/
 │   └── io.go       # IO broker for debugging/bridging (JSONL)
 ├── multiplex/      # Topic-based routing
 │   └── multiplex.go # Sender/Receiver routing by topic
-└── cloudevents/    # CloudEvents serialization
-    └── cloudevents.go
+├── cloudevents/    # CloudEvents serialization
+│   └── cloudevents.go
+└── cqrs/           # CQRS command/event handlers
+    ├── handler.go  # NewCommandHandler, NewEventHandler
+    ├── marshaler.go # CommandMarshaler, EventMarshaler
+    └── attributes.go # AttributeProvider utilities
 ```
 
 ### IO Broker (Debug/Management)
@@ -51,8 +58,9 @@ Topic handling:
 - **Send**: Writes all messages; topic preserved in CloudEvent "topic" extension
 - **Receive**: Empty topic returns all; non-empty topic filters by exact match
 
-Core interfaces (in `message` package):
+Core interfaces and types (in `message` package):
 ```go
+// Pub/sub interfaces
 type Sender interface {
     Send(ctx context.Context, topic string, msgs []*Message) error
 }
@@ -63,6 +71,19 @@ type Receiver interface {
 
 type Broker interface { Sender; Receiver }
 
+// Handler and routing
+type Handler interface {
+    Handle(ctx context.Context, msg *Message) ([]*Message, error)
+    Match(attrs Attributes) bool
+}
+
+type Matcher func(Attributes) bool
+
+type Router struct { ... }
+func NewRouter(config RouterConfig, handlers ...Handler) *Router
+func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Message
+
+// Publisher/Subscriber
 type Subscriber struct { ... }
 func (s *Subscriber) Subscribe(ctx context.Context, topic string) <-chan *Message
 
@@ -104,7 +125,9 @@ This design:
 
 ## Links
 
-- Interfaces: `github.com/fxsml/gopipe/message`
+- Core types: `github.com/fxsml/gopipe/message`
 - Broker implementations: `github.com/fxsml/gopipe/message/broker`
 - Multiplex routing: `github.com/fxsml/gopipe/message/multiplex`
+- CQRS handlers: `github.com/fxsml/gopipe/message/cqrs`
+- ADR 0006: CQRS Implementation
 - ADR 0012: Multiplex Pub/Sub

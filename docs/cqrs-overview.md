@@ -76,7 +76,7 @@ cqrs/outbox/              ← Transactional outbox (ADR 0009) 📋 Proposed
 ### Basic Example
 
 ```go
-import "github.com/fxsml/gopipe/cqrs"
+import "github.com/fxsml/gopipe/message/cqrs"
 
 // 1. Define command and event
 type CreateOrder struct {

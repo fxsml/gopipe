@@ -48,7 +48,7 @@ The `cqrs` package simplifies event-driven architecture by providing:
 ### 1. Command Handler (Type-Safe)
 
 ```go
-import "github.com/fxsml/gopipe/cqrs"
+import "github.com/fxsml/gopipe/message/cqrs"
 
 marshaler := cqrs.NewJSONMarshaler()
 

@@ -2,6 +2,10 @@
 
 **Date:** 2025-12-08
 **Status:** Implemented
+**Updated:** 2025-12-11
+
+> **Update 2025-12-11:** The `cqrs` package has been moved to `message/cqrs`. The core Router and
+> Handler types are now in the `message` package, with CQRS-specific handlers in `message/cqrs`.
 
 ## Context
 
@@ -9,7 +13,7 @@ CQRS (Command Query Responsibility Segregation) separates read and write operati
 
 ## Decision
 
-Implement a dedicated `cqrs` package with:
+Implement CQRS support in the `message/cqrs` package with:
 
 ```go
 // Marshaler for command/event serialization
@@ -58,4 +62,4 @@ Design principles: Type-safe, simple, flexible marshaling, explicit command/even
 - ADR 0007: Saga Coordinator Pattern
 - ADR 0008: Compensating Saga Pattern (proposed)
 - ADR 0009: Transactional Outbox Pattern (proposed)
-- Package: `github.com/fxsml/gopipe/cqrs`
+- Package: `github.com/fxsml/gopipe/message/cqrs`

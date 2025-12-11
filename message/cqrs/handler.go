@@ -6,44 +6,20 @@ import (
 	"github.com/fxsml/gopipe/message"
 )
 
-// Handler processes messages matching specific attributes.
-type Handler interface {
-	Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error)
-	Match(attrs message.Attributes) bool
-}
+// Handler is an alias for message.Handler for backward compatibility.
+type Handler = message.Handler
 
-type handler struct {
-	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error)
-	match  func(attrs message.Attributes) bool
-}
-
-func (h *handler) Handle(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-	return h.handle(ctx, msg)
-}
-
-func (h *handler) Match(attrs message.Attributes) bool {
-	return h.match(attrs)
-}
-
-// NewHandler creates a handler from message processing and matching functions.
-func NewHandler(
-	handle func(ctx context.Context, msg *message.Message) ([]*message.Message, error),
-	match func(attrs message.Attributes) bool,
-) Handler {
-	return &handler{
-		handle: handle,
-		match:  match,
-	}
-}
+// NewHandler is an alias for message.NewHandler for backward compatibility.
+var NewHandler = message.NewHandler
 
 // NewCommandHandler creates a command handler that processes commands and returns events.
 // The handler unmarshals commands, executes business logic, and marshals resulting events.
 func NewCommandHandler[Cmd, Evt any](
 	handle func(ctx context.Context, cmd Cmd) ([]Evt, error),
-	match Matcher,
+	match message.Matcher,
 	marshaler CommandMarshaler,
 ) Handler {
-	return NewHandler(
+	return message.NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			// Unmarshal command
 			var cmd Cmd
@@ -85,10 +61,10 @@ func NewCommandHandler[Cmd, Evt any](
 // Event handlers do not return output messages.
 func NewEventHandler[Evt any](
 	handle func(ctx context.Context, evt Evt) error,
-	match Matcher,
+	match message.Matcher,
 	marshaler EventMarshaler,
 ) Handler {
-	return NewHandler(
+	return message.NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			// Unmarshal event
 			var evt Evt
