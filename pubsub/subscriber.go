@@ -41,6 +41,13 @@ type SubscriberConfig struct {
 }
 
 // NewSubscriber creates a Subscriber that wraps a Receiver with gopipe processing.
+// The subscriber polls the receiver for messages and emits them on a channel.
+// Each call to Subscribe creates an independent subscription with its own polling goroutine.
+//
+// Note: Multiple subscriptions to the same topic are allowed. The behavior depends on the
+// underlying Receiver implementation - some may support competing consumers while others
+// may deliver duplicate messages.
+//
 // Panics if receiver is nil.
 func NewSubscriber(
 	receiver Receiver,
