@@ -8,9 +8,8 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub"
-	"github.com/fxsml/gopipe/pubsub/broker"
-	"github.com/fxsml/gopipe/pubsub/multiplex"
+	"github.com/fxsml/gopipe/message/broker"
+	"github.com/fxsml/gopipe/message/multiplex"
 )
 
 // ============================================================================
@@ -127,7 +126,7 @@ func TestSender_NilFallbackPanics(t *testing.T) {
 		}
 	}()
 
-	selector := func(topic string) pubsub.Sender { return nil }
+	selector := func(topic string) message.Sender { return nil }
 	multiplex.NewSender(selector, nil) // Should panic
 }
 
@@ -198,7 +197,7 @@ func TestReceiver_NilFallbackPanics(t *testing.T) {
 		}
 	}()
 
-	selector := func(topic string) pubsub.Receiver { return nil }
+	selector := func(topic string) message.Receiver { return nil }
 	multiplex.NewReceiver(selector, nil) // Should panic
 }
 
@@ -431,9 +430,9 @@ func TestIntegration_WithPublisher(t *testing.T) {
 	multiplexSender := multiplex.NewSender(selector, externalBroker)
 
 	// Create publisher using multiplex sender
-	publisher := pubsub.NewPublisher(
+	publisher := message.NewPublisher(
 		multiplexSender,
-		pubsub.PublisherConfig{
+		message.PublisherConfig{
 			MaxBatchSize: 10,
 		},
 	)

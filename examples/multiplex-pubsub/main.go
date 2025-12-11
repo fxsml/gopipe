@@ -8,9 +8,8 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub"
-	"github.com/fxsml/gopipe/pubsub/broker"
-	"github.com/fxsml/gopipe/pubsub/multiplex"
+	"github.com/fxsml/gopipe/message/broker"
+	"github.com/fxsml/gopipe/message/multiplex"
 )
 
 func main() {
@@ -49,9 +48,9 @@ func example1_PrefixRouting() {
 	multiplexSender := multiplex.NewSender(selector, externalBroker)
 
 	// Create publisher using multiplex sender
-	publisher := pubsub.NewPublisher(
+	publisher := message.NewPublisher(
 		multiplexSender,
-		pubsub.PublisherConfig{
+		message.PublisherConfig{
 			MaxBatchSize: 10,
 		},
 	)

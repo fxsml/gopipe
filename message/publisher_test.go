@@ -1,4 +1,4 @@
-package pubsub_test
+package message_test
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"github.com/fxsml/gopipe"
 	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub"
 )
 
 // Mock sender for testing
@@ -85,9 +84,9 @@ func (m *mockReceiver) Receive(ctx context.Context, topic string) ([]*message.Me
 
 func TestPublisher_Basic(t *testing.T) {
 	sender := newMockSender()
-	publisher := pubsub.NewPublisher(
+	publisher := message.NewPublisher(
 		sender,
-		pubsub.PublisherConfig{
+		message.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
 		},
@@ -136,9 +135,9 @@ func TestPublisher_Basic(t *testing.T) {
 
 func TestPublisher_Batching(t *testing.T) {
 	sender := newMockSender()
-	publisher := pubsub.NewPublisher(
+	publisher := message.NewPublisher(
 		sender,
-		pubsub.PublisherConfig{
+		message.PublisherConfig{
 			MaxBatchSize: 3,
 			MaxDuration:  time.Hour,
 		},
@@ -169,9 +168,9 @@ func TestPublisher_ErrorHandling(t *testing.T) {
 	sender := newMockSender()
 	sender.sendErr = testErr
 
-	publisher := pubsub.NewPublisher(
+	publisher := message.NewPublisher(
 		sender,
-		pubsub.PublisherConfig{
+		message.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
 			Retry: &gopipe.RetryConfig{
@@ -207,9 +206,9 @@ func TestPublisher_Concurrency(t *testing.T) {
 		return nil
 	}
 
-	publisher := pubsub.NewPublisher(
+	publisher := message.NewPublisher(
 		sender,
-		pubsub.PublisherConfig{
+		message.PublisherConfig{
 			MaxBatchSize: 1,
 			MaxDuration:  time.Hour,
 			Concurrency:  3,
@@ -252,9 +251,9 @@ func TestSubscriber_Basic(t *testing.T) {
 		return nil, ctx.Err()
 	}
 
-	subscriber := pubsub.NewSubscriber(
+	subscriber := message.NewSubscriber(
 		receiver,
-		pubsub.SubscriberConfig{},
+		message.SubscriberConfig{},
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -280,9 +279,9 @@ func TestSubscriber_ErrorHandling(t *testing.T) {
 	receiver := newMockReceiver()
 	receiver.receiveErr = testErr
 
-	subscriber := pubsub.NewSubscriber(
+	subscriber := message.NewSubscriber(
 		receiver,
-		pubsub.SubscriberConfig{
+		message.SubscriberConfig{
 			Retry: &gopipe.RetryConfig{
 				MaxAttempts: 3,
 				Backoff:     gopipe.ConstantBackoff(time.Millisecond, 0),
@@ -318,9 +317,9 @@ func TestSubscriber_MultipleReceives(t *testing.T) {
 		}
 	}
 
-	subscriber := pubsub.NewSubscriber(
+	subscriber := message.NewSubscriber(
 		receiver,
-		pubsub.SubscriberConfig{},
+		message.SubscriberConfig{},
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -347,9 +346,9 @@ func TestPublisher_WithRecover(t *testing.T) {
 		panic("send panic")
 	}
 
-	publisher := pubsub.NewPublisher(
+	publisher := message.NewPublisher(
 		sender,
-		pubsub.PublisherConfig{
+		message.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
 			Recover:      true,
@@ -375,9 +374,9 @@ func TestSubscriber_WithRecover(t *testing.T) {
 		panic("receive panic")
 	}
 
-	subscriber := pubsub.NewSubscriber(
+	subscriber := message.NewSubscriber(
 		receiver,
-		pubsub.SubscriberConfig{
+		message.SubscriberConfig{
 			Recover: true,
 		},
 	)
@@ -419,9 +418,9 @@ func TestSubscriber_MultipleTopics(t *testing.T) {
 		return nil, ctx.Err()
 	}
 
-	subscriber := pubsub.NewSubscriber(
+	subscriber := message.NewSubscriber(
 		receiver,
-		pubsub.SubscriberConfig{},
+		message.SubscriberConfig{},
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -471,9 +470,9 @@ func TestSubscriber_NoMessages(t *testing.T) {
 		return nil, ctx.Err()
 	}
 
-	subscriber := pubsub.NewSubscriber(
+	subscriber := message.NewSubscriber(
 		receiver,
-		pubsub.SubscriberConfig{},
+		message.SubscriberConfig{},
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

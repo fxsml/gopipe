@@ -14,8 +14,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub"
-	"github.com/fxsml/gopipe/pubsub/cloudevents"
+	"github.com/fxsml/gopipe/message/cloudevents"
 )
 
 var (
@@ -166,7 +165,7 @@ type HTTPSender struct {
 }
 
 // Compile-time interface assertion
-var _ pubsub.Sender = (*HTTPSender)(nil)
+var _ message.Sender = (*HTTPSender)(nil)
 
 // NewHTTPSender creates a sender that POSTs messages to the given URL.
 func NewHTTPSender(url string, config HTTPConfig) *HTTPSender {
@@ -380,7 +379,7 @@ type HTTPReceiver struct {
 }
 
 // Compile-time interface assertion
-var _ pubsub.Receiver = (*HTTPReceiver)(nil)
+var _ message.Receiver = (*HTTPReceiver)(nil)
 
 // NewHTTPReceiver creates a receiver that accepts messages via HTTP POST.
 // The bufferSize parameter controls the initial buffer capacity.

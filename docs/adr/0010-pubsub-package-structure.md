@@ -1,23 +1,30 @@
-# ADR 0010: Pub/Sub Package Structure
+# ADR 0010: Message Package Structure
 
 **Date:** 2025-12-08
 **Status:** Implemented
+**Updated:** 2025-12-11
 
 > **Historical Note:** The Subscriber API was simplified from the proposed multi-topic design.
 > Instead of `AddTopic()` + `Subscribe()`, the actual API uses `Subscribe(ctx, topic)` per topic.
 > Multiple topics can be subscribed by calling `Subscribe` multiple times and merging channels.
 
+> **Update 2025-12-11:** The pub/sub functionality has been merged into the `message` package.
+> The separate `pubsub` package no longer exists. Broker implementations, multiplex routing,
+> and CloudEvents support are now subpackages of `message/`.
+
 ## Context
 
-Broker implementation was in `message/broker/` with interfaces in `message/pubsub.go`. This caused naming confusion (`broker.NewBroker()`), mixed core message types with pub/sub concepts, and unclear API surface.
+Initially, broker implementation was in `message/broker/` with interfaces in `message/pubsub.go`. This caused naming confusion (`broker.NewBroker()`), mixed core message types with pub/sub concepts, and unclear API surface.
+
+A separate `pubsub` package was created, but this added unnecessary separation between closely related concepts. The `Sender` and `Receiver` interfaces are core to message handling and belong with the `Message` type.
 
 ## Decision
 
-Create dedicated `pubsub` package at top level with broker implementations in a subpackage:
+Keep the `Sender` and `Receiver` interfaces in the `message` package alongside the core `Message` type. Publisher and Subscriber are also part of the `message` package. Broker implementations, multiplex routing, and CloudEvents support are in subpackages:
 
 ```
-pubsub/
-├── broker.go       # Sender, Receiver, Broker interfaces
+message/
+├── message.go      # Message, Attributes, Sender, Receiver interfaces
 ├── publisher.go    # Publisher with batching
 ├── subscriber.go   # Subscriber with gopipe integration
 ├── broker/         # Broker implementations
@@ -41,23 +48,23 @@ Use cases:
 - Pipe-based IPC: stdin/stdout communication between processes
 
 Topic handling:
-- **Send**: Writes all messages; topic preserved in CloudEvent extension
+- **Send**: Writes all messages; topic preserved in CloudEvent "topic" extension
 - **Receive**: Empty topic returns all; non-empty topic filters by exact match
 
-Core interfaces:
+Core interfaces (in `message` package):
 ```go
 type Sender interface {
-    Send(ctx context.Context, topic string, msgs []*message.Message) error
+    Send(ctx context.Context, topic string, msgs []*Message) error
 }
 
 type Receiver interface {
-    Receive(ctx context.Context, topic string) ([]*message.Message, error)
+    Receive(ctx context.Context, topic string) ([]*Message, error)
 }
 
 type Broker interface { Sender; Receiver }
 
 type Subscriber struct { ... }
-func (s *Subscriber) Subscribe(ctx context.Context, topic string) <-chan *message.Message
+func (s *Subscriber) Subscribe(ctx context.Context, topic string) <-chan *Message
 
 type Publisher struct { ... }
 func (p *Publisher) Publish(ctx, msgs) <-chan struct{}
@@ -70,7 +77,7 @@ The Subscriber uses a simple per-topic approach:
 2. **Merging**: Use `channel.Merge()` to combine multiple topic channels if needed
 
 ```go
-subscriber := pubsub.NewSubscriber(broker, pubsub.SubscriberConfig{})
+subscriber := message.NewSubscriber(broker, message.SubscriberConfig{})
 orders := subscriber.Subscribe(ctx, "orders.created")
 payments := subscriber.Subscribe(ctx, "payments.completed")
 msgs := channel.Merge(orders, payments)
@@ -85,20 +92,19 @@ This design:
 ## Consequences
 
 **Positive:**
-- Clear separation: core `message` vs `pubsub` vs `pubsub/broker`
+- Unified package: core `Message`, `Sender`, `Receiver` all in `message`
+- Clear hierarchy: `message/broker`, `message/multiplex`, `message/cloudevents`
 - Descriptive constructors: `broker.NewChannelBroker()`, `broker.NewHTTPSender()`
-- Clean import paths: interfaces in `pubsub`, implementations in `pubsub/broker`
 - Extensible: easy to add new broker implementations
 - Subscriber supports multi-topic subscription with merged output
 
 **Negative:**
-- Breaking change: existing imports need updating
-- More packages to understand
+- Breaking change: existing imports need updating (from `pubsub` to `message`)
+- More subpackages to understand
 
 ## Links
 
-- Interfaces: `github.com/fxsml/gopipe/pubsub`
-- Broker implementations: `github.com/fxsml/gopipe/pubsub/broker`
-- Multiplex routing: `github.com/fxsml/gopipe/pubsub/multiplex`
+- Interfaces: `github.com/fxsml/gopipe/message`
+- Broker implementations: `github.com/fxsml/gopipe/message/broker`
+- Multiplex routing: `github.com/fxsml/gopipe/message/multiplex`
 - ADR 0012: Multiplex Pub/Sub
-- Supersedes: ADR-25 Interface Broker

@@ -19,7 +19,7 @@ All issues have been resolved in commit `a695139`.
 
 ## 0. InMemoryBroker vs ChannelBroker ✅ RESOLVED
 
-**Resolution**: Removed both, created unified `ChannelBroker` type in `pubsub/broker.go`.
+**Resolution**: Removed both, created unified `ChannelBroker` type in `message/broker/channel.go`.
 
 ```go
 // New unified ChannelBroker
@@ -44,9 +44,8 @@ func (b *ChannelBroker) Send(ctx context.Context, topic string, msgs []*message.
 func (b *ChannelBroker) Receive(ctx context.Context, topic string) ([]*message.Message, error)
 ```
 
-Files deleted:
-- `pubsub/memory.go` (old InMemoryBroker)
-- `pubsub/channel.go` (old ChannelBroker)
+Files consolidated into:
+- `message/broker/channel.go` (unified ChannelBroker)
 
 ---
 
@@ -55,25 +54,26 @@ Files deleted:
 **Resolution**: All constructors now return concrete types with compile-time interface assertions.
 
 ```go
-// pubsub/broker.go
+// message/broker/channel.go
 var (
-    _ Sender   = (*ChannelBroker)(nil)
-    _ Receiver = (*ChannelBroker)(nil)
+    _ message.Sender   = (*ChannelBroker)(nil)
+    _ message.Receiver = (*ChannelBroker)(nil)
 )
 func NewChannelBroker(config ChannelBrokerConfig) *ChannelBroker
 
-// pubsub/http.go
-var _ Sender = (*HTTPSender)(nil)
-var _ Receiver = (*HTTPReceiver)(nil)
+// message/broker/http.go
+var _ message.Sender = (*HTTPSender)(nil)
+var _ message.Receiver = (*HTTPReceiver)(nil)
 func NewHTTPSender(url string, config HTTPConfig) *HTTPSender
 func NewHTTPReceiver(config HTTPConfig, bufferSize int) *HTTPReceiver
 
-// pubsub/io.go
+// message/broker/io.go
 var (
-    _ Sender   = (*IOBroker)(nil)
-    _ Receiver = (*IOBroker)(nil)
+    _ message.Sender   = (*IOSender)(nil)
+    _ message.Receiver = (*IOReceiver)(nil)
 )
-func NewIOBroker(r io.Reader, w io.Writer, config IOConfig) *IOBroker
+func NewIOSender(w io.Writer, config IOConfig) *IOSender
+func NewIOReceiver(r io.Reader, config IOConfig) *IOReceiver
 ```
 
 ---
@@ -195,9 +195,8 @@ done := publisher.Publish(ctx, output)
 {Topic: "internal/cache", Sender: memoryBroker}
 
 // Prefix matching still available via helper
-selector := pubsub.PrefixSenderSelector("internal", memoryBroker)
+selector := multiplex.PrefixSenderSelector("internal", memoryBroker)
 ```
 
 Files changed:
-- `pubsub/topics.go`: Removed `TopicMatcher`, kept only utility functions
-- `pubsub/multiplex.go`: `Pattern` field renamed to `Topic`, removed `matchTopicPattern()`
+- `message/multiplex/multiplex.go`: `Pattern` field renamed to `Topic`, exact match only

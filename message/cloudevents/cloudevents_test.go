@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub/cloudevents"
+	"github.com/fxsml/gopipe/message/cloudevents"
 )
 
 func TestFromMessage_Basic(t *testing.T) {

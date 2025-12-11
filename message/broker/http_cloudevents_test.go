@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub/broker"
+	"github.com/fxsml/gopipe/message/broker"
 )
 
 func TestHTTPCloudEvents_BinaryMode(t *testing.T) {

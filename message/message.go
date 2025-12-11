@@ -1,8 +1,23 @@
 package message
 
 import (
+	"context"
 	"sync"
 )
+
+// Sender publishes messages to topics.
+type Sender interface {
+	// Send publishes messages to the specified topic.
+	// Returns an error if the operation fails or context is canceled.
+	Send(ctx context.Context, topic string, msgs []*Message) error
+}
+
+// Receiver consumes messages from topics.
+type Receiver interface {
+	// Receive retrieves messages from the specified topic.
+	// Behavior varies by implementation: may block, poll, or return buffered messages.
+	Receive(ctx context.Context, topic string) ([]*Message, error)
+}
 
 type ackType byte
 

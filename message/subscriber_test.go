@@ -1,4 +1,4 @@
-package pubsub
+package message
 
 import (
 	"context"
@@ -6,13 +6,11 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/fxsml/gopipe/message"
 )
 
 // mockReceiver is a test implementation of Receiver.
 type mockReceiver struct {
-	receiveFunc func(ctx context.Context, topic string) ([]*message.Message, error)
+	receiveFunc func(ctx context.Context, topic string) ([]*Message, error)
 	callCount   map[string]int
 	mu          sync.Mutex
 }
@@ -23,7 +21,7 @@ func newMockReceiver() *mockReceiver {
 	}
 }
 
-func (m *mockReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
+func (m *mockReceiver) Receive(ctx context.Context, topic string) ([]*Message, error) {
 	m.mu.Lock()
 	m.callCount[topic]++
 	m.mu.Unlock()
@@ -46,15 +44,15 @@ func TestSubscriber_Subscribe(t *testing.T) {
 	t.Run("single subscription", func(t *testing.T) {
 		mock := newMockReceiver()
 		callCount := 0
-		mock.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message, error) {
+		mock.receiveFunc = func(ctx context.Context, topic string) ([]*Message, error) {
 			callCount++
 			if callCount > 2 {
 				// Block to stop further calls
 				<-ctx.Done()
 				return nil, ctx.Err()
 			}
-			return []*message.Message{
-				message.New([]byte("msg1"), message.Attributes{}),
+			return []*Message{
+				New([]byte("msg1"), Attributes{}),
 			}, nil
 		}
 
@@ -65,7 +63,7 @@ func TestSubscriber_Subscribe(t *testing.T) {
 
 		msgs := subscriber.Subscribe(ctx, "test.topic")
 
-		var received []*message.Message
+		var received []*Message
 		for msg := range msgs {
 			received = append(received, msg)
 			if len(received) >= 2 {
@@ -81,14 +79,14 @@ func TestSubscriber_Subscribe(t *testing.T) {
 
 	t.Run("multiple subscriptions to different topics", func(t *testing.T) {
 		mock := newMockReceiver()
-		mock.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message, error) {
+		mock.receiveFunc = func(ctx context.Context, topic string) ([]*Message, error) {
 			if mock.getCallCount(topic) > 1 {
 				// Block to stop further calls for this topic
 				<-ctx.Done()
 				return nil, ctx.Err()
 			}
-			return []*message.Message{
-				message.New([]byte(topic), message.Attributes{}),
+			return []*Message{
+				New([]byte(topic), Attributes{}),
 			}, nil
 		}
 
@@ -123,14 +121,14 @@ func TestSubscriber_Subscribe(t *testing.T) {
 
 	t.Run("multiple subscriptions to same topic", func(t *testing.T) {
 		mock := newMockReceiver()
-		mock.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message, error) {
+		mock.receiveFunc = func(ctx context.Context, topic string) ([]*Message, error) {
 			if mock.getCallCount(topic) > 4 {
 				// Block to stop further calls
 				<-ctx.Done()
 				return nil, ctx.Err()
 			}
-			return []*message.Message{
-				message.New([]byte("msg"), message.Attributes{}),
+			return []*Message{
+				New([]byte("msg"), Attributes{}),
 			}, nil
 		}
 
@@ -163,13 +161,13 @@ func TestSubscriber_Subscribe(t *testing.T) {
 
 	t.Run("subscription respects context cancellation", func(t *testing.T) {
 		mock := newMockReceiver()
-		mock.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message, error) {
+		mock.receiveFunc = func(ctx context.Context, topic string) ([]*Message, error) {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case <-time.After(10 * time.Millisecond):
-				return []*message.Message{
-					message.New([]byte("msg"), message.Attributes{}),
+				return []*Message{
+					New([]byte("msg"), Attributes{}),
 				}, nil
 			}
 		}
@@ -212,13 +210,13 @@ func TestSubscriber_Subscribe(t *testing.T) {
 	t.Run("subscription with config options", func(t *testing.T) {
 		mock := newMockReceiver()
 		callCount := 0
-		mock.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message, error) {
+		mock.receiveFunc = func(ctx context.Context, topic string) ([]*Message, error) {
 			callCount++
 			if callCount > 2 {
 				return nil, errors.New("done")
 			}
-			return []*message.Message{
-				message.New([]byte("msg"), message.Attributes{}),
+			return []*Message{
+				New([]byte("msg"), Attributes{}),
 			}, nil
 		}
 
@@ -233,7 +231,7 @@ func TestSubscriber_Subscribe(t *testing.T) {
 
 		msgs := subscriber.Subscribe(ctx, "test.topic")
 
-		var received []*message.Message
+		var received []*Message
 		for msg := range msgs {
 			received = append(received, msg)
 			if len(received) >= 2 {
@@ -250,14 +248,14 @@ func TestSubscriber_Subscribe(t *testing.T) {
 func TestSubscriber_SubscribeMultipleCalls(t *testing.T) {
 	t.Run("Subscribe can be called multiple times", func(t *testing.T) {
 		mock := newMockReceiver()
-		mock.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message, error) {
+		mock.receiveFunc = func(ctx context.Context, topic string) ([]*Message, error) {
 			if mock.getCallCount(topic) > 10 {
 				// Block after many messages to allow all subscriptions to get at least one
 				<-ctx.Done()
 				return nil, ctx.Err()
 			}
-			return []*message.Message{
-				message.New([]byte(topic), message.Attributes{}),
+			return []*Message{
+				New([]byte(topic), Attributes{}),
 			}, nil
 		}
 
@@ -267,7 +265,7 @@ func TestSubscriber_SubscribeMultipleCalls(t *testing.T) {
 		defer cancel()
 
 		// Call Subscribe multiple times with different topics
-		channels := []<-chan *message.Message{
+		channels := []<-chan *Message{
 			subscriber.Subscribe(ctx, "topic1"),
 			subscriber.Subscribe(ctx, "topic2"),
 			subscriber.Subscribe(ctx, "topic3"),
@@ -296,14 +294,14 @@ func TestSubscriber_SubscribeMultipleCalls(t *testing.T) {
 
 	t.Run("Multiple subscriptions to same topic are independent", func(t *testing.T) {
 		mock := newMockReceiver()
-		mock.receiveFunc = func(ctx context.Context, topic string) ([]*message.Message, error) {
+		mock.receiveFunc = func(ctx context.Context, topic string) ([]*Message, error) {
 			if mock.getCallCount(topic) > 10 {
 				// Block after some messages
 				<-ctx.Done()
 				return nil, ctx.Err()
 			}
-			return []*message.Message{
-				message.New([]byte("msg"), message.Attributes{}),
+			return []*Message{
+				New([]byte("msg"), Attributes{}),
 			}, nil
 		}
 

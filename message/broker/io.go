@@ -47,8 +47,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub"
-	"github.com/fxsml/gopipe/pubsub/cloudevents"
+	"github.com/fxsml/gopipe/message/cloudevents"
 )
 
 var (
@@ -301,10 +300,10 @@ type IOBroker struct {
 
 // Compile-time interface assertions
 var (
-	_ pubsub.Sender   = (*IOSender)(nil)
-	_ pubsub.Receiver = (*IOReceiver)(nil)
-	_ pubsub.Sender   = (*IOBroker)(nil)
-	_ pubsub.Receiver = (*IOBroker)(nil)
+	_ message.Sender   = (*IOSender)(nil)
+	_ message.Receiver = (*IOReceiver)(nil)
+	_ message.Sender   = (*IOBroker)(nil)
+	_ message.Receiver = (*IOBroker)(nil)
 )
 
 // NewIOBroker creates a broker that reads from r and writes to w.

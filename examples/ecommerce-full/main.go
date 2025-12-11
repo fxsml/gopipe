@@ -1,4 +1,4 @@
-// Package main demonstrates a full e-commerce system using gopipe pubsub.
+// Package main demonstrates a full e-commerce system using gopipe message.
 //
 // Architecture:
 //
@@ -51,9 +51,8 @@ import (
 
 	"github.com/fxsml/gopipe/cqrs"
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub"
-	"github.com/fxsml/gopipe/pubsub/broker"
-	"github.com/fxsml/gopipe/pubsub/multiplex"
+	"github.com/fxsml/gopipe/message/broker"
+	"github.com/fxsml/gopipe/message/multiplex"
 )
 
 // ============================================================================
@@ -474,7 +473,7 @@ func main() {
 	// Setup Publisher
 	// ========================================================================
 
-	publisher := pubsub.NewPublisher(multiplexSender, pubsub.PublisherConfig{
+	publisher := message.NewPublisher(multiplexSender, message.PublisherConfig{
 		MaxBatchSize: 10,
 		MaxDuration:  100 * time.Millisecond,
 	})
@@ -501,7 +500,7 @@ func main() {
 
 	// NOTE: We end up not using this - see workaround below
 	// The Subscriber wrapper has issues with our mixed broker setup
-	_ = pubsub.NewSubscriber(channelBroker, pubsub.SubscriberConfig{
+	_ = message.NewSubscriber(channelBroker, message.SubscriberConfig{
 		Concurrency: 1,
 	})
 	// PROBLEM: We need to subscribe to multiple topic patterns

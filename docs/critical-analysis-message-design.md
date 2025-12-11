@@ -2,10 +2,14 @@
 
 **Date:** 2025-12-08
 **Status:** Historical (Superseded by Implementation)
+**Updated:** 2025-12-11
 
 > **Note:** This document was an analysis that informed the actual implementation.
 > The final structure differs slightly - see [ADR 0010](./adr/0010-pubsub-package-structure.md) for the
-> actual package structure: interfaces in `pubsub/`, implementations in `pubsub/broker/`.
+> actual package structure: interfaces in `message/`, implementations in `message/broker/`.
+>
+> **Update 2025-12-11:** The `pubsub` package has been merged into `message`. All references to
+> `pubsub/` paths should be read as `message/` paths.
 
 This document provides a critical analysis of gopipe's current message design and broker architecture, examining three key areas:
 

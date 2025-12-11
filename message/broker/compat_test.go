@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pubsub/broker"
+	"github.com/fxsml/gopipe/message/broker"
 )
 
 // TestIOCompatibility ensures IO sender and receiver are compatible:

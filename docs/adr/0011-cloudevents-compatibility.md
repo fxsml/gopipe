@@ -47,5 +47,5 @@ Mapping: gopipe AttrID -> id, AttrSubject -> subject, PropContentType -> datacon
 ## Links
 
 - CloudEvents Specification: https://cloudevents.io/
-- ADR 0010: Pub/Sub Package Structure
-- Future package: `pubsub/cloudevents`
+- ADR 0010: Message Package Structure
+- Package: `message/cloudevents`

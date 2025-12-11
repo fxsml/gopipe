@@ -2,6 +2,9 @@
 
 **Date:** 2025-12-08
 **Status:** Implemented
+**Updated:** 2025-12-11
+
+> **Update 2025-12-11:** Package moved from `pubsub/multiplex` to `message/multiplex`.
 
 ## Context
 
@@ -9,25 +12,25 @@ Applications often need to route messages to different broker implementations ba
 
 ## Decision
 
-Implement multiplexing layer in `pubsub/multiplex` package for routing to different Senders/Receivers:
+Implement multiplexing layer in `message/multiplex` package for routing to different Senders/Receivers:
 
 ```go
-// pubsub/multiplex package
-type SenderSelector func(topic string) pubsub.Sender
-type ReceiverSelector func(topic string) pubsub.Receiver
+// message/multiplex package
+type SenderSelector func(topic string) message.Sender
+type ReceiverSelector func(topic string) message.Receiver
 
 type Sender struct {
     selector SenderSelector
-    fallback pubsub.Sender  // Required, never nil
+    fallback message.Sender  // Required, never nil
 }
 
 type Receiver struct {
     selector ReceiverSelector
-    fallback pubsub.Receiver  // Required, never nil
+    fallback message.Receiver  // Required, never nil
 }
 
 // Helper selectors
-func PrefixSenderSelector(prefix string, sender pubsub.Sender) SenderSelector
+func PrefixSenderSelector(prefix string, sender message.Sender) SenderSelector
 func NewTopicSenderSelector(routes []TopicSenderRoute) SenderSelector
 func ChainSenderSelectors(selectors ...SenderSelector) SenderSelector
 ```
@@ -49,5 +52,5 @@ Pattern matching: "*" matches one segment, "**" matches multiple (dot-separated)
 
 ## Links
 
-- ADR 0010: Pub/Sub Package Structure
-- Package: `github.com/fxsml/gopipe/pubsub/multiplex`
+- ADR 0010: Message Package Structure
+- Package: `github.com/fxsml/gopipe/message/multiplex`

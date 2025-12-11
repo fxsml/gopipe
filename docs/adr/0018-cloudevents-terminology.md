@@ -56,7 +56,7 @@ Align gopipe's terminology with CloudEvents spec v1.0.2:
 | `Attributes.CreatedAt()` | `Attributes.EventTime()` |
 | `Attributes.ContentType()` | `Attributes.DataContentType()` |
 
-### Wire Format (pubsub/io.go)
+### Wire Format (message/broker/io.go)
 The `Envelope` struct for JSON Lines format updated:
 ```go
 type Envelope struct {

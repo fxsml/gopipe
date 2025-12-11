@@ -33,7 +33,7 @@ This document summarizes the research and analysis documents in this directory.
 2. Move broker to dedicated `pubsub` package ✅
 3. Add CloudEvents compatibility layer (proposed)
 
-**Outcome:** Implemented in ADR 0010 (Pub/Sub Package Structure), proposed in ADR 0011 (CloudEvents).
+**Outcome:** Implemented in ADR 0010 (Message Package Structure), proposed in ADR 0011 (CloudEvents).
 
 ## Design Analysis Documents
 

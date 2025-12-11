@@ -3,7 +3,7 @@
 **Date:** 2025-12-10
 **Updated:** 2025-12-11 - Critical, high, and medium issues addressed
 **Reviewer:** Comprehensive automated code review
-**Scope:** cqrs, middleware, message, pubsub packages + examples + documentation
+**Scope:** cqrs, middleware, message packages (including message/broker, message/multiplex, message/cloudevents) + examples + documentation
 **Status:** ✅ PRODUCTION READY - Critical and high issues resolved
 
 ---
@@ -70,7 +70,7 @@ The gopipe project demonstrates **excellent architectural design** with clear se
 
 ### 1.1 Bug: Invalid UTF-8 in ChannelBroker Subscription IDs
 
-**File:** `/pubsub/broker/channel.go`
+**File:** `/message/broker/channel.go`
 **Severity:** 🔴 CRITICAL
 
 **Issue:**
@@ -153,7 +153,7 @@ attrs[message.AttrType] = t.Name()
 
 ### 1.4 HTTPReceiver Unbounded Memory Growth
 
-**File:** `/pubsub/broker/http.go`
+**File:** `/message/broker/http.go`
 **Severity:** 🔴 CRITICAL
 
 **Issue:**
@@ -189,7 +189,7 @@ r.mu.Unlock()
 
 ### 1.5 Missing Nil Validation in Constructors
 
-**File:** `/pubsub/publisher.go:51-61`, `/pubsub/subscriber.go:58`, `/cqrs/router.go:40`
+**File:** `/message/publisher.go:51-61`, `/message/subscriber.go:58`, `/cqrs/router.go:40`
 **Severity:** 🔴 CRITICAL
 
 **Issue:**
@@ -258,7 +258,7 @@ func MatchType(msgType string) Matcher {
 
 ### 2.2 ~~Incomplete Feature: WaitForAck in HTTPSender~~ ✅ RESOLVED
 
-**File:** `/pubsub/broker/http.go`
+**File:** `/message/broker/http.go`
 **Severity:** 🟠 HIGH → ✅ RESOLVED
 
 **Issue:** WaitForAck config option existed but didn't actually wait for acknowledgment.
@@ -294,7 +294,7 @@ func TestMessage_ConcurrentAcking(t *testing.T) { ... }
 
 ### 2.4 Documentation: InMemoryBroker References
 
-**File:** `/pubsub/README.md` (lines 96, 199, 312, 349, 378, 379)
+**File:** `/message/broker/` documentation (previously pubsub/README.md)
 **Severity:** 🟠 HIGH
 
 **Issue:** Documentation references `pubsub.NewInMemoryBroker()` which doesn't exist.
@@ -424,7 +424,7 @@ if !ok {
 | message | 85% | Concurrent acking edge cases |
 | cqrs | 70% | Error paths, util.go, matchers.go |
 | middleware | 90% | Edge cases |
-| pubsub | 80% | HTTP receiver edge cases |
+| message/broker | 80% | HTTP receiver edge cases |
 
 ### Critical Gaps
 
