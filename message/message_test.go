@@ -2,7 +2,6 @@ package message_test
 
 import (
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -15,24 +14,23 @@ func TestMessage_NewMessage(t *testing.T) {
 	deadline := time.Now().Add(1 * time.Hour)
 	var ackCalled, nackCalled bool
 
-	msg := message.New("payload",
-		message.WithDeadline[string](deadline),
-		message.WithAcking[string](
-			func() { ackCalled = true },
-			func(error) { nackCalled = true },
-		),
-		message.WithProperty[string]("key", "value"),
-	)
+	props := message.Attributes{
+		message.AttrDeadline: deadline,
+		"key":                "value",
+	}
+	msg := message.NewWithAcking("payload", props,
+		func() { ackCalled = true },
+		func(error) { nackCalled = true })
 
-	if val, ok := msg.Properties().Get("key"); !ok || val != "value" {
+	if val, ok := msg.Attributes["key"]; !ok || val != "value" {
 		t.Errorf("Expected properties key='value', got %v", val)
 	}
 
-	if msg.Payload() != "payload" {
-		t.Errorf("Expected Payload 'payload', got %v", msg.Payload())
+	if msg.Data != "payload" {
+		t.Errorf("Expected Payload 'payload', got %v", msg.Data)
 	}
 
-	if msgDeadline, ok := msg.Deadline(); !ok || msgDeadline != deadline {
+	if msgDeadline, ok := msg.Attributes.Deadline(); !ok || msgDeadline != deadline {
 		t.Errorf("Expected deadline %v, got %v (ok=%v)", deadline, msgDeadline, ok)
 	}
 
@@ -54,12 +52,9 @@ func TestMessage_AckIdempotency(t *testing.T) {
 	t.Parallel()
 
 	var ackCount int
-	msg := message.New(42,
-		message.WithAcking[int](
-			func() { ackCount++ },
-			func(error) {},
-		),
-	)
+	msg := message.NewWithAcking(42, nil,
+		func() { ackCount++ },
+		func(error) {})
 
 	// First ack should succeed
 	if !msg.Ack() {
@@ -81,15 +76,12 @@ func TestMessage_NackIdempotency(t *testing.T) {
 
 	var nackCount int
 	var capturedErr error
-	msg := message.New(42,
-		message.WithAcking[int](
-			func() {},
-			func(err error) {
-				nackCount++
-				capturedErr = err
-			},
-		),
-	)
+	msg := message.NewWithAcking(42, nil,
+		func() {},
+		func(err error) {
+			nackCount++
+			capturedErr = err
+		})
 
 	testErr := errors.New("test error")
 
@@ -118,28 +110,28 @@ func TestMessage_Copy(t *testing.T) {
 	deadline := time.Now().Add(1 * time.Hour)
 	var ackCalled bool
 
-	original := message.New("original",
-		message.WithDeadline[string](deadline),
-		message.WithAcking[string](
-			func() { ackCalled = true },
-			func(error) {},
-		),
-		message.WithProperty[string]("key", "value"),
-	)
+	props := message.Attributes{
+		message.AttrDeadline: deadline,
+		"key":                "value",
+	}
+
+	original := message.NewWithAcking("original", props,
+		func() { ackCalled = true },
+		func(error) {})
 
 	// Copy with new payload
 	copy := message.Copy(original, "copied")
 
 	// Type assert the payload
-	if copy.Payload() != "copied" {
-		t.Errorf("Expected Payload 'copied', got %v", copy.Payload())
+	if copy.Data != "copied" {
+		t.Errorf("Expected Payload 'copied', got %v", copy.Data)
 	}
 
-	if val, ok := copy.Properties().Get("key"); !ok || val != "value" {
+	if val, ok := copy.Attributes["key"]; !ok || val != "value" {
 		t.Errorf("Expected properties key='value', got %v", val)
 	}
 
-	if copyDeadline, ok := copy.Deadline(); !ok || copyDeadline != deadline {
+	if copyDeadline, ok := copy.Attributes.Deadline(); !ok || copyDeadline != deadline {
 		t.Errorf("Expected deadline %v, got %v (ok=%v)", deadline, copyDeadline, ok)
 	}
 
@@ -162,16 +154,16 @@ func TestMessage_PayloadTypes(t *testing.T) {
 	t.Parallel()
 
 	t.Run("String", func(t *testing.T) {
-		msg := message.New("string payload")
-		if msg.Payload() != "string payload" {
-			t.Errorf("Expected 'string payload', got %v", msg.Payload())
+		msg := message.New("string payload", nil)
+		if msg.Data != "string payload" {
+			t.Errorf("Expected 'string payload', got %v", msg.Data)
 		}
 	})
 
 	t.Run("Int", func(t *testing.T) {
-		msg := message.New(42)
-		if msg.Payload() != 42 {
-			t.Errorf("Expected 42, got %v", msg.Payload())
+		msg := message.New(42, nil)
+		if msg.Data != 42 {
+			t.Errorf("Expected 42, got %v", msg.Data)
 		}
 	})
 
@@ -179,9 +171,9 @@ func TestMessage_PayloadTypes(t *testing.T) {
 		type Data struct {
 			Field string
 		}
-		msg := message.New(Data{Field: "test"})
-		if msg.Payload() != (Data{Field: "test"}) {
-			t.Errorf("Expected Data{Field: 'test'}, got %v", msg.Payload())
+		msg := message.New(Data{Field: "test"}, nil)
+		if msg.Data != (Data{Field: "test"}) {
+			t.Errorf("Expected Data{Field: 'test'}, got %v", msg.Data)
 		}
 	})
 }
@@ -190,20 +182,18 @@ func TestMessage_MultiStageAcking(t *testing.T) {
 	t.Parallel()
 
 	var ackCalled bool
-	msg := message.New(42,
-		message.WithAcking[int](
-			func() { ackCalled = true },
-			func(error) {},
-		),
-	)
+	// Create shared acking for 2 messages
+	acking := message.NewAcking(
+		func() { ackCalled = true },
+		func(error) {},
+		2)
 
-	// Set expected ack count to 2
-	if !msg.SetExpectedAckCount(2) {
-		t.Fatal("Expected SetExpectedAckCount to succeed")
-	}
+	// Create two messages sharing the same acking
+	msg1 := message.NewWithSharedAcking(42, nil, acking)
+	msg2 := message.NewWithSharedAcking(43, nil, acking)
 
 	// First ack should not trigger callback
-	if !msg.Ack() {
+	if !msg1.Ack() {
 		t.Error("Expected first Ack to return true")
 	}
 
@@ -212,7 +202,7 @@ func TestMessage_MultiStageAcking(t *testing.T) {
 	}
 
 	// Second ack should trigger callback
-	if !msg.Ack() {
+	if !msg2.Ack() {
 		t.Error("Expected second Ack to return true")
 	}
 
@@ -221,130 +211,165 @@ func TestMessage_MultiStageAcking(t *testing.T) {
 	}
 }
 
-func TestMessageProperties_ConcurrentAccess(t *testing.T) {
+func TestMessage_SharedAcking_Nack(t *testing.T) {
 	t.Parallel()
 
-	msg := message.New("payload",
-		message.WithProperty[string]("initial", "value"),
-	)
+	var ackCalled bool
+	var nackCalled bool
+	var nackErr error
 
-	const numGoroutines = 50
-	const numOperations = 100
+	// Create shared acking for 3 messages
+	acking := message.NewAcking(
+		func() { ackCalled = true },
+		func(err error) { nackCalled = true; nackErr = err },
+		3)
 
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
+	msg1 := message.NewWithSharedAcking(1, nil, acking)
+	msg2 := message.NewWithSharedAcking(2, nil, acking)
+	msg3 := message.NewWithSharedAcking(3, nil, acking)
 
-	// Launch multiple goroutines performing concurrent reads and writes
-	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
-				// Concurrent writes
-				key := "key" + string(rune(id))
-				msg.Properties().Set(key, id*numOperations+j)
-
-				// Concurrent reads
-				msg.Properties().Get(key)
-
-				// Concurrent iteration
-				count := 0
-				msg.Properties().Range(func(k string, v any) bool {
-					count++
-					return true
-				})
-
-				// Concurrent deletes (occasionally)
-				if j%10 == 0 {
-					msg.Properties().Delete(key)
-				}
-			}
-		}(i)
+	// First message acks
+	msg1.Ack()
+	if ackCalled || nackCalled {
+		t.Error("No callback should be called after 1/3 acks")
 	}
 
-	wg.Wait()
+	// Second message nacks - should trigger nack immediately
+	testErr := errors.New("processing failed")
+	msg2.Nack(testErr)
 
-	// Verify the message is still functional
-	if val, ok := msg.Properties().Get("initial"); !ok || val != "value" {
-		t.Errorf("Expected initial value to be preserved, got %v", val)
+	if !nackCalled {
+		t.Error("Expected nack callback to be called immediately")
+	}
+	if nackErr != testErr {
+		t.Errorf("Expected nack error %v, got %v", testErr, nackErr)
+	}
+	if ackCalled {
+		t.Error("Ack callback should not be called after nack")
+	}
+
+	// Third message tries to ack - should fail since already nacked
+	if msg3.Ack() {
+		t.Error("Expected Ack to return false after nack")
 	}
 }
 
-// TestMessage_PropertiesSetAfterCreation verifies that properties can be set
-// using msg.Properties().Set() after the message is created with NewMessage.
+func TestNewAcking_Validation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("zero count returns nil", func(t *testing.T) {
+		acking := message.NewAcking(func() {}, func(error) {}, 0)
+		if acking != nil {
+			t.Error("Expected nil for zero count")
+		}
+	})
+
+	t.Run("negative count returns nil", func(t *testing.T) {
+		acking := message.NewAcking(func() {}, func(error) {}, -1)
+		if acking != nil {
+			t.Error("Expected nil for negative count")
+		}
+	})
+
+	t.Run("nil ack returns nil", func(t *testing.T) {
+		acking := message.NewAcking(nil, func(error) {}, 1)
+		if acking != nil {
+			t.Error("Expected nil for nil ack callback")
+		}
+	})
+
+	t.Run("nil nack returns nil", func(t *testing.T) {
+		acking := message.NewAcking(func() {}, nil, 1)
+		if acking != nil {
+			t.Error("Expected nil for nil nack callback")
+		}
+	})
+
+	t.Run("valid params returns non-nil", func(t *testing.T) {
+		acking := message.NewAcking(func() {}, func(error) {}, 1)
+		if acking == nil {
+			t.Error("Expected non-nil for valid params")
+		}
+	})
+}
+
+// NOTE: Concurrent access test removed - Properties is now a plain map[string]any
+// without thread-safety. Users must provide their own synchronization if needed.
+// See ADR 0002: Remove Properties Thread-Safety
+
 func TestMessage_PropertiesSetAfterCreation(t *testing.T) {
 	t.Parallel()
 
 	t.Run("SetPropertiesOnNilProperties", func(t *testing.T) {
 		// Create minimal message - properties are always created
-		msg := message.New("payload")
+		msg := message.New("payload", nil)
 
 		// Properties should exist
-		props := msg.Properties()
-		if props == nil {
-			t.Error("Expected Properties() to return non-nil")
+		if msg.Attributes == nil {
+			t.Error("Expected Properties to be non-nil")
 		}
 	})
 
 	t.Run("SetPropertiesOnEmptyProperties", func(t *testing.T) {
-		msg := message.New("payload")
+		msg := message.New("payload", nil)
 
 		// Set properties after message creation
-		msg.Properties().Set("key1", "value1")
-		msg.Properties().Set("key2", 42)
-		msg.Properties().Set("key3", true)
+		msg.Attributes["key1"] = "value1"
+		msg.Attributes["key2"] = 42
+		msg.Attributes["key3"] = true
 
 		// Verify all properties were set correctly
-		if val, ok := msg.Properties().Get("key1"); !ok || val != "value1" {
+		if val, ok := msg.Attributes["key1"]; !ok || val != "value1" {
 			t.Errorf("Expected key1='value1', got %v (ok=%v)", val, ok)
 		}
 
-		if val, ok := msg.Properties().Get("key2"); !ok || val != 42 {
+		if val, ok := msg.Attributes["key2"]; !ok || val != 42 {
 			t.Errorf("Expected key2=42, got %v (ok=%v)", val, ok)
 		}
 
-		if val, ok := msg.Properties().Get("key3"); !ok || val != true {
+		if val, ok := msg.Attributes["key3"]; !ok || val != true {
 			t.Errorf("Expected key3=true, got %v (ok=%v)", val, ok)
 		}
 	})
 
 	t.Run("MixPreAndPostCreationProperties", func(t *testing.T) {
-		msg := message.New("payload",
-			message.WithProperty[string]("initial1", "value1"),
-			message.WithProperty[string]("initial2", "value2"),
-		)
+		props := message.Attributes{
+			"initial1": "value1",
+			"initial2": "value2",
+		}
+		msg := message.New("payload", props)
 
 		// Verify initial properties exist
-		if val, ok := msg.Properties().Get("initial1"); !ok || val != "value1" {
+		if val, ok := msg.Attributes["initial1"]; !ok || val != "value1" {
 			t.Errorf("Expected initial1='value1', got %v (ok=%v)", val, ok)
 		}
 
 		// Add more properties after message creation
-		msg.Properties().Set("added1", "new_value1")
-		msg.Properties().Set("added2", 100)
+		msg.Attributes["added1"] = "new_value1"
+		msg.Attributes["added2"] = 100
 
 		// Verify all properties are accessible
-		if val, ok := msg.Properties().Get("initial1"); !ok || val != "value1" {
+		if val, ok := msg.Attributes["initial1"]; !ok || val != "value1" {
 			t.Errorf("Expected initial1='value1', got %v", val)
 		}
 
-		if val, ok := msg.Properties().Get("initial2"); !ok || val != "value2" {
+		if val, ok := msg.Attributes["initial2"]; !ok || val != "value2" {
 			t.Errorf("Expected initial2='value2', got %v", val)
 		}
 
-		if val, ok := msg.Properties().Get("added1"); !ok || val != "new_value1" {
+		if val, ok := msg.Attributes["added1"]; !ok || val != "new_value1" {
 			t.Errorf("Expected added1='new_value1', got %v", val)
 		}
 
-		if val, ok := msg.Properties().Get("added2"); !ok || val != 100 {
+		if val, ok := msg.Attributes["added2"]; !ok || val != 100 {
 			t.Errorf("Expected added2=100, got %v", val)
 		}
 
-		// Verify properties count using Range
+		// Verify properties count
 		count := 0
-		msg.Properties().Range(func(k string, v any) bool {
+		for range msg.Attributes {
 			count++
-			return true
-		})
+		}
 
 		if count != 4 {
 			t.Errorf("Expected 4 properties total, got %d", count)
@@ -352,119 +377,105 @@ func TestMessage_PropertiesSetAfterCreation(t *testing.T) {
 	})
 
 	t.Run("UpdateExistingProperty", func(t *testing.T) {
-		msg := message.New("payload",
-			message.WithProperty[string]("key", "original"),
-		)
+		props := message.Attributes{
+			"key": "original",
+		}
+		msg := message.New("payload", props)
 
 		// Verify original value
-		if val, ok := msg.Properties().Get("key"); !ok || val != "original" {
+		if val, ok := msg.Attributes["key"]; !ok || val != "original" {
 			t.Errorf("Expected key='original', got %v", val)
 		}
 
 		// Update the property after message creation
-		msg.Properties().Set("key", "updated")
+		msg.Attributes["key"] = "updated"
 
 		// Verify updated value
-		if val, ok := msg.Properties().Get("key"); !ok || val != "updated" {
+		if val, ok := msg.Attributes["key"]; !ok || val != "updated" {
 			t.Errorf("Expected key='updated', got %v", val)
 		}
 	})
 
 	t.Run("DeletePropertyAfterCreation", func(t *testing.T) {
-		msg := message.New("payload",
-			message.WithProperty[string]("key1", "value1"),
-			message.WithProperty[string]("key2", "value2"),
-		)
+		props := message.Attributes{
+			"key1": "value1",
+			"key2": "value2",
+		}
+		msg := message.New("payload", props)
 
 		// Delete a property after message creation
-		msg.Properties().Delete("key1")
+		delete(msg.Attributes, "key1")
 
 		// Verify key1 is deleted
-		if val, ok := msg.Properties().Get("key1"); ok {
+		if val, ok := msg.Attributes["key1"]; ok {
 			t.Errorf("Expected key1 to be deleted, but got value: %v", val)
 		}
 
 		// Verify key2 still exists
-		if val, ok := msg.Properties().Get("key2"); !ok || val != "value2" {
+		if val, ok := msg.Attributes["key2"]; !ok || val != "value2" {
 			t.Errorf("Expected key2='value2', got %v (ok=%v)", val, ok)
 		}
 	})
 
 	t.Run("PropertiesSharedWithCopiedMessage", func(t *testing.T) {
-		original := message.New("original_payload",
-			message.WithProperty[string]("initial", "value"),
-		)
+		props := message.Attributes{
+			"initial": "value",
+		}
+		original := message.New("original_payload", props)
 
 		// Copy the message
 		copied := message.Copy(original, "copied_payload")
 
 		// Set property on original message
-		original.Properties().Set("from_original", "orig_val")
+		original.Attributes["from_original"] = "orig_val"
 
 		// Verify copied message sees the same property (properties are shared)
-		if val, ok := copied.Properties().Get("from_original"); !ok || val != "orig_val" {
+		if val, ok := copied.Attributes["from_original"]; !ok || val != "orig_val" {
 			t.Errorf("Expected copied message to see property set on original, got %v (ok=%v)", val, ok)
 		}
 
 		// Set property on copied message
-		copied.Properties().Set("from_copied", "copy_val")
+		copied.Attributes["from_copied"] = "copy_val"
 
 		// Verify original message sees the property (properties are shared)
-		if val, ok := original.Properties().Get("from_copied"); !ok || val != "copy_val" {
+		if val, ok := original.Attributes["from_copied"]; !ok || val != "copy_val" {
 			t.Errorf("Expected original message to see property set on copied, got %v (ok=%v)", val, ok)
 		}
 	})
 }
 
-// Helper function to check if a string contains a substring
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsStringHelper(s, substr))
-}
-
-func containsStringHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
-// TestMessage_NewWithOptions tests the new functional options API
 func TestMessage_NewWithOptions(t *testing.T) {
 	t.Parallel()
 
 	t.Run("MinimalMessage", func(t *testing.T) {
-		msg := message.New(42)
+		msg := message.New(42, nil)
 
-		if msg.Payload() != 42 {
-			t.Errorf("Expected payload 42, got %v", msg.Payload())
+		if msg.Data != 42 {
+			t.Errorf("Expected payload 42, got %v", msg.Data)
 		}
 
-		if msg.Properties() == nil {
+		if msg.Attributes == nil {
 			t.Error("Expected properties to be initialized")
 		}
 	})
 
 	t.Run("WithDeadline", func(t *testing.T) {
 		deadline := time.Now().Add(1 * time.Hour)
+		props := message.Attributes{
+			message.AttrDeadline: deadline,
+		}
+		msg := message.New("payload", props)
 
-		msg := message.New("payload", message.WithDeadline[string](deadline))
-
-		if msgDeadline, ok := msg.Deadline(); !ok || msgDeadline != deadline {
+		if msgDeadline, ok := msg.Attributes.Deadline(); !ok || msgDeadline != deadline {
 			t.Errorf("Expected deadline %v, got %v (ok=%v)", deadline, msgDeadline, ok)
 		}
 	})
 
 	t.Run("WithAcking", func(t *testing.T) {
 		var ackCalled, nackCalled bool
-
-		msg := message.New(42,
-			message.WithAcking[int](
-				func() { ackCalled = true },
-				func(error) { nackCalled = true },
-			),
-		)
+		msg := message.NewWithAcking(42, nil,
+			func() { ackCalled = true },
+			func(error) { nackCalled = true })
 
 		if !msg.Ack() {
 			t.Error("Expected Ack to return true")
@@ -480,84 +491,84 @@ func TestMessage_NewWithOptions(t *testing.T) {
 	})
 
 	t.Run("WithID", func(t *testing.T) {
-		msg := message.New("payload", message.WithID[string]("msg-001"))
-
-		if id, ok := msg.ID(); !ok || id != "msg-001" {
-			t.Errorf("Expected ID 'msg-001', got %q (ok=%v)", id, ok)
+		props := message.Attributes{
+			message.AttrID: "msg-001",
 		}
+		msg := message.New("payload", props)
 
-		// Also test via Properties
-		if id, ok := msg.Properties().ID(); !ok || id != "msg-001" {
-			t.Errorf("Expected ID 'msg-001' via Properties, got %q (ok=%v)", id, ok)
+		if id, ok := msg.Attributes.ID(); !ok || id != "msg-001" {
+			t.Errorf("Expected ID 'msg-001', got %q (ok=%v)", id, ok)
 		}
 	})
 
 	t.Run("WithCorrelationID", func(t *testing.T) {
-		msg := message.New("payload", message.WithCorrelationID[string]("corr-123"))
+		props := message.Attributes{
+			message.AttrCorrelationID: "corr-123",
+		}
+		msg := message.New("payload", props)
 
-		if id, ok := msg.CorrelationID(); !ok || id != "corr-123" {
+		if id, ok := msg.Attributes.CorrelationID(); !ok || id != "corr-123" {
 			t.Errorf("Expected CorrelationID 'corr-123', got %q (ok=%v)", id, ok)
 		}
 	})
 
 	t.Run("WithProperty", func(t *testing.T) {
-		msg := message.New("payload",
-			message.WithProperty[string]("tenant", "acme-corp"),
-			message.WithProperty[string]("priority", 5),
-		)
+		props := message.Attributes{
+			"tenant":   "acme-corp",
+			"priority": 5,
+		}
+		msg := message.New("payload", props)
 
-		if val, ok := msg.Properties().Get("tenant"); !ok || val != "acme-corp" {
+		if val, ok := msg.Attributes["tenant"]; !ok || val != "acme-corp" {
 			t.Errorf("Expected tenant='acme-corp', got %v (ok=%v)", val, ok)
 		}
 
-		if val, ok := msg.Properties().Get("priority"); !ok || val != 5 {
+		if val, ok := msg.Attributes["priority"]; !ok || val != 5 {
 			t.Errorf("Expected priority=5, got %v (ok=%v)", val, ok)
 		}
 	})
 
 	t.Run("CombinedOptions", func(t *testing.T) {
 		deadline := time.Now().Add(1 * time.Hour)
-
 		var ackCalled bool
 
-		msg := message.New("order-data",
-			message.WithDeadline[string](deadline),
-			message.WithAcking[string](
-				func() { ackCalled = true },
-				func(error) {},
-			),
-			message.WithID[string]("msg-001"),
-			message.WithCorrelationID[string]("order-123"),
-			message.WithProperty[string]("tenant", "acme"),
-			message.WithProperty[string]("source", "orders-queue"),
-		)
+		props := message.Attributes{
+			message.AttrDeadline:      deadline,
+			message.AttrID:            "msg-001",
+			message.AttrCorrelationID: "order-123",
+			"tenant":                  "acme",
+			"source":                  "orders-queue",
+		}
+		msg := message.NewWithAcking("order-data", props,
+			func() { ackCalled = true },
+			func(error) {})
 
 		// Verify payload
-		if msg.Payload() != "order-data" {
-			t.Errorf("Expected payload 'order-data', got %v", msg.Payload())
+		if msg.Data != "order-data" {
+			t.Errorf("Expected payload 'order-data', got %v", msg.Data)
 		}
 
 		// Verify ID
-		if id, ok := msg.ID(); !ok || id != "msg-001" {
+		if id, ok := msg.Attributes.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q", id)
 		}
 
 		// Verify CorrelationID
-		if corrID, ok := msg.CorrelationID(); !ok || corrID != "order-123" {
+		if corrID, ok := msg.Attributes.CorrelationID(); !ok || corrID != "order-123" {
 			t.Errorf("Expected CorrelationID 'order-123', got %q", corrID)
 		}
 
 		// Verify custom properties
-		if val, ok := msg.Properties().Get("tenant"); !ok || val != "acme" {
+		if val, ok := msg.Attributes["tenant"]; !ok || val != "acme" {
 			t.Errorf("Expected tenant='acme', got %v (ok=%v)", val, ok)
 		}
 
-		if val, ok := msg.Properties().Get("source"); !ok || val != "orders-queue" {
+		if val, ok := msg.Attributes["source"]; !ok || val != "orders-queue" {
 			t.Errorf("Expected source='orders-queue', got %v (ok=%v)", val, ok)
 		}
 
 		// Verify deadline
-		if msgDeadline, ok := msg.Deadline(); !ok || msgDeadline != deadline {
+		if msgDeadline, ok := msg.Attributes.Deadline(); !ok || msgDeadline != deadline {
 			t.Errorf("Expected deadline %v, got %v (ok=%v)", deadline, msgDeadline, ok)
 		}
 
@@ -571,47 +582,45 @@ func TestMessage_NewWithOptions(t *testing.T) {
 		}
 	})
 
-	t.Run("WithProperties", func(t *testing.T) {
-		msg := message.New("payload",
-			message.WithID[string]("msg-001"),
-			message.WithProperty[string]("initial", "value"),
-			message.WithProperties[string](map[string]any{
-				"tenant":   "acme-corp",
-				"priority": 5,
-			}),
-			message.WithCorrelationID[string]("corr-123"),
-		)
+	t.Run("WithMultipleProperties", func(t *testing.T) {
+		props := message.Attributes{
+			message.AttrID:            "msg-001",
+			"initial":                 "value",
+			"tenant":                  "acme-corp",
+			"priority":                5,
+			message.AttrCorrelationID: "corr-123",
+		}
+		msg := message.New("payload", props)
 
-		// Verify that ID set before WithProperties is preserved
-		if id, ok := msg.ID(); !ok || id != "msg-001" {
+		// Verify that ID is set
+		if id, ok := msg.Attributes.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q", id)
 		}
 
-		// Verify that property set before WithProperties is preserved
-		if val, ok := msg.Properties().Get("initial"); !ok || val != "value" {
+		// Verify that initial property is set
+		if val, ok := msg.Attributes["initial"]; !ok || val != "value" {
 			t.Errorf("Expected initial='value', got %v (ok=%v)", val, ok)
 		}
 
-		// Verify that properties from WithProperties are added
-		if val, ok := msg.Properties().Get("tenant"); !ok || val != "acme-corp" {
+		// Verify that properties are added
+		if val, ok := msg.Attributes["tenant"]; !ok || val != "acme-corp" {
 			t.Errorf("Expected tenant='acme-corp', got %v (ok=%v)", val, ok)
 		}
 
-		if val, ok := msg.Properties().Get("priority"); !ok || val != 5 {
+		if val, ok := msg.Attributes["priority"]; !ok || val != 5 {
 			t.Errorf("Expected priority=5, got %v (ok=%v)", val, ok)
 		}
 
-		// Verify that CorrelationID set after WithProperties is preserved
-		if corrID, ok := msg.CorrelationID(); !ok || corrID != "corr-123" {
+		// Verify that CorrelationID is set
+		if corrID, ok := msg.Attributes.CorrelationID(); !ok || corrID != "corr-123" {
 			t.Errorf("Expected CorrelationID 'corr-123', got %q", corrID)
 		}
 
 		// Count all properties
 		count := 0
-		msg.Properties().Range(func(key string, value any) bool {
+		for range msg.Attributes {
 			count++
-			return true
-		})
+		}
 
 		// Should have: initial, tenant, priority, ID, CorrelationID = 5 properties
 		if count != 5 {
@@ -620,95 +629,54 @@ func TestMessage_NewWithOptions(t *testing.T) {
 	})
 }
 
-// TestMessage_TypedAccessors tests the typed accessor methods
 func TestMessage_TypedAccessors(t *testing.T) {
 	t.Parallel()
 
-	t.Run("GettersViaOptions", func(t *testing.T) {
+	t.Run("GettersViaProperties", func(t *testing.T) {
 		now := time.Now()
-		msg := message.New(42,
-			message.WithID[int]("msg-001"),
-			message.WithCorrelationID[int]("corr-123"),
-			message.WithProperty[int](message.PropCreatedAt, now),
-			message.WithProperty[int](message.PropDeliveryCount, 3),
-		)
+		props := message.Attributes{
+			message.AttrID:            "msg-001",
+			message.AttrCorrelationID: "corr-123",
+			message.AttrTime:     now,
+		}
+		msg := message.New(42, props)
 
 		// Test ID
-		if id, ok := msg.ID(); !ok || id != "msg-001" {
+		if id, ok := msg.Attributes.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q (ok=%v)", id, ok)
 		}
 
 		// Test CorrelationID
-		if id, ok := msg.CorrelationID(); !ok || id != "corr-123" {
+		if id, ok := msg.Attributes.CorrelationID(); !ok || id != "corr-123" {
 			t.Errorf("Expected CorrelationID 'corr-123', got %q (ok=%v)", id, ok)
 		}
 
-		// Test CreatedAt
-		if ts, ok := msg.CreatedAt(); !ok || !ts.Equal(now) {
-			t.Errorf("Expected CreatedAt %v, got %v (ok=%v)", now, ts, ok)
-		}
-
-		// Test DeliveryCount
-		if count, ok := msg.DeliveryCount(); !ok || count != 3 {
-			t.Errorf("Expected DeliveryCount 3, got %d (ok=%v)", count, ok)
+		// Test EventTime
+		if ts, ok := msg.Attributes.EventTime(); !ok || !ts.Equal(now) {
+			t.Errorf("Expected EventTime %v, got %v (ok=%v)", now, ts, ok)
 		}
 	})
 
-	t.Run("SetPropertiesViaSet", func(t *testing.T) {
-		msg := message.New(42)
+	t.Run("SetAttributesViaMap", func(t *testing.T) {
+		msg := message.New(42, nil)
 
-		// Set reserved properties via Properties.Set() (only during creation or special cases)
-		// Note: In production, reserved properties should be set via functional options
+		// Set reserved attributes via map access
 		now := time.Now()
-		msg.Properties().Set(message.PropID, "msg-001")
-		msg.Properties().Set(message.PropCorrelationID, "corr-123")
-		msg.Properties().Set(message.PropCreatedAt, now)
-		msg.Properties().Set(message.PropDeliveryCount, 3)
+		msg.Attributes[message.AttrID] = "msg-001"
+		msg.Attributes[message.AttrCorrelationID] = "corr-123"
+		msg.Attributes[message.AttrTime] = now
 
-		// Get via message shortcuts
-		if id, ok := msg.ID(); !ok || id != "msg-001" {
+		// Get via pass-through functions
+		if id, ok := msg.Attributes.ID(); !ok || id != "msg-001" {
 			t.Errorf("Expected ID 'msg-001', got %q (ok=%v)", id, ok)
 		}
 
-		if id, ok := msg.CorrelationID(); !ok || id != "corr-123" {
+		if id, ok := msg.Attributes.CorrelationID(); !ok || id != "corr-123" {
 			t.Errorf("Expected CorrelationID 'corr-123', got %q (ok=%v)", id, ok)
 		}
 
-		if ts, ok := msg.CreatedAt(); !ok || !ts.Equal(now) {
-			t.Errorf("Expected CreatedAt %v, got %v (ok=%v)", now, ts, ok)
-		}
-
-		if count, ok := msg.DeliveryCount(); !ok || count != 3 {
-			t.Errorf("Expected DeliveryCount 3, got %d (ok=%v)", count, ok)
+		if ts, ok := msg.Attributes.EventTime(); !ok || !ts.Equal(now) {
+			t.Errorf("Expected EventTime %v, got %v (ok=%v)", now, ts, ok)
 		}
 	})
-}
-
-// TestMessageProperties_ConcurrentDeliveryCount verifies that DeliveryCount
-// can be safely read concurrently.
-func TestMessageProperties_ConcurrentDeliveryCount(t *testing.T) {
-	t.Parallel()
-
-	msg := message.New("payload")
-	msg.Properties().Set(message.PropDeliveryCount, 5)
-
-	const numGoroutines = 100
-
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
-
-	// Launch goroutines that concurrently read delivery count
-	for range numGoroutines {
-		go func() {
-			defer wg.Done()
-			for range 100 {
-				if count, ok := msg.DeliveryCount(); !ok || count != 5 {
-					t.Errorf("Expected DeliveryCount 5, got %d (ok=%v)", count, ok)
-				}
-			}
-		}()
-	}
-
-	// Wait for all goroutines to complete
-	wg.Wait()
 }
