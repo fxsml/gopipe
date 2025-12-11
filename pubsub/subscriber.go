@@ -41,21 +41,6 @@ type SubscriberConfig struct {
 }
 
 // NewSubscriber creates a Subscriber that wraps a Receiver with gopipe processing.
-//
-// Example:
-//
-//	subscriber := pubsub.NewSubscriber(broker, pubsub.SubscriberConfig{})
-//	msgs := subscriber.Subscribe(ctx, "orders.created")
-//	for msg := range msgs {
-//	    // Process messages from the topic
-//	}
-//
-// To subscribe to multiple topics, call Subscribe multiple times:
-//
-//	orders := subscriber.Subscribe(ctx, "orders.created")
-//	payments := subscriber.Subscribe(ctx, "payments.completed")
-//	merged := channel.Merge(orders, payments)
-//
 // Panics if receiver is nil.
 func NewSubscriber(
 	receiver Receiver,

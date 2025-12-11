@@ -3,6 +3,8 @@ package pubsub_test
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -482,6 +484,125 @@ func TestHTTPReceiver_ReceiverInterface(t *testing.T) {
 		},
 	}
 	suite.Run(t)
+}
+
+func TestHTTPReceiver_WaitForAck(t *testing.T) {
+	t.Run("Ack returns 200 OK", func(t *testing.T) {
+		receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{
+			WaitForAck: true,
+			AckTimeout: 5 * time.Second,
+		}, 100)
+		defer receiver.Close()
+
+		// Start a goroutine to process messages and ack them
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			// Wait a bit for the message to be buffered
+			time.Sleep(50 * time.Millisecond)
+
+			ctx := context.Background()
+			msgs, err := receiver.Receive(ctx, "test/topic")
+			if err != nil {
+				t.Errorf("Receive failed: %v", err)
+				return
+			}
+			for _, msg := range msgs {
+				msg.Ack()
+			}
+		}()
+
+		// Send HTTP request
+		req := createCloudEventRequest(t, "test/topic", []byte(`{"data":"test"}`))
+		rr := httptest.NewRecorder()
+		receiver.ServeHTTP(rr, req)
+
+		<-done
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rr.Code)
+		}
+	})
+
+	t.Run("Nack returns 500 Internal Server Error", func(t *testing.T) {
+		receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{
+			WaitForAck: true,
+			AckTimeout: 5 * time.Second,
+		}, 100)
+		defer receiver.Close()
+
+		// Start a goroutine to process messages and nack them
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			time.Sleep(50 * time.Millisecond)
+
+			ctx := context.Background()
+			msgs, err := receiver.Receive(ctx, "test/topic")
+			if err != nil {
+				t.Errorf("Receive failed: %v", err)
+				return
+			}
+			for _, msg := range msgs {
+				msg.Nack(pubsub.ErrHTTPRequestFailed)
+			}
+		}()
+
+		req := createCloudEventRequest(t, "test/topic", []byte(`{"data":"test"}`))
+		rr := httptest.NewRecorder()
+		receiver.ServeHTTP(rr, req)
+
+		<-done
+
+		if rr.Code != http.StatusInternalServerError {
+			t.Errorf("Expected status 500, got %d", rr.Code)
+		}
+	})
+
+	t.Run("Timeout returns 504 Gateway Timeout", func(t *testing.T) {
+		receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{
+			WaitForAck: true,
+			AckTimeout: 50 * time.Millisecond, // Very short timeout
+		}, 100)
+		defer receiver.Close()
+
+		// Don't process messages - let it timeout
+		req := createCloudEventRequest(t, "test/topic", []byte(`{"data":"test"}`))
+		rr := httptest.NewRecorder()
+		receiver.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusGatewayTimeout {
+			t.Errorf("Expected status 504, got %d", rr.Code)
+		}
+	})
+
+	t.Run("Without WaitForAck returns 201 immediately", func(t *testing.T) {
+		receiver := pubsub.NewHTTPReceiver(pubsub.HTTPConfig{
+			WaitForAck: false, // Disabled
+		}, 100)
+		defer receiver.Close()
+
+		req := createCloudEventRequest(t, "test/topic", []byte(`{"data":"test"}`))
+		rr := httptest.NewRecorder()
+		receiver.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusCreated {
+			t.Errorf("Expected status 201, got %d", rr.Code)
+		}
+	})
+}
+
+// createCloudEventRequest creates a CloudEvents binary mode HTTP request for testing.
+func createCloudEventRequest(t *testing.T, topic string, data []byte) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/"+topic, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Ce-Id", "test-id-123")
+	req.Header.Set("Ce-Source", "test-source")
+	req.Header.Set("Ce-Specversion", "1.0")
+	req.Header.Set("Ce-Type", "test.event")
+	req.Header.Set("Ce-Topic", topic)
+	return req
 }
 
 // ============================================================================

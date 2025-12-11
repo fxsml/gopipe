@@ -36,7 +36,7 @@ The gopipe project demonstrates **excellent architectural design** with clear se
 
 **High Priority Issues Fixed:**
 - ✅ MatchType API inconsistency - Now uses `attrs.Type()` helper
-- ✅ WaitForAck documentation - Added note that feature is not fully implemented
+- ✅ WaitForAck fully implemented - Uses channel-based ack/nack synchronization
 - ✅ Documentation InMemoryBroker references - Updated to NewChannelBroker
 - ✅ README outdated message API - Updated examples
 
@@ -52,6 +52,7 @@ The gopipe project demonstrates **excellent architectural design** with clear se
 - ✅ Added TestRouter_AddHandlerAfterStart - tests AddHandler returns false after Start
 - ✅ Added TestRouter_AddPipeAfterStart - tests AddPipe returns false after Start
 - ✅ Added TestRouter_StartTwice - tests Start returns nil on second call
+- ✅ Added TestHTTPReceiver_WaitForAck - tests ack (200), nack (500), timeout (504), and disabled (201) scenarios
 
 ---
 
@@ -245,27 +246,18 @@ func MatchType(msgType string) Matcher {
 
 ---
 
-### 2.2 Incomplete Feature: WaitForAck in HTTPSender
+### 2.2 ~~Incomplete Feature: WaitForAck in HTTPSender~~ ✅ RESOLVED
 
-**File:** `/pubsub/http.go:455-456`
-**Severity:** 🟠 HIGH
+**File:** `/pubsub/http.go`
+**Severity:** 🟠 HIGH → ✅ RESOLVED
 
-**Issue:**
-```go
-// TODO: WaitForAck support - for now just return appropriate status
-if r.config.WaitForAck {
-    w.WriteHeader(http.StatusOK)
-} else {
-    w.WriteHeader(http.StatusCreated)
-}
-```
+**Issue:** WaitForAck config option existed but didn't actually wait for acknowledgment.
 
-**Problem:** `WaitForAck` config option exists but doesn't actually wait for acknowledgment. This is misleading.
-
-**Fix:** Either:
-1. Remove `WaitForAck` from `HTTPConfig` until implemented
-2. Implement properly with timeout handling
-3. Mark as experimental in godoc
+**Resolution:** Fully implemented WaitForAck using channel-based synchronization:
+- Messages created with ack/nack callbacks that signal completion via channels
+- HTTP handler waits for acknowledgment with configurable timeout (AckTimeout)
+- Returns 200 OK on ack, 500 on nack, 504 on timeout
+- Added comprehensive tests for all scenarios
 
 ---
 
@@ -548,8 +540,8 @@ if !ok {
   - Recommendation: Move to examples or mark experimental
 - **CloudEvents Batch mode** - Adds complexity
   - Recommendation: Support in v1.1
-- **HTTP WaitForAck** - Not implemented
-  - Recommendation: Remove from v1.0, add in v1.1
+- ~~**HTTP WaitForAck** - Not implemented~~ ✅ Now fully implemented
+  - Uses channel-based ack/nack synchronization with timeout
 
 ### Definitely Remove ❌
 - None - all features are useful and well-implemented
