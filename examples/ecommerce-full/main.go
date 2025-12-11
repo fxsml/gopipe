@@ -49,7 +49,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fxsml/gopipe/message/cqrs"
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/message/broker"
 	"github.com/fxsml/gopipe/message/multiplex"
@@ -482,7 +481,7 @@ func main() {
 	// Setup Router with Handlers
 	// ========================================================================
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{
+	router := message.NewRouter(message.RouterConfig{
 		Concurrency: 4,
 	})
 	// Command handlers

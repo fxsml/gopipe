@@ -38,7 +38,7 @@ func TestRouter_CommandHandler(t *testing.T) {
 		marshaler,
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router := message.NewRouter(message.RouterConfig{})
 	router.AddHandler(handler)
 
 	orderData, _ := json.Marshal(Order{ID: "order-1", Amount: 100})
@@ -93,7 +93,7 @@ func TestRouter_CommandHandler_WithCustomAttrs(t *testing.T) {
 		marshaler,
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router := message.NewRouter(message.RouterConfig{})
 	router.AddHandler(handler)
 
 	orderData, _ := json.Marshal(Order{ID: "order-1"})
@@ -142,7 +142,7 @@ func TestRouter_EventHandler(t *testing.T) {
 		marshaler,
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router := message.NewRouter(message.RouterConfig{})
 	router.AddHandler(handler)
 
 	eventData, _ := json.Marshal(OrderConfirmed{ID: "order-1", ConfirmedAt: time.Now()})
@@ -177,7 +177,7 @@ func TestRouter_UnmarshalError(t *testing.T) {
 		marshaler,
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router := message.NewRouter(message.RouterConfig{})
 	router.AddHandler(handler)
 
 	var nackCalled bool
@@ -217,7 +217,7 @@ func TestRouter_HandlerError(t *testing.T) {
 		marshaler,
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router := message.NewRouter(message.RouterConfig{})
 	router.AddHandler(handler)
 
 	var nackCalled bool
@@ -268,7 +268,7 @@ func TestRouter_MultipleCommandHandlers(t *testing.T) {
 		marshaler,
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router := message.NewRouter(message.RouterConfig{})
 	router.AddHandler(orderHandler)
 	router.AddHandler(paymentHandler)
 
@@ -311,7 +311,7 @@ func TestRouter_WithCommandPipe(t *testing.T) {
 
 	commandPipe := cqrs.NewCommandPipe(pipe, cqrs.MatchSubject("Order"), marshaler)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router := message.NewRouter(message.RouterConfig{})
 	router.AddPipe(commandPipe)
 
 	orderData, _ := json.Marshal(Order{ID: "order-1", Amount: 100})
@@ -359,7 +359,7 @@ func TestRouter_PipeWithHandlerFallback(t *testing.T) {
 		marshaler,
 	)
 
-	router := cqrs.NewRouter(cqrs.RouterConfig{})
+	router := message.NewRouter(message.RouterConfig{})
 	router.AddHandler(handler)
 	router.AddPipe(commandPipe)
 

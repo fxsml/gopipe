@@ -123,8 +123,11 @@ emailHandler := cqrs.NewEventHandler(
 )
 
 // 5. Wire together with routers
-commandRouter := cqrs.NewRouter(cqrs.RouterConfig{}, createOrderHandler)
-eventRouter := cqrs.NewRouter(cqrs.RouterConfig{}, emailHandler)
+commandRouter := message.NewRouter(message.RouterConfig{})
+commandRouter.AddHandler(createOrderHandler)
+
+eventRouter := message.NewRouter(message.RouterConfig{})
+eventRouter.AddHandler(emailHandler)
 
 commands := make(chan *message.Message, 10)
 events := commandRouter.Start(ctx, commands)

@@ -43,7 +43,7 @@ The gopipe project demonstrates **excellent architectural design** with clear se
 **Medium Priority Issues Fixed:**
 - ✅ Router.AddPipe documentation - Added "must be called before Start()"
 - ✅ handler_test.go terminology - Updated PropType to Type attribute
-- ✅ cqrs-overview.md router references - Fixed to use cqrs.NewRouter
+- ✅ cqrs-overview.md router references - Fixed to use message.NewRouter
 
 **Test Coverage Improved:**
 - ✅ Added TestNewCommandHandler_UnmarshalError - tests command unmarshal failure

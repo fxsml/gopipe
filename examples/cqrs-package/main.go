@@ -290,7 +290,7 @@ func main() {
 		marshaler,
 	)
 
-	commandRouter := cqrs.NewRouter(cqrs.RouterConfig{
+	commandRouter := message.NewRouter(message.RouterConfig{
 		Concurrency: 10,
 		Recover:     true,
 	})
@@ -303,7 +303,7 @@ func main() {
 	// Event Handlers (Side Effects)
 	// ========================================================================
 
-	sideEffectsRouter := cqrs.NewRouter(cqrs.RouterConfig{
+	sideEffectsRouter := message.NewRouter(message.RouterConfig{
 		Concurrency: 20,
 		Recover:     true,
 	})
@@ -325,7 +325,7 @@ func main() {
 		},
 	)
 
-	sagaRouter := cqrs.NewRouter(cqrs.RouterConfig{Recover: true})
+	sagaRouter := message.NewRouter(message.RouterConfig{Recover: true})
 	sagaRouter.AddHandler(sagaHandler)
 
 	// ========================================================================

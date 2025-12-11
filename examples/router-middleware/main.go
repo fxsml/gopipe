@@ -149,7 +149,7 @@ func main() {
 
 	// Create router with configuration
 	// Middleware execution order: Validation → CorrelationID → MessageCorrelation → Logging → Metrics → Handler
-	router := cqrs.NewRouter(cqrs.RouterConfig{
+	router := message.NewRouter(message.RouterConfig{
 		Concurrency: 2,
 		Recover:     true,
 		Middleware: []gopipe.MiddlewareFunc[*message.Message, *message.Message]{
