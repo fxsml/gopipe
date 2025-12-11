@@ -13,7 +13,7 @@ import (
 )
 
 // createCommand creates a command message from a command struct.
-func createCommand(marshaler cqrs.Marshaler, cmd any, attrs message.Attributes) *message.Message {
+func createCommand(marshaler cqrs.CommandMarshaler, cmd any, attrs message.Attributes) *message.Message {
 	payload, err := marshaler.Marshal(cmd)
 	if err != nil {
 		log.Printf("failed to marshal command: %v", err)
@@ -36,7 +36,7 @@ func createCommand(marshaler cqrs.Marshaler, cmd any, attrs message.Attributes) 
 }
 
 // createCommands creates multiple command messages with optional correlation ID.
-func createCommands(marshaler cqrs.Marshaler, correlationID string, cmds ...any) []*message.Message {
+func createCommands(marshaler cqrs.CommandMarshaler, correlationID string, cmds ...any) []*message.Message {
 	msgs := make([]*message.Message, 0, len(cmds))
 
 	for _, cmd := range cmds {

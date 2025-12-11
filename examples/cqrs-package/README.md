@@ -50,7 +50,7 @@ The `cqrs` package simplifies event-driven architecture by providing:
 ```go
 import "github.com/fxsml/gopipe/message/cqrs"
 
-marshaler := cqrs.NewJSONMarshaler()
+marshaler := cqrs.NewJSONCommandMarshaler()
 
 createOrderHandler := cqrs.NewCommandHandler(
     func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
@@ -92,7 +92,7 @@ emailHandler := cqrs.NewEventHandler(
 
 ```go
 type OrderSagaCoordinator struct {
-    marshaler cqrs.Marshaler
+    marshaler cqrs.CommandMarshaler
 }
 
 func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
@@ -124,7 +124,7 @@ func (s *OrderSagaCoordinator) OnEvent(ctx context.Context, msg *message.Message
 }
 
 // createCommands is a helper to create command messages (see main.go)
-func createCommands(m cqrs.Marshaler, corrID string, cmds ...any) []*message.Message {
+func createCommands(m cqrs.CommandMarshaler, corrID string, cmds ...any) []*message.Message {
     // ... implementation creates messages with proper attributes
 }
 ```
@@ -300,7 +300,7 @@ func TestCreateOrderHandler(t *testing.T) {
 
 ```go
 // ✅ Use JSON marshaler
-marshaler := cqrs.NewJSONMarshaler()
+marshaler := cqrs.NewJSONCommandMarshaler()
 
 // ✅ Or create custom marshaler (Protobuf, MessagePack, etc.)
 type ProtobufMarshaler struct{}

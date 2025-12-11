@@ -93,7 +93,7 @@ gopipe uses the **Event Choreography** pattern through the `SagaCoordinator` int
 
 ```go
 type OrderSagaCoordinator struct {
-    marshaler cqrs.Marshaler
+    marshaler cqrs.CommandMarshaler
 }
 
 func (s *OrderSagaCoordinator) OnEvent(
@@ -135,7 +135,7 @@ func (s *OrderSagaCoordinator) OnEvent(
 }
 
 // createCommands is a helper to create command messages
-func createCommands(m cqrs.Marshaler, corrID string, cmds ...any) []*message.Message {
+func createCommands(m cqrs.CommandMarshaler, corrID string, cmds ...any) []*message.Message {
     // Implementation creates messages with proper attributes
     // See examples/cqrs-package for full implementation
     return nil

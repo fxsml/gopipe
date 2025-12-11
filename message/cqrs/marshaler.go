@@ -75,21 +75,3 @@ func NewJSONEventMarshaler() *JSONEventMarshaler {
 func (m *JSONEventMarshaler) Unmarshal(data []byte, v any) error {
 	return json.Unmarshal(data, v)
 }
-
-// ============================================================================
-// Backward Compatibility
-// ============================================================================
-
-// Marshaler is the old interface kept for backward compatibility.
-// Deprecated: Use CommandMarshaler or EventMarshaler instead.
-type Marshaler = CommandMarshaler
-
-// JSONMarshaler is the old implementation kept for backward compatibility.
-// Deprecated: Use JSONCommandMarshaler or JSONEventMarshaler instead.
-type JSONMarshaler = JSONCommandMarshaler
-
-// NewJSONMarshaler creates a new JSON marshaler (backward compatible).
-// Deprecated: Use NewJSONCommandMarshaler or NewJSONEventMarshaler instead.
-func NewJSONMarshaler() CommandMarshaler {
-	return NewJSONCommandMarshaler()
-}

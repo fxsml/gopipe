@@ -59,12 +59,18 @@ gopipe's CQRS implementation is built on the `message` package and provides type
 ### Package Structure
 
 ```
-cqrs/                     ← Core CQRS (ADR 0006) ✅ Implemented
-├── marshaler.go          ← Marshaler interface + JSONMarshaler
+message/
+├── router.go             ← Router, RouterConfig, NewRouter
+├── handler.go            ← Handler interface, NewHandler
+├── pipe.go               ← Pipe interface, NewPipe
+└── matcher.go            ← Matcher, Match, MatchSubject, etc.
+
+message/cqrs/             ← CQRS handlers (ADR 0006) ✅ Implemented
 ├── handler.go            ← NewCommandHandler, NewEventHandler
-├── coordinator.go        ← SagaCoordinator interface
-├── util.go               ← CreateCommand, CreateCommands
-└── doc.go                ← Package documentation
+├── marshaler.go          ← CommandMarshaler, EventMarshaler
+├── attributes.go         ← WithTypeOf, WithSubject, etc.
+├── matcher.go            ← MatchGenericTypeOf
+└── pipe.go               ← NewCommandPipe
 
 cqrs/compensation/        ← Compensating sagas (ADR 0008) 📋 Proposed
 └── (future)              ← SagaStore, CompensatingSagaCoordinator
@@ -76,7 +82,10 @@ cqrs/outbox/              ← Transactional outbox (ADR 0009) 📋 Proposed
 ### Basic Example
 
 ```go
-import "github.com/fxsml/gopipe/message/cqrs"
+import (
+    "github.com/fxsml/gopipe/message"
+    "github.com/fxsml/gopipe/message/cqrs"
+)
 
 // 1. Define command and event
 type CreateOrder struct {
@@ -93,12 +102,10 @@ type OrderCreated struct {
 }
 
 // 2. Create marshaler
-marshaler := cqrs.NewJSONMarshaler()
+marshaler := cqrs.NewJSONCommandMarshaler(cqrs.WithTypeOf())
 
 // 3. Create command handler (Command → Events)
 createOrderHandler := cqrs.NewCommandHandler(
-    "CreateOrder",
-    marshaler,
     func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
         // Business logic
         saveOrder(cmd)
@@ -111,15 +118,17 @@ createOrderHandler := cqrs.NewCommandHandler(
             CreatedAt:  time.Now(),
         }}, nil
     },
+    cqrs.Match(cqrs.MatchSubject("CreateOrder")),
+    marshaler,
 )
 
 // 4. Create event handler (Event → Side Effects)
 emailHandler := cqrs.NewEventHandler(
-    "OrderCreated",
-    marshaler,
     func(ctx context.Context, evt OrderCreated) error {
         return emailService.Send(evt.CustomerID, "Order created!")
     },
+    cqrs.Match(cqrs.MatchSubject("OrderCreated")),
+    cqrs.NewJSONEventMarshaler(),
 )
 
 // 5. Wire together with routers
@@ -349,9 +358,9 @@ msg := message.New(data, message.Attributes{
 
 ```go
 // All listening to "OrderCreated"
-emailHandler := cqrs.NewEventHandler("OrderCreated", ..., sendEmail)
-analyticsHandler := cqrs.NewEventHandler("OrderCreated", ..., trackAnalytics)
-inventoryHandler := cqrs.NewEventHandler("OrderCreated", ..., updateInventory)
+emailHandler := cqrs.NewEventHandler(sendEmail, cqrs.MatchSubject("OrderCreated"), marshaler)
+analyticsHandler := cqrs.NewEventHandler(trackAnalytics, cqrs.MatchSubject("OrderCreated"), marshaler)
+inventoryHandler := cqrs.NewEventHandler(updateInventory, cqrs.MatchSubject("OrderCreated"), marshaler)
 sagaCoordinator := &OrderSagaCoordinator{...} // Workflow logic
 ```
 
@@ -401,6 +410,10 @@ Events → Materialized View (denormalized read model)
 ```
 
 ## Related Documentation
+
+### Core Documentation
+
+- [Router and Handlers](./router-and-handlers.md) - Router, Handler, Pipe, and Matcher documentation
 
 ### Architecture Decision Records
 
