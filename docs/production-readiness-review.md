@@ -60,6 +60,9 @@ The gopipe project demonstrates **excellent architectural design** with clear se
 - ✅ ADR 0002, 0003, 0011 - Added historical notes about terminology changes
 - ✅ ADR 0010 - Updated to reflect actual Subscriber API implementation
 - ✅ All doc dates corrected from 2024 to 2025
+- ✅ IO Broker - Clarified as debug/management tool with comprehensive godoc
+  - Added topic filtering tests (TestIOTopicFiltering, TestIOTopicPreservation)
+  - Updated ADR 0010 with IO broker use cases and topic handling
 
 ---
 
@@ -526,7 +529,6 @@ if !ok {
 7. **Advanced features**
    - Consider simplifying multiplex for v1
    - Batch CloudEvents mode (currently supported but complex)
-   - IO Broker positioning (experimental?)
 
 ---
 
@@ -543,12 +545,16 @@ if !ok {
 ### Consider Removing/Simplifying 🤔
 - **Multiplex routing** - Complex, may be over-engineered for v1
   - Recommendation: Mark as "Advanced" feature
-- **IO Broker** - Limited use case
-  - Recommendation: Move to examples or mark experimental
 - **CloudEvents Batch mode** - Adds complexity
   - Recommendation: Support in v1.1
 - ~~**HTTP WaitForAck** - Not implemented~~ ✅ Now fully implemented
   - Uses channel-based ack/nack synchronization with timeout
+
+### Debug/Management Tools 🔧
+- **IO Broker** - Positioned as debug/management tool, not production broker
+  - Use cases: debug logging, replay testing, pipe-based IPC
+  - Clear godoc explaining purpose and topic filtering behavior
+  - Well-tested with topic preservation verification
 
 ### Definitely Remove ❌
 - None - all features are useful and well-implemented

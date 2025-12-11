@@ -1,5 +1,42 @@
 package pubsub
 
+// IO Broker - Debug and Management Tool
+//
+// The IO broker is designed for debugging, logging, and bridging scenarios - not as
+// a production message broker. It serializes messages to JSONL (one CloudEvent per line)
+// for human-readable output and interoperability with other tools.
+//
+// Primary use cases:
+//   - Debug logging: Subscribe from a real broker, write to file for inspection
+//   - Replay testing: Read from file, publish to a real broker for testing
+//   - Pipe-based IPC: Simple inter-process communication via stdin/stdout
+//   - Format conversion: Bridge between file-based and broker-based systems
+//
+// Topic handling:
+//   - Send: Writes ALL messages regardless of topic. The topic is serialized
+//     in the CloudEvent "topic" extension for use by downstream consumers.
+//   - Receive: Empty topic ("") returns all messages. Non-empty topic filters
+//     messages by exact match on the serialized topic extension.
+//
+// Example: Debug logging
+//
+//	// Subscribe from NATS, write to file for debugging
+//	natsReceiver := NewNATSReceiver(...)
+//	fileWriter := NewIOSender(file, IOConfig{})
+//	msgs, _ := natsReceiver.Receive(ctx, "orders.*")
+//	fileWriter.Send(ctx, "orders.debug", msgs) // topic preserved in output
+//
+// Example: Replay testing
+//
+//	// Read from file, publish to broker for replay
+//	fileReader := NewIOReceiver(file, IOConfig{})
+//	broker := NewNATSSender(...)
+//	msgs, _ := fileReader.Receive(ctx, "") // empty = read all
+//	for _, msg := range msgs {
+//	    topic, _ := msg.Attributes.Topic()
+//	    broker.Send(ctx, topic, []*message.Message{msg})
+//	}
+
 import (
 	"bufio"
 	"context"
@@ -42,12 +79,13 @@ func (JSONMarshaler) Unmarshal(data []byte, v any) error {
 	return json.Unmarshal(data, v)
 }
 
-// IOConfig configures IO-based sender/receiver.
+// IOConfig configures IO-based sender/receiver for debugging and bridging.
 type IOConfig struct {
 	// SendTimeout is the maximum duration for a write operation.
 	SendTimeout time.Duration
 
 	// ReceiveTimeout is the maximum duration for a read operation.
+	// When reading from a file, this controls how long to wait for more data.
 	ReceiveTimeout time.Duration
 
 	// Marshaler for message serialization. Defaults to JSONMarshaler.
@@ -56,7 +94,8 @@ type IOConfig struct {
 	// BufferSize for the reader. Defaults to 64KB.
 	BufferSize int
 
-	// Source is the default CloudEvents source for messages. Defaults to "gopipe://io".
+	// Source is the CloudEvents source URI for outgoing messages.
+	// Defaults to "gopipe://io".
 	Source string
 }
 
@@ -85,7 +124,12 @@ type ioSender struct {
 }
 
 // NewIOSender creates a sender that writes messages to the given writer.
-// Messages are encoded as JSON Lines (JSONL) - one JSON object per line.
+//
+// All messages are written regardless of topic. The topic is preserved in the
+// CloudEvent "topic" extension so it can be used when reading messages back.
+// Messages are encoded as JSON Lines (JSONL) - one CloudEvent per line.
+//
+// Use for: debug logging, recording messages to file, pipe-based output.
 func NewIOSender(w io.Writer, config IOConfig) Sender {
 	cfg := config.defaults()
 	return &ioSender{
@@ -96,8 +140,8 @@ func NewIOSender(w io.Writer, config IOConfig) Sender {
 	}
 }
 
-// Send writes messages to the underlying writer in CloudEvents JSON format.
-// Each message is encoded as one CloudEvent per line (JSONL).
+// Send writes all messages to the underlying writer in CloudEvents JSON format.
+// The topic is stored in the CloudEvent "topic" extension for later filtering.
 func (s *ioSender) Send(ctx context.Context, topic string, msgs []*message.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -153,7 +197,14 @@ type ioReceiver struct {
 }
 
 // NewIOReceiver creates a receiver that reads messages from the given reader.
-// Messages are decoded from JSON Lines (JSONL) - one JSON object per line.
+//
+// Topic filtering:
+//   - Empty topic (""): Returns all messages from the stream
+//   - Non-empty topic: Filters by exact match on the "topic" extension
+//
+// Messages are decoded from JSON Lines (JSONL) - one CloudEvent per line.
+//
+// Use for: replay testing, reading debug logs, pipe-based input.
 func NewIOReceiver(r io.Reader, config IOConfig) Receiver {
 	cfg := config.defaults()
 	return &ioReceiver{
@@ -163,8 +214,8 @@ func NewIOReceiver(r io.Reader, config IOConfig) Receiver {
 	}
 }
 
-// Receive reads messages from the reader that match the specified topic.
-// If topic is empty, all messages are returned.
+// Receive reads messages from the reader. Empty topic returns all messages;
+// non-empty topic filters by exact match on the serialized topic extension.
 func (r *ioReceiver) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
 	var result []*message.Message
 	timeout := r.config.ReceiveTimeout
@@ -241,7 +292,8 @@ func (r *ioReceiver) Close() error {
 	return nil
 }
 
-// IOBroker combines Sender and Receiver for bidirectional streaming.
+// IOBroker combines Sender and Receiver for bidirectional IO streaming.
+// Primarily useful for pipe-based IPC (stdin/stdout) or testing scenarios.
 type IOBroker struct {
 	sender   *ioSender
 	receiver *ioReceiver
@@ -254,7 +306,13 @@ var (
 )
 
 // NewIOBroker creates a broker that reads from r and writes to w.
-// This is useful for pipe-based IPC or file-based messaging.
+//
+// Primary use cases:
+//   - Pipe-based IPC: Use with os.Stdin/os.Stdout for inter-process messaging
+//   - Testing: Use with bytes.Buffer for unit tests
+//
+// Note: For file-based scenarios, prefer separate NewIOSender and NewIOReceiver
+// as files are typically written then read, not both simultaneously.
 func NewIOBroker(r io.Reader, w io.Writer, config IOConfig) *IOBroker {
 	cfg := config.defaults()
 	return &IOBroker{

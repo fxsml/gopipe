@@ -324,3 +324,120 @@ func TestIOHTTPRoundTrip(t *testing.T) {
 			httpMessages[0].Data, originalMsg.Data)
 	}
 }
+
+// TestIOTopicFiltering verifies topic filtering behavior:
+// - Send writes ALL messages (topic preserved in CloudEvent subject)
+// - Receive with empty topic returns all messages
+// - Receive with specific topic filters by exact match
+func TestIOTopicFiltering(t *testing.T) {
+	var buf bytes.Buffer
+	sender := pubsub.NewIOSender(&buf, pubsub.IOConfig{})
+	ctx := context.Background()
+
+	// Write messages with different topics
+	msgs := map[string]*message.Message{
+		"orders.created":   message.New([]byte(`"order1"`), nil),
+		"orders.shipped":   message.New([]byte(`"order2"`), nil),
+		"payments.charged": message.New([]byte(`"payment1"`), nil),
+	}
+
+	for topic, msg := range msgs {
+		if err := sender.Send(ctx, topic, []*message.Message{msg}); err != nil {
+			t.Fatalf("Send failed: %v", err)
+		}
+	}
+
+	t.Run("empty topic returns all messages", func(t *testing.T) {
+		reader := bytes.NewReader(buf.Bytes())
+		receiver := pubsub.NewIOReceiver(reader, pubsub.IOConfig{})
+
+		ctx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+
+		received, err := receiver.Receive(ctx, "") // empty = all
+		if err != nil && err != context.Canceled {
+			t.Fatalf("Receive failed: %v", err)
+		}
+
+		if len(received) != 3 {
+			t.Errorf("Expected 3 messages with empty topic, got %d", len(received))
+		}
+	})
+
+	t.Run("specific topic filters by exact match", func(t *testing.T) {
+		reader := bytes.NewReader(buf.Bytes())
+		receiver := pubsub.NewIOReceiver(reader, pubsub.IOConfig{})
+
+		ctx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+
+		received, err := receiver.Receive(ctx, "orders.created")
+		if err != nil && err != context.Canceled {
+			t.Fatalf("Receive failed: %v", err)
+		}
+
+		if len(received) != 1 {
+			t.Errorf("Expected 1 message for orders.created, got %d", len(received))
+		}
+		if len(received) > 0 && !bytes.Equal(received[0].Data, []byte(`"order1"`)) {
+			t.Errorf("Got wrong message: %s", received[0].Data)
+		}
+	})
+
+	t.Run("non-matching topic returns empty", func(t *testing.T) {
+		reader := bytes.NewReader(buf.Bytes())
+		receiver := pubsub.NewIOReceiver(reader, pubsub.IOConfig{})
+
+		ctx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+
+		received, err := receiver.Receive(ctx, "nonexistent.topic")
+		if err != nil && err != context.Canceled {
+			t.Fatalf("Receive failed: %v", err)
+		}
+
+		if len(received) != 0 {
+			t.Errorf("Expected 0 messages for nonexistent topic, got %d", len(received))
+		}
+	})
+}
+
+// TestIOTopicPreservation verifies that topics are preserved through serialization
+// so they can be used for routing when republishing to a real broker.
+func TestIOTopicPreservation(t *testing.T) {
+	var buf bytes.Buffer
+	sender := pubsub.NewIOSender(&buf, pubsub.IOConfig{})
+	ctx := context.Background()
+
+	originalTopic := "orders.created"
+	msg := message.New([]byte(`"test"`), nil)
+
+	if err := sender.Send(ctx, originalTopic, []*message.Message{msg}); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	// Read back and verify topic is preserved in attributes
+	reader := bytes.NewReader(buf.Bytes())
+	receiver := pubsub.NewIOReceiver(reader, pubsub.IOConfig{})
+
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+
+	received, err := receiver.Receive(ctx, "")
+	if err != nil && err != context.Canceled {
+		t.Fatalf("Receive failed: %v", err)
+	}
+
+	if len(received) != 1 {
+		t.Fatalf("Expected 1 message, got %d", len(received))
+	}
+
+	// Topic should be preserved in Topic attribute
+	topic, ok := received[0].Attributes.Topic()
+	if !ok {
+		t.Fatal("Topic attribute not preserved")
+	}
+	if topic != originalTopic {
+		t.Errorf("Topic not preserved: got %q, want %q", topic, originalTopic)
+	}
+}

@@ -20,13 +20,27 @@ pubsub/
 ├── broker.go       # Sender, Receiver, Broker interfaces
 ├── memory.go       # In-memory broker
 ├── channel.go      # Channel-based broker
-├── io.go           # IO stream broker (JSONL)
-├── http.go         # HTTP webhook broker
+├── io.go           # IO broker for debugging/bridging (JSONL format)
+├── http.go         # HTTP webhook broker (CloudEvents)
 ├── multiplex.go    # Routing between multiple brokers
 ├── publisher.go    # Publisher with batching
 ├── subscriber.go   # Subscriber with gopipe integration
 └── topics.go       # Topic pattern matching
 ```
+
+### IO Broker (Debug/Management)
+
+The IO broker is designed for debugging, logging, and bridging - not as a production
+message broker. It serializes messages as JSONL (one CloudEvent per line).
+
+Use cases:
+- Debug logging: Subscribe from a real broker, write to file for inspection
+- Replay testing: Read from file, publish to a real broker
+- Pipe-based IPC: stdin/stdout communication between processes
+
+Topic handling:
+- **Send**: Writes all messages; topic preserved in CloudEvent extension
+- **Receive**: Empty topic returns all; non-empty topic filters by exact match
 
 Core interfaces:
 ```go
