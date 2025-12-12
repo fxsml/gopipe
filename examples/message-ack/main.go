@@ -20,14 +20,14 @@ func main() {
 	// Create messages using the new direct construction API
 	in := channel.FromValues(
 		message.NewWithAcking(12, message.Attributes{
-			message.AttrID:     "msg-001",
-			"source":           "orders-queue",
-			message.AttrTime:   time.Now(),
+			message.AttrID:   "msg-001",
+			"source":         "orders-queue",
+			message.AttrTime: time.Now(),
 		}, ack, nack),
 		message.NewWithAcking(42, message.Attributes{
-			message.AttrID:     "msg-002",
-			"source":           "orders-queue",
-			message.AttrTime:   time.Now(),
+			message.AttrID:   "msg-002",
+			"source":         "orders-queue",
+			message.AttrTime: time.Now(),
 		}, ack, nack),
 	)
 

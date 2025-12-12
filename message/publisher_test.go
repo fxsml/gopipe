@@ -489,4 +489,3 @@ func TestSubscriber_NoMessages(t *testing.T) {
 		t.Errorf("Expected 0 messages when receiver returns no messages, got %d", count)
 	}
 }
-

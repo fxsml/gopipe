@@ -637,7 +637,7 @@ func TestMessage_TypedAccessors(t *testing.T) {
 		props := message.Attributes{
 			message.AttrID:            "msg-001",
 			message.AttrCorrelationID: "corr-123",
-			message.AttrTime:     now,
+			message.AttrTime:          now,
 		}
 		msg := message.New(42, props)
 
