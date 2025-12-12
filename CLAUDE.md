@@ -334,3 +334,4 @@ git status  # No untracked important files
 **Document Version**: 2.0
 **Last Updated**: 2025-12-12
 **Maintainer**: gopipe team
+- never merge to main yourself

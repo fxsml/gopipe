@@ -45,12 +45,23 @@ This document outlines the plan for setting up git flow and preparing the next r
 
 ## Phase 3: GitHub Integration
 
-### 3.1 Create Issues
-- Create GitHub issues for each feature
-- Use issue references in commits (See #N, Closes #N)
+**Note**: GitHub CLI not authenticated. Issues and PRs must be created manually.
 
-### 3.2 Create Pull Requests
-- Feature branches → develop
+### 3.1 Issues to Create
+
+| # | Title | Description |
+|---|-------|-------------|
+| 1 | feat(channel): add GroupBy for key-based batching | Implement GroupBy function for partitioning messages by key |
+| 2 | feat(message): refactor core Message type | Simplify Message type and align with CloudEvents |
+| 3 | feat(message): add Publisher/Subscriber and Broker | Implement pub/sub pattern with CloudEvents support |
+| 4 | feat(message): add Router with handlers/matchers | Message routing with middleware support |
+| 5 | feat(message/cqrs): add CQRS handlers | Type-safe command and event handlers |
+| 6 | feat(message/multiplex): topic-based routing | Topic-based routing for Sender/Receiver |
+| 7 | feat(middleware): reusable middleware components | Correlation and message middleware |
+| 8 | docs: comprehensive documentation | CHANGELOG, CONTRIBUTING, feature docs, ADRs |
+
+### 3.2 Pull Requests to Create
+- Feature branches → develop (one PR per feature)
 - develop → release/vX.Y.Z
 - release/vX.Y.Z → main
 
@@ -73,17 +84,36 @@ This document outlines the plan for setting up git flow and preparing the next r
 
 ## Progress Tracking
 
-- [ ] Phase 1: Infrastructure Setup
-  - [ ] Integrate CI/Makefile
-  - [ ] Add git-semver
-  - [ ] Initialize git flow
-- [ ] Phase 2: Feature Integration
-  - [ ] Create feature branches
-  - [ ] Cherry-pick feature commits
+- [x] Phase 1: Infrastructure Setup
+  - [x] Integrate CI/Makefile
+  - [x] Add git-semver
+  - [x] Initialize git flow (develop branch created)
+- [x] Phase 2: Feature Integration
+  - [x] Merge feature branches to develop
+  - [x] Merge documentation branch to develop
 - [ ] Phase 3: GitHub Integration
-  - [ ] Create issues
-  - [ ] Create PRs
+  - [ ] Create issues (manual - gh CLI not authenticated)
+  - [ ] Create release PR (manual - gh CLI not authenticated)
 - [ ] Phase 4: Release Preparation
   - [ ] Create release branch
   - [ ] Final testing
-  - [ ] Cleanup and merge
+  - [ ] Cleanup plan file
+  - [ ] Merge to main (USER ACTION REQUIRED)
+
+## Manual Steps Required
+
+Since GitHub CLI is not authenticated, the following must be done manually:
+
+1. **Create GitHub Issues** for tracking:
+   - Issue #1: feat(channel): add GroupBy for key-based batching
+   - Issue #2: feat(message): refactor core Message type
+   - Issue #3: feat(message): add Publisher/Subscriber and Broker
+   - Issue #4: feat(message): add Router with handlers/matchers
+   - Issue #5: feat(message/cqrs): add CQRS handlers
+   - Issue #6: feat(message/multiplex): topic-based routing
+   - Issue #7: feat(middleware): reusable middleware components
+   - Issue #8: docs: comprehensive documentation
+
+2. **Create Pull Request** from release branch to main
+
+3. **Merge to main** - DO NOT auto-merge, user must approve

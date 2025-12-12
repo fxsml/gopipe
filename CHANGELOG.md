@@ -5,9 +5,16 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased - feat/pubsub branch]
+## [0.10.0] - 2025-12-12
 
 Major pub/sub implementation with CloudEvents support, CQRS handlers, and message routing.
+
+### Infrastructure
+- GitHub Actions CI workflow with test, lint, and build jobs
+- Makefile with essential development targets
+- git-semver for semantic versioning
+- README badges for CI, Go Report Card, GoDoc, License
+- CLAUDE.md with git flow procedures and documentation guidelines
 
 ### Added
 
