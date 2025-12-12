@@ -41,11 +41,6 @@ const (
 	ceTime            = ceHeaderPrefix + "time"
 	ceDataContentType = ceHeaderPrefix + "datacontenttype"
 
-	// gopipe extension attributes.
-	ceTopic         = ceHeaderPrefix + "topic"
-	ceCorrelationID = ceHeaderPrefix + "correlationid"
-	ceDeadline      = ceHeaderPrefix + "deadline"
-
 	// HTTP Content-Type header.
 	headerContentType = "Content-Type"
 
@@ -54,9 +49,6 @@ const (
 	contentTypeCloudEventsBatchJSON = "application/cloudevents-batch+json"
 	contentTypeJSON                 = "application/json"
 	contentTypeOctetStream          = "application/octet-stream"
-
-	// CloudEvents specification version.
-	cloudEventsVersion = "1.0"
 )
 
 // CloudEventsMode defines the CloudEvents content mode for HTTP transport.

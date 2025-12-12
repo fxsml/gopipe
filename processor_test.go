@@ -188,10 +188,9 @@ func TestStartProcessor_WithTimeoutCancelsProcess(t *testing.T) {
 func TestStartProcessor_WithoutContextPropagation(t *testing.T) {
 	in := make(chan int)
 	process := func(ctx context.Context, v int) ([]int, error) {
-		// ctx should not be the parent context
-		if ctx == context.Background() {
-			// acceptable
-		}
+		// ctx should not be the parent context - this is expected behavior
+		// with WithoutContextPropagation option
+		_ = ctx // Prevent staticcheck empty branch warning
 		return []int{v}, nil
 	}
 	cancel := func(v int, err error) {}

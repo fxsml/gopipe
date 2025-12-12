@@ -470,12 +470,16 @@ func TestIntegration_WithSubscriber(t *testing.T) {
 	externalCh := externalBroker.Subscribe(ctx, "external/api")
 
 	// Send messages to brokers
-	memoryBroker.Send(ctx, "internal/events", []*message.Message{
+	if err := memoryBroker.Send(ctx, "internal/events", []*message.Message{
 		message.New([]byte("internal-msg"), message.Attributes{}),
-	})
-	externalBroker.Send(ctx, "external/api", []*message.Message{
+	}); err != nil {
+		t.Fatalf("Failed to send to memory broker: %v", err)
+	}
+	if err := externalBroker.Send(ctx, "external/api", []*message.Message{
 		message.New([]byte("external-msg"), message.Attributes{}),
-	})
+	}); err != nil {
+		t.Fatalf("Failed to send to external broker: %v", err)
+	}
 
 	// Read from subscriptions with timeout
 	select {

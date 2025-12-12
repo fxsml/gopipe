@@ -70,7 +70,9 @@ func TestRouter_CommandHandler(t *testing.T) {
 	}
 
 	var confirmed OrderConfirmed
-	json.Unmarshal(results[0].Data, &confirmed)
+	if err := json.Unmarshal(results[0].Data, &confirmed); err != nil {
+		t.Fatalf("Failed to unmarshal result: %v", err)
+	}
 	if confirmed.ID != "order-1" {
 		t.Errorf("Expected ID 'order-1', got %s", confirmed.ID)
 	}
@@ -334,7 +336,9 @@ func TestRouter_WithCommandPipe(t *testing.T) {
 	}
 
 	var order Order
-	json.Unmarshal(results[0].Data, &order)
+	if err := json.Unmarshal(results[0].Data, &order); err != nil {
+		t.Fatalf("Failed to unmarshal result: %v", err)
+	}
 	if order.Amount != 200 {
 		t.Errorf("Expected amount 200, got %d", order.Amount)
 	}
@@ -384,7 +388,10 @@ func TestRouter_PipeWithHandlerFallback(t *testing.T) {
 			orderConfirmed++
 		case "Order":
 			var o Order
-			json.Unmarshal(msg.Data, &o)
+			if err := json.Unmarshal(msg.Data, &o); err != nil {
+				t.Errorf("Failed to unmarshal Order: %v", err)
+				continue
+			}
 			if o.Amount == 100 {
 				orderDoubled++
 			}
