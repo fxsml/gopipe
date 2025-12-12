@@ -91,29 +91,49 @@ This document outlines the plan for setting up git flow and preparing the next r
 - [x] Phase 2: Feature Integration
   - [x] Merge feature branches to develop
   - [x] Merge documentation branch to develop
-- [ ] Phase 3: GitHub Integration
-  - [ ] Create issues (manual - gh CLI not authenticated)
-  - [ ] Create release PR (manual - gh CLI not authenticated)
+- [x] Phase 3: GitHub Integration
+  - [x] Create issues (#35-#42)
+  - [x] Create release PR (#43)
 - [ ] Phase 4: Release Preparation
-  - [ ] Create release branch
-  - [ ] Final testing
-  - [ ] Cleanup plan file
+  - [x] Create release branch (release/v0.10.0)
+  - [x] Final testing (all tests pass)
   - [ ] Merge to main (USER ACTION REQUIRED)
+  - [ ] Tag release v0.10.0
+  - [ ] Merge release back to develop
 
-## Manual Steps Required
+## GitHub Issues Created
 
-Since GitHub CLI is not authenticated, the following must be done manually:
+All issues created and linked to the release:
 
-1. **Create GitHub Issues** for tracking:
-   - Issue #1: feat(channel): add GroupBy for key-based batching
-   - Issue #2: feat(message): refactor core Message type
-   - Issue #3: feat(message): add Publisher/Subscriber and Broker
-   - Issue #4: feat(message): add Router with handlers/matchers
-   - Issue #5: feat(message/cqrs): add CQRS handlers
-   - Issue #6: feat(message/multiplex): topic-based routing
-   - Issue #7: feat(middleware): reusable middleware components
-   - Issue #8: docs: comprehensive documentation
+| # | Issue | Title |
+|---|-------|-------|
+| 1 | [#35](https://github.com/fxsml/gopipe/issues/35) | feat(channel): add GroupBy for key-based batching |
+| 2 | [#36](https://github.com/fxsml/gopipe/issues/36) | feat(message): refactor core Message type |
+| 3 | [#37](https://github.com/fxsml/gopipe/issues/37) | feat(message): add Publisher/Subscriber and Broker |
+| 4 | [#38](https://github.com/fxsml/gopipe/issues/38) | feat(message): add Router with handlers/matchers |
+| 5 | [#39](https://github.com/fxsml/gopipe/issues/39) | feat(message/cqrs): add CQRS handlers |
+| 6 | [#40](https://github.com/fxsml/gopipe/issues/40) | feat(message/multiplex): topic-based routing |
+| 7 | [#41](https://github.com/fxsml/gopipe/issues/41) | feat(middleware): reusable middleware components |
+| 8 | [#42](https://github.com/fxsml/gopipe/issues/42) | docs: comprehensive documentation |
 
-2. **Create Pull Request** from release branch to main
+## Pull Request
 
-3. **Merge to main** - DO NOT auto-merge, user must approve
+**Release PR**: [#43](https://github.com/fxsml/gopipe/pull/43) - release: v0.10.0 - Major pub/sub implementation
+
+## Remaining Steps
+
+1. **Review and merge PR #43** to main
+2. **After merge**, tag the release:
+   ```bash
+   git checkout main
+   git pull
+   git tag v0.10.0
+   git push origin v0.10.0
+   ```
+3. **Merge release back to develop**:
+   ```bash
+   git checkout develop
+   git merge main
+   git push origin develop
+   ```
+4. **Delete this plan file** (optional - can keep for reference)
