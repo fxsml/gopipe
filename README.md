@@ -4,7 +4,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/fxsml/gopipe)](https://goreportcard.com/report/github.com/fxsml/gopipe)
 [![GoDoc](https://pkg.go.dev/badge/github.com/fxsml/gopipe.svg)](https://pkg.go.dev/github.com/fxsml/gopipe)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go Version](https://img.shields.io/github/go-mod-go-version/fxsml/gopipe)](https://github.com/fxsml/gopipe)
+[![Go Version](https://img.shields.io/badge/go-1.24+-blue.svg)](https://go.dev/)
 
 A lightweight, generic Go library for building composable data pipelines, message routers, and pub/sub systems.
 
