@@ -45,12 +45,23 @@ This document outlines the plan for setting up git flow and preparing the next r
 
 ## Phase 3: GitHub Integration
 
-### 3.1 Create Issues
-- Create GitHub issues for each feature
-- Use issue references in commits (See #N, Closes #N)
+**Note**: GitHub CLI not authenticated. Issues and PRs must be created manually.
 
-### 3.2 Create Pull Requests
-- Feature branches → develop
+### 3.1 Issues to Create
+
+| # | Title | Description |
+|---|-------|-------------|
+| 1 | feat(channel): add GroupBy for key-based batching | Implement GroupBy function for partitioning messages by key |
+| 2 | feat(message): refactor core Message type | Simplify Message type and align with CloudEvents |
+| 3 | feat(message): add Publisher/Subscriber and Broker | Implement pub/sub pattern with CloudEvents support |
+| 4 | feat(message): add Router with handlers/matchers | Message routing with middleware support |
+| 5 | feat(message/cqrs): add CQRS handlers | Type-safe command and event handlers |
+| 6 | feat(message/multiplex): topic-based routing | Topic-based routing for Sender/Receiver |
+| 7 | feat(middleware): reusable middleware components | Correlation and message middleware |
+| 8 | docs: comprehensive documentation | CHANGELOG, CONTRIBUTING, feature docs, ADRs |
+
+### 3.2 Pull Requests to Create
+- Feature branches → develop (one PR per feature)
 - develop → release/vX.Y.Z
 - release/vX.Y.Z → main
 
@@ -73,17 +84,56 @@ This document outlines the plan for setting up git flow and preparing the next r
 
 ## Progress Tracking
 
-- [ ] Phase 1: Infrastructure Setup
-  - [ ] Integrate CI/Makefile
-  - [ ] Add git-semver
-  - [ ] Initialize git flow
-- [ ] Phase 2: Feature Integration
-  - [ ] Create feature branches
-  - [ ] Cherry-pick feature commits
-- [ ] Phase 3: GitHub Integration
-  - [ ] Create issues
-  - [ ] Create PRs
+- [x] Phase 1: Infrastructure Setup
+  - [x] Integrate CI/Makefile
+  - [x] Add git-semver
+  - [x] Initialize git flow (develop branch created)
+- [x] Phase 2: Feature Integration
+  - [x] Merge feature branches to develop
+  - [x] Merge documentation branch to develop
+- [x] Phase 3: GitHub Integration
+  - [x] Create issues (#35-#42)
+  - [x] Create release PR (#43)
 - [ ] Phase 4: Release Preparation
-  - [ ] Create release branch
-  - [ ] Final testing
-  - [ ] Cleanup and merge
+  - [x] Create release branch (release/v0.10.0)
+  - [x] Final testing (all tests pass)
+  - [ ] Merge to main (USER ACTION REQUIRED)
+  - [ ] Tag release v0.10.0
+  - [ ] Merge release back to develop
+
+## GitHub Issues Created
+
+All issues created and linked to the release:
+
+| # | Issue | Title |
+|---|-------|-------|
+| 1 | [#35](https://github.com/fxsml/gopipe/issues/35) | feat(channel): add GroupBy for key-based batching |
+| 2 | [#36](https://github.com/fxsml/gopipe/issues/36) | feat(message): refactor core Message type |
+| 3 | [#37](https://github.com/fxsml/gopipe/issues/37) | feat(message): add Publisher/Subscriber and Broker |
+| 4 | [#38](https://github.com/fxsml/gopipe/issues/38) | feat(message): add Router with handlers/matchers |
+| 5 | [#39](https://github.com/fxsml/gopipe/issues/39) | feat(message/cqrs): add CQRS handlers |
+| 6 | [#40](https://github.com/fxsml/gopipe/issues/40) | feat(message/multiplex): topic-based routing |
+| 7 | [#41](https://github.com/fxsml/gopipe/issues/41) | feat(middleware): reusable middleware components |
+| 8 | [#42](https://github.com/fxsml/gopipe/issues/42) | docs: comprehensive documentation |
+
+## Pull Request
+
+**Release PR**: [#43](https://github.com/fxsml/gopipe/pull/43) - release: v0.10.0 - Major pub/sub implementation
+
+## Remaining Steps
+
+1. **Review and merge PR #43** to main
+2. **After merge**, tag the release:
+   ```bash
+   git checkout main
+   git pull
+   git tag v0.10.0
+   git push origin v0.10.0
+   ```
+3. **Merge release back to develop**:
+   ```bash
+   git checkout develop
+   git merge main
+   git push origin develop
+   ```
+4. **Delete this plan file** (optional - can keep for reference)

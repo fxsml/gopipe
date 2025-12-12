@@ -869,10 +869,9 @@ func TestWithRetryConfig_ProcessPipe(t *testing.T) {
 		// Start the pipe
 		out := pipe.Start(context.Background(), in)
 
-		// Collect results
-		var results []int
-		for val := range out {
-			results = append(results, val)
+		// Drain results
+		for range out {
+			// Drain the output channel
 		}
 
 		// Verify exponential backoff timing
