@@ -254,6 +254,74 @@ Key differences for AI:
 - Humans: Focus on this CONTRIBUTING.md
 - AI Assistants: Follow CLAUDE.md procedures
 
+## Release Process
+
+This project uses [git flow](https://www.atlassian.com/git/tutorials/comparing-workflows/gitflow-workflow) and [semantic versioning](https://semver.org/).
+
+### Finishing a Release
+
+After a release PR is approved and CI passes:
+
+```bash
+# 1. Merge the release PR on GitHub (use "Create a merge commit")
+#    URL: https://github.com/fxsml/gopipe/pull/XX
+
+# 2. Update local main branch
+git checkout main
+git pull origin main
+
+# 3. Tag the release
+git tag v0.X.Y
+git push origin v0.X.Y
+
+# 4. Merge release back to develop
+git checkout develop
+git merge main
+git push origin develop
+
+# 5. (Optional) Delete the release branch
+git branch -d release/v0.X.Y
+git push origin --delete release/v0.X.Y
+```
+
+### Version Numbering
+
+- **Major** (v1.0.0): Breaking changes after v1.0
+- **Minor** (v0.X.0): New features, breaking changes before v1.0
+- **Patch** (v0.0.X): Bug fixes only
+
+### Checking Version
+
+```bash
+# Install git-semver (one time)
+make install-tools
+
+# Show current version
+make version
+```
+
+### Creating a Hotfix
+
+For critical fixes to production:
+
+```bash
+# 1. Create hotfix branch from main
+git checkout main
+git checkout -b hotfix/v0.X.Y
+
+# 2. Make fixes, commit, push
+git commit -m "fix: critical bug description"
+git push -u origin hotfix/v0.X.Y
+
+# 3. Create PR to main, get review, merge
+
+# 4. Tag and merge back to develop (same as release)
+git checkout main && git pull
+git tag v0.X.Y
+git push origin v0.X.Y
+git checkout develop && git merge main && git push
+```
+
 ## Code of Conduct
 
 - Be respectful and constructive
