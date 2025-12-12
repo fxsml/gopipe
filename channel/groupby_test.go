@@ -1,6 +1,7 @@
 package channel_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -338,21 +339,26 @@ func TestGroupBy_ConcurrentWrites(t *testing.T) {
 		},
 	)
 
-	// Simulate concurrent writers
+	// Simulate concurrent writers with WaitGroup to ensure completion
+	var wg sync.WaitGroup
+	wg.Add(2)
+
 	go func() {
+		defer wg.Done()
 		for i := 0; i < 50; i++ {
 			in <- testEvent{"topic-a", i}
 		}
 	}()
 
 	go func() {
+		defer wg.Done()
 		for i := 0; i < 50; i++ {
 			in <- testEvent{"topic-b", i}
 		}
 	}()
 
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		wg.Wait()
 		close(in)
 	}()
 
