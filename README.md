@@ -1,5 +1,11 @@
 # gopipe
 
+[![CI](https://github.com/fxsml/gopipe/actions/workflows/ci.yml/badge.svg)](https://github.com/fxsml/gopipe/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/fxsml/gopipe)](https://goreportcard.com/report/github.com/fxsml/gopipe)
+[![GoDoc](https://pkg.go.dev/badge/github.com/fxsml/gopipe.svg)](https://pkg.go.dev/github.com/fxsml/gopipe)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/fxsml/gopipe)](https://github.com/fxsml/gopipe)
+
 A lightweight, generic Go library for orchestrating complex data pipelines using composable pipes.
 `gopipe` provides powerful orchestration primitives for building robust, concurrent, and context-aware pipelines.
 The `channel` package offers low-level helpers for basic operations and wiring.
