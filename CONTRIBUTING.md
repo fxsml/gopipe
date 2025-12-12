@@ -284,6 +284,36 @@ git branch -d release/v0.X.Y
 git push origin --delete release/v0.X.Y
 ```
 
+### Creating the GitHub Release
+
+After tagging:
+
+```bash
+# 1. Create the release on GitHub
+gh release create v0.X.Y --title "v0.X.Y" --notes "Release notes here..."
+
+# 2. Close related issues
+gh issue close <issue-number> --comment "Released in v0.X.Y: https://github.com/fxsml/gopipe/releases/tag/v0.X.Y"
+```
+
+**Release notes template:**
+
+```markdown
+## What's New in v0.X.Y
+
+### Features
+- Feature description (#issue)
+
+### Bug Fixes
+- Fix description (#issue)
+
+### Breaking Changes
+- Description of breaking change
+
+### Documentation
+See [docs/features/](docs/features/) for detailed documentation.
+```
+
 ### Version Numbering
 
 - **Major** (v1.0.0): Breaking changes after v1.0
