@@ -24,6 +24,16 @@ These features are documented but not yet implemented:
 - **Compensating Saga** - Rollback for failed workflows (ADR 0008)
 - **Transactional Outbox** - Reliable event publishing (ADR 0009)
 
+### CloudEvents Standardization (Proposed)
+
+Proposed features for making CloudEvents mandatory and enabling composable internal pipelines.
+See [CloudEvents Standardization Plan](../plans/cloudevents-standardization.md) for complete details.
+
+9. **[CloudEvents Mandatory](09-cloudevents-mandatory.md)** - Enforce required CE attributes (ADR 0019)
+10. **[Non-Generic Message](10-non-generic-message.md)** - Data as `any`, remove generics (ADR 0020)
+11. **[ContentType Serialization](11-contenttype-serialization.md)** - Auto serialization at boundaries (ADR 0021)
+12. **[Internal Message Routing](12-internal-message-routing.md)** - Topic-based internal routing (ADR 0022)
+
 ## Integration Order
 
 Features are numbered in dependency order. When integrating into main:
@@ -73,6 +83,10 @@ Architecture Decision Records are organized by status:
 - [ADR 0007](../adr/0007-saga-coordinator-pattern.md) - Saga Coordinator Pattern
 - [ADR 0008](../adr/0008-compensating-saga-pattern.md) - Compensating Saga Pattern
 - [ADR 0009](../adr/0009-transactional-outbox-pattern.md) - Transactional Outbox Pattern
+- [ADR 0019](../adr/0019-cloudevents-mandatory.md) - CloudEvents Mandatory Specification
+- [ADR 0020](../adr/0020-non-generic-message.md) - Non-Generic Message Type
+- [ADR 0021](../adr/0021-contenttype-serialization.md) - ContentType-Based Serialization
+- [ADR 0022](../adr/0022-internal-message-routing.md) - Internal Message Routing via Topic
 
 ### Superseded
 - [ADR 0011](../adr/0011-cloudevents-compatibility.md) - Superseded by ADR 0018
