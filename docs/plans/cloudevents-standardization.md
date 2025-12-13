@@ -48,6 +48,14 @@ The CloudEvents spec **intentionally excludes destination/routing attributes**:
 
 ## Feature Overview
 
+### Phase 0: Core Pipe Refactoring (ADRs 0026-0028) ← NEW PREREQUISITE
+Before implementing CloudEvents changes, simplify core abstractions:
+- Replace generic options with non-generic ProcessorConfig struct
+- Simplify cancel path (remove dedicated goroutine)
+- Clear separation of config vs middleware
+- Enhanced fan-out with slow-receiver handling
+- Unified Source interface for Generator and Subscriber
+
 ### Phase 1: CloudEvents Mandatory (ADR 0019)
 Enforce CloudEvents required attributes on all messages.
 
@@ -75,6 +83,17 @@ Durable event persistence with rich querying and transactional outbox support.
 ## Implementation Order
 
 ```
+┌──────────────────────────────────────────────────────────────────┐
+│ Phase 0: Core Pipe Refactoring (ADRs 0026-0028) ← PREREQUISITE   │
+│ - ProcessorConfig struct (replaces generic options)              │
+│ - Simplified cancel path (no dedicated goroutine)                │
+│ - Config vs Middleware separation                                │
+│ - Enhanced FanOut with BroadcastConfig                           │
+│ - Unified Source interface (Generator, Subscriber)               │
+│ - GeneratorConfig and factory functions                          │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │ Phase 1: CloudEvents Mandatory (ADR 0019)                        │
 │ - Enforce required attributes                                    │
@@ -228,6 +247,9 @@ External System                    gopipe Internal                    External S
 
 | ADR | Title | Purpose |
 |-----|-------|---------|
+| [0026](../adr/0026-pipe-processor-simplification.md) | Pipe Simplification | Non-generic config, simplified cancel |
+| [0027](../adr/0027-fan-out-pattern.md) | Fan-Out Pattern | Enhanced broadcast with config |
+| [0028](../adr/0028-generator-source-patterns.md) | Generator/Source | Unified Source interface |
 | [0019](../adr/0019-cloudevents-mandatory.md) | CloudEvents Mandatory | Enforce required CE attributes |
 | [0020](../adr/0020-non-generic-message.md) | Non-Generic Message | Simplify message type |
 | [0021](../adr/0021-contenttype-serialization.md) | ContentType Serialization | Automatic boundary serialization |
@@ -240,6 +262,7 @@ External System                    gopipe Internal                    External S
 
 | Feature | Title | Purpose |
 |---------|-------|---------|
+| [16](../features/16-core-pipe-refactoring.md) | Core Pipe Refactoring | Prerequisite simplification |
 | [09](../features/09-cloudevents-mandatory.md) | CloudEvents Mandatory | Implementation details |
 | [10](../features/10-non-generic-message.md) | Non-Generic Message | Implementation details |
 | [11](../features/11-contenttype-serialization.md) | ContentType Serialization | Implementation details |
