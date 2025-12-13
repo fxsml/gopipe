@@ -33,6 +33,8 @@ See [CloudEvents Standardization Plan](../plans/cloudevents-standardization.md) 
 10. **[Non-Generic Message](10-non-generic-message.md)** - Data as `any`, remove generics (ADR 0020)
 11. **[ContentType Serialization](11-contenttype-serialization.md)** - Auto serialization at boundaries (ADR 0021)
 12. **[Internal Message Routing](12-internal-message-routing.md)** - Topic-based internal routing (ADR 0022)
+13. **[Internal Message Loop](13-internal-message-loop.md)** - Feedback loop with pluggable transport (ADR 0023)
+14. **[NATS Integration](14-nats-integration.md)** - External package for advanced messaging (External)
 
 ## Integration Order
 
@@ -87,6 +89,8 @@ Architecture Decision Records are organized by status:
 - [ADR 0020](../adr/0020-non-generic-message.md) - Non-Generic Message Type
 - [ADR 0021](../adr/0021-contenttype-serialization.md) - ContentType-Based Serialization
 - [ADR 0022](../adr/0022-internal-message-routing.md) - Internal Message Routing via Topic
+- [ADR 0023](../adr/0023-internal-message-loop.md) - Internal Message Loop
+- [ADR 0024](../adr/0024-destination-attribute.md) - Destination Attribute
 
 ### Superseded
 - [ADR 0011](../adr/0011-cloudevents-compatibility.md) - Superseded by ADR 0018

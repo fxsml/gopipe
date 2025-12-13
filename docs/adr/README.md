@@ -41,6 +41,8 @@ These ADRs describe proposed features that are documented but not yet implemente
 - **[ADR 0020](0020-non-generic-message.md)** - Non-Generic Message Type
 - **[ADR 0021](0021-contenttype-serialization.md)** - ContentType-Based Serialization
 - **[ADR 0022](0022-internal-message-routing.md)** - Internal Message Routing via Topic
+- **[ADR 0023](0023-internal-message-loop.md)** - Internal Message Loop
+- **[ADR 0024](0024-destination-attribute.md)** - Destination Attribute
 
 ### Superseded ⛔
 
@@ -128,18 +130,22 @@ Industry standard alignment:
 
 Related: [Feature 06-message-cloudevents](../features/06-message-cloudevents.md)
 
-### CloudEvents Standardization (ADRs 0019-0022) 💡
+### CloudEvents Standardization (ADRs 0019-0024) 💡
 Proposed: Making CloudEvents mandatory and enabling composable internal pipelines:
 - ADR 0019: CloudEvents Mandatory Specification 💡
 - ADR 0020: Non-Generic Message Type 💡
 - ADR 0021: ContentType-Based Serialization 💡
 - ADR 0022: Internal Message Routing via Topic 💡
+- ADR 0023: Internal Message Loop 💡
+- ADR 0024: Destination Attribute 💡
 
 Related:
 - [Feature 09-cloudevents-mandatory](../features/09-cloudevents-mandatory.md)
 - [Feature 10-non-generic-message](../features/10-non-generic-message.md)
 - [Feature 11-contenttype-serialization](../features/11-contenttype-serialization.md)
 - [Feature 12-internal-message-routing](../features/12-internal-message-routing.md)
+- [Feature 13-internal-message-loop](../features/13-internal-message-loop.md)
+- [Feature 14-nats-integration](../features/14-nats-integration.md)
 - [CloudEvents Standardization Plan](../plans/cloudevents-standardization.md)
 
 ## Reading Order
@@ -154,14 +160,14 @@ For understanding the complete architecture, read ADRs in this order:
 6. **Standards** (0018) - CloudEvents alignment
 7. **CQRS** (0006) - Event-driven patterns
 8. **Advanced Patterns** (0007-0009) - Sagas and outbox (proposed)
-9. **CloudEvents Standardization** (0019-0022) - Proposed mandatory CE and internal routing
+9. **CloudEvents Standardization** (0019-0024) - Proposed mandatory CE, internal routing, and message loop
 
 ## Timeline
 
 - **2025-11-01**: Initial message refactoring (ADRs 0001-0005)
 - **2025-12-08**: CQRS and pub/sub implementation (ADRs 0006-0017)
 - **2025-12-11**: CloudEvents terminology standardization (ADR 0018)
-- **2025-12-13**: CloudEvents standardization plan proposed (ADRs 0019-0022)
+- **2025-12-13**: CloudEvents standardization plan proposed (ADRs 0019-0024)
 
 ## Related Documentation
 
