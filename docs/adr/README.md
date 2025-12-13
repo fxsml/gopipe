@@ -44,6 +44,9 @@ These ADRs describe proposed features that are documented but not yet implemente
 - **[ADR 0023](0023-internal-message-loop.md)** - Internal Message Loop
 - **[ADR 0024](0024-destination-attribute.md)** - Destination Attribute
 - **[ADR 0025](0025-sql-event-store.md)** - SQL Event Store
+- **[ADR 0026](0026-pipe-processor-simplification.md)** - Pipe and Processor Simplification
+- **[ADR 0027](0027-fan-out-pattern.md)** - Fan-Out Pattern
+- **[ADR 0028](0028-generator-source-patterns.md)** - Generator and Source Patterns
 
 ### Superseded ⛔
 
@@ -131,6 +134,15 @@ Industry standard alignment:
 
 Related: [Feature 06-message-cloudevents](../features/06-message-cloudevents.md)
 
+### Core Pipe Refactoring (ADRs 0026-0028) 💡
+Proposed prerequisite for CloudEvents standardization:
+- ADR 0026: Pipe and Processor Simplification 💡
+- ADR 0027: Fan-Out Pattern 💡
+- ADR 0028: Generator and Source Patterns 💡
+
+Related:
+- [Feature 16-core-pipe-refactoring](../features/16-core-pipe-refactoring.md)
+
 ### CloudEvents Standardization (ADRs 0019-0025) 💡
 Proposed: Making CloudEvents mandatory and enabling composable internal pipelines:
 - ADR 0019: CloudEvents Mandatory Specification 💡
@@ -163,14 +175,16 @@ For understanding the complete architecture, read ADRs in this order:
 6. **Standards** (0018) - CloudEvents alignment
 7. **CQRS** (0006) - Event-driven patterns
 8. **Advanced Patterns** (0007-0009) - Sagas and outbox (proposed)
-9. **CloudEvents Standardization** (0019-0025) - Proposed mandatory CE, internal routing, message loop, and event store
+9. **Core Pipe Refactoring** (0026-0028) - Proposed simplification (prerequisite)
+10. **CloudEvents Standardization** (0019-0025) - Proposed mandatory CE, internal routing, message loop, and event store
 
 ## Timeline
 
 - **2025-11-01**: Initial message refactoring (ADRs 0001-0005)
 - **2025-12-08**: CQRS and pub/sub implementation (ADRs 0006-0017)
 - **2025-12-11**: CloudEvents terminology standardization (ADR 0018)
-- **2025-12-13**: CloudEvents standardization plan proposed (ADRs 0019-0024)
+- **2025-12-13**: CloudEvents standardization plan proposed (ADRs 0019-0025)
+- **2025-12-13**: Core pipe refactoring plan proposed (ADRs 0026-0028)
 
 ## Related Documentation
 

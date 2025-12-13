@@ -24,6 +24,12 @@ These features are documented but not yet implemented:
 - **Compensating Saga** - Rollback for failed workflows (ADR 0008)
 - **Transactional Outbox** - Reliable event publishing (ADR 0009)
 
+### Core Pipe Refactoring (Proposed - Prerequisite)
+
+This is a **prerequisite** for CloudEvents standardization. Must be implemented first.
+
+16. **[Core Pipe Refactoring](16-core-pipe-refactoring.md)** - ProcessorConfig, simplified cancel, Source interface (ADRs 0026-0028)
+
 ### CloudEvents Standardization (Proposed)
 
 Proposed features for making CloudEvents mandatory and enabling composable internal pipelines.
@@ -41,6 +47,7 @@ See [CloudEvents Standardization Plan](../plans/cloudevents-standardization.md) 
 
 Features are numbered in dependency order. When integrating into main:
 
+**Implemented Features (01-08):**
 1. Start with **01-channel-groupby** (prerequisite)
 2. Continue with **02-message-core-refactor** (foundation)
 3. Add **03-message-pubsub** (uses 01 and 02)
@@ -49,6 +56,16 @@ Features are numbered in dependency order. When integrating into main:
 6. Add **06-message-cloudevents** (uses 02)
 7. Add **07-message-multiplex** (uses 03)
 8. Add **08-middleware-package** (uses 04)
+
+**Proposed Features (09-16) - Implementation Order:**
+1. **16-core-pipe-refactoring** (PREREQUISITE - do first)
+2. **09-cloudevents-mandatory** (depends on 16)
+3. **10-non-generic-message** (depends on 09)
+4. **11-contenttype-serialization** (depends on 10)
+5. **12-internal-message-routing** (depends on 11)
+6. **13-internal-message-loop** (depends on 12)
+7. **14-nats-integration** (depends on 13)
+8. **15-sql-event-store** (depends on 11)
 
 ## Feature Document Structure
 
