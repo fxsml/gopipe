@@ -60,6 +60,15 @@ Automatic serialization/deserialization at system boundaries based on ContentTyp
 ### Phase 4: Internal Message Routing (ADR 0022)
 Topic-based internal routing for composable pipelines without external systems.
 
+### Phase 5: Destination Attribute (ADR 0024)
+URI-based routing with `gopipe://` for internal and scheme-based external routing.
+
+### Phase 6: Internal Message Loop (ADR 0023)
+Complete internal messaging system with feedback loop and pluggable transport.
+
+### External Package: NATS Integration
+Optional external package for advanced messaging features (persistence, clustering).
+
 ## Implementation Order
 
 ```
@@ -92,6 +101,32 @@ Topic-based internal routing for composable pipelines without external systems.
 │ - Topic-based internal routing                                   │
 │ - Composable pipeline flow                                       │
 │ - No external system dependency for internal messaging           │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ Phase 5: Destination Attribute (ADR 0024)                        │
+│ - URI-based routing: gopipe://, kafka://, nats://, http://       │
+│ - Clear internal (gopipe://) vs external boundary                │
+│ - Mirrors source attribute semantics                             │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ Phase 6: Internal Message Loop (ADR 0023)                        │
+│ - MessageChannel interface with pub/sub                          │
+│ - NoopChannel (Go channels) - zero dependencies                  │
+│ - Publisher/Subscriber adapters                                  │
+│ - External break-out via destination scheme                      │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ External: NATS Integration (gopipe-nats package)                 │
+│ - NATSChannel implements MessageChannel                          │
+│ - Embedded NATS option (zero infrastructure)                     │
+│ - JetStream for persistence                                      │
+│ - External sender/receiver for nats:// destinations              │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -184,6 +219,8 @@ External System                    gopipe Internal                    External S
 | [0020](../adr/0020-non-generic-message.md) | Non-Generic Message | Simplify message type |
 | [0021](../adr/0021-contenttype-serialization.md) | ContentType Serialization | Automatic boundary serialization |
 | [0022](../adr/0022-internal-message-routing.md) | Internal Message Routing | Topic-based internal routing |
+| [0024](../adr/0024-destination-attribute.md) | Destination Attribute | URI-based routing destinations |
+| [0023](../adr/0023-internal-message-loop.md) | Internal Message Loop | Feedback loop with pluggable transport |
 
 ## Related Features
 
@@ -193,6 +230,8 @@ External System                    gopipe Internal                    External S
 | [10](../features/10-non-generic-message.md) | Non-Generic Message | Implementation details |
 | [11](../features/11-contenttype-serialization.md) | ContentType Serialization | Implementation details |
 | [12](../features/12-internal-message-routing.md) | Internal Message Routing | Implementation details |
+| [13](../features/13-internal-message-loop.md) | Internal Message Loop | Feedback loop implementation |
+| [14](../features/14-nats-integration.md) | NATS Integration | External package plan |
 
 ## Success Criteria
 
@@ -220,8 +259,161 @@ Each phase can be implemented independently:
 3. **Phase 3**: Depends on Phase 2
 4. **Phase 4**: Depends on Phase 3
 
+## Complete Internal Loop Architecture
+
+### Full Pipeline Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                              gopipe InternalLoop                                         │
+│                                                                                          │
+│  External Input                                                         External Output  │
+│  (HTTP/Kafka)                                                           (Kafka/HTTP)    │
+│       │                                                                      ▲          │
+│       ▼                                                                      │          │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+│  │                    MessageChannel (NoopChannel or NATSChannel)                   │   │
+│  │                                                                                  │   │
+│  │   gopipe://        gopipe://        gopipe://        gopipe://                   │   │
+│  │   orders           shipping         audit            complete                    │   │
+│  │      │                │                │                │                        │   │
+│  └──────┼────────────────┼────────────────┼────────────────┼────────────────────────┘   │
+│         │                │                │                │                            │
+│         ▼                ▼                ▼                ▼                            │
+│  ┌────────────┐   ┌────────────┐   ┌────────────┐   ┌────────────┐                     │
+│  │  Handler   │   │  Handler   │   │  Handler   │   │  Handler   │                     │
+│  │  orders    │   │  shipping  │   │  audit     │   │  complete  │                     │
+│  │            │   │            │   │            │   │            │                     │
+│  │ type:      │   │ type:      │   │ type:      │   │ type:      │                     │
+│  │ order.     │   │ shipping.  │   │ audit.     │   │ order.     │                     │
+│  │ created    │   │ requested  │   │ event      │   │ completed  │                     │
+│  └─────┬──────┘   └─────┬──────┘   └─────┬──────┘   └─────┬──────┘                     │
+│        │                │                │                │                            │
+│        ▼                ▼                ▼                │                            │
+│   gopipe://        gopipe://        gopipe://             │                            │
+│   shipping         audit            (sink)               │                            │
+│        │                │                                │                            │
+│        └────────────────┘                                │                            │
+│               │                                          │                            │
+│               │ (feedback via MessageChannel)            │                            │
+│               │                                          │                            │
+│               ▼                                          │ ◄── Break-out point        │
+│        ┌──────────────┐                                  │                            │
+│        │ Internal     │                                  │                            │
+│        │ Routing      │                                  │                            │
+│        └──────────────┘                                  │                            │
+│                                                          │                            │
+└──────────────────────────────────────────────────────────┼────────────────────────────┘
+                                                           │
+                                                           │ kafka://notifications/...
+                                                           │ http://partner.com/webhook
+                                                           │ nats://events.completed
+                                                           ▼
+                                                  ┌────────────────────┐
+                                                  │ ExternalDispatcher │
+                                                  │                    │
+                                                  │ ┌────────────────┐ │
+                                                  │ │ KafkaSender    │─┼──> Kafka Cluster
+                                                  │ └────────────────┘ │
+                                                  │ ┌────────────────┐ │
+                                                  │ │ HTTPSender     │─┼──> HTTP Endpoint
+                                                  │ └────────────────┘ │
+                                                  │ ┌────────────────┐ │
+                                                  │ │ NATSSender     │─┼──> External NATS
+                                                  │ └────────────────┘ │
+                                                  └────────────────────┘
+```
+
+### Destination vs Topic Namespace Decision
+
+**Recommendation: Use `destination` attribute with URI scheme**
+
+See [ADR 0024](../adr/0024-destination-attribute.md) for full analysis.
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Topic Namespace (`/gopipe/internal/`) | Simple, uses existing attr | Mixes concerns, limited extensibility |
+| **Destination URI (`gopipe://`)** | Clear intent, URI extensibility, mirrors source | New attribute |
+
+**Chosen**: Destination attribute because:
+1. **Explicit**: `gopipe://orders` clearly indicates internal routing
+2. **Extensible**: `kafka://`, `nats://`, `http://` for external
+3. **Mirrors source**: `source` (where from) and `destination` (where to) are symmetric
+4. **Protocol encoding**: Destination can include protocol-specific routing info
+
+### Message Attributes Summary
+
+| Attribute | Purpose | Example | Required |
+|-----------|---------|---------|----------|
+| `id` | Unique event ID | `"550e8400-e29b..."` | Yes (CE) |
+| `source` | Event origin | `"/orders/api"` | Yes (CE) |
+| `specversion` | CE version | `"1.0"` | Yes (CE) |
+| `type` | Event classification | `"order.created"` | Yes (CE) |
+| `datacontenttype` | Data format | `"application/json"` | No (CE) |
+| `topic` | Pub/sub topic (semantic) | `"orders"` | No (gopipe) |
+| `destination` | Routing target (physical) | `"gopipe://shipping"` | No (gopipe) |
+
+### Example: Complete Order Flow
+
+```go
+// 1. External HTTP receives order
+// POST /orders -> creates message with destination: gopipe://orders
+
+// 2. Orders handler processes
+loop.Route("orders", func(ctx context.Context, msg *Message) ([]*Message, error) {
+    order := msg.Data.(Order)
+
+    return []*Message{
+        // Internal: shipping
+        MustNew(ShippingCmd{OrderID: order.ID}, Attributes{
+            AttrDestination: "gopipe://shipping",
+            AttrType:        "shipping.requested",
+            // ...CE attrs
+        }),
+        // Internal: inventory
+        MustNew(InventoryCmd{OrderID: order.ID}, Attributes{
+            AttrDestination: "gopipe://inventory",
+            AttrType:        "inventory.reserve",
+            // ...CE attrs
+        }),
+    }, nil
+})
+
+// 3. Shipping handler processes
+loop.Route("shipping", func(ctx context.Context, msg *Message) ([]*Message, error) {
+    cmd := msg.Data.(ShippingCmd)
+
+    return []*Message{
+        // Internal: back to complete handler
+        MustNew(ShippedEvent{OrderID: cmd.OrderID}, Attributes{
+            AttrDestination: "gopipe://complete",
+            AttrType:        "order.shipped",
+        }),
+    }, nil
+})
+
+// 4. Complete handler breaks out
+loop.Route("complete", func(ctx context.Context, msg *Message) ([]*Message, error) {
+    event := msg.Data.(ShippedEvent)
+
+    return []*Message{
+        // External: Kafka for analytics
+        MustNew(AnalyticsEvent{...}, Attributes{
+            AttrDestination: "kafka://analytics/order-events",
+            AttrType:        "analytics.order.complete",
+        }),
+        // External: HTTP webhook to partner
+        MustNew(WebhookPayload{...}, Attributes{
+            AttrDestination: "http://partner.example.com/orders/webhook",
+            AttrType:        "webhook.order.complete",
+        }),
+    }, nil
+})
+```
+
 ## Sources
 
 - [CloudEvents Specification](https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md)
 - [CloudEvents Primer](https://github.com/cloudevents/spec/blob/main/cloudevents/primer.md)
 - [NL GOV profile for CloudEvents](https://logius-standaarden.github.io/NL-GOV-profile-for-CloudEvents/)
+- [NATS Documentation](https://docs.nats.io/)
