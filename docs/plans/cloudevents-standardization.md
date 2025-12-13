@@ -69,6 +69,9 @@ Complete internal messaging system with feedback loop and pluggable transport.
 ### External Package: NATS Integration
 Optional external package for advanced messaging features (persistence, clustering).
 
+### Phase 7: SQL Event Store (ADR 0025)
+Durable event persistence with rich querying and transactional outbox support.
+
 ## Implementation Order
 
 ```
@@ -127,6 +130,16 @@ Optional external package for advanced messaging features (persistence, clusteri
 │ - Embedded NATS option (zero infrastructure)                     │
 │ - JetStream for persistence                                      │
 │ - External sender/receiver for nats:// destinations              │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ Phase 7: SQL Event Store (ADR 0025)                              │
+│ - EventStore interface with pluggable drivers                    │
+│ - PostgreSQL and SQLite drivers                                  │
+│ - Query by CloudEvents attributes                                │
+│ - Transactional outbox support                                   │
+│ - Event replay for projections                                   │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -221,6 +234,7 @@ External System                    gopipe Internal                    External S
 | [0022](../adr/0022-internal-message-routing.md) | Internal Message Routing | Topic-based internal routing |
 | [0024](../adr/0024-destination-attribute.md) | Destination Attribute | URI-based routing destinations |
 | [0023](../adr/0023-internal-message-loop.md) | Internal Message Loop | Feedback loop with pluggable transport |
+| [0025](../adr/0025-sql-event-store.md) | SQL Event Store | Durable persistence with querying |
 
 ## Related Features
 
@@ -232,6 +246,7 @@ External System                    gopipe Internal                    External S
 | [12](../features/12-internal-message-routing.md) | Internal Message Routing | Implementation details |
 | [13](../features/13-internal-message-loop.md) | Internal Message Loop | Feedback loop implementation |
 | [14](../features/14-nats-integration.md) | NATS Integration | External package plan |
+| [15](../features/15-sql-event-store.md) | SQL Event Store | Persistence and querying |
 
 ## Success Criteria
 

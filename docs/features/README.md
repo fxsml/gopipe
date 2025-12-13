@@ -35,6 +35,7 @@ See [CloudEvents Standardization Plan](../plans/cloudevents-standardization.md) 
 12. **[Internal Message Routing](12-internal-message-routing.md)** - Topic-based internal routing (ADR 0022)
 13. **[Internal Message Loop](13-internal-message-loop.md)** - Feedback loop with pluggable transport (ADR 0023)
 14. **[NATS Integration](14-nats-integration.md)** - External package for advanced messaging (External)
+15. **[SQL Event Store](15-sql-event-store.md)** - Durable persistence with querying (ADR 0025)
 
 ## Integration Order
 
@@ -91,6 +92,7 @@ Architecture Decision Records are organized by status:
 - [ADR 0022](../adr/0022-internal-message-routing.md) - Internal Message Routing via Topic
 - [ADR 0023](../adr/0023-internal-message-loop.md) - Internal Message Loop
 - [ADR 0024](../adr/0024-destination-attribute.md) - Destination Attribute
+- [ADR 0025](../adr/0025-sql-event-store.md) - SQL Event Store
 
 ### Superseded
 - [ADR 0011](../adr/0011-cloudevents-compatibility.md) - Superseded by ADR 0018

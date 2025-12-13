@@ -43,6 +43,7 @@ These ADRs describe proposed features that are documented but not yet implemente
 - **[ADR 0022](0022-internal-message-routing.md)** - Internal Message Routing via Topic
 - **[ADR 0023](0023-internal-message-loop.md)** - Internal Message Loop
 - **[ADR 0024](0024-destination-attribute.md)** - Destination Attribute
+- **[ADR 0025](0025-sql-event-store.md)** - SQL Event Store
 
 ### Superseded ⛔
 
@@ -130,7 +131,7 @@ Industry standard alignment:
 
 Related: [Feature 06-message-cloudevents](../features/06-message-cloudevents.md)
 
-### CloudEvents Standardization (ADRs 0019-0024) 💡
+### CloudEvents Standardization (ADRs 0019-0025) 💡
 Proposed: Making CloudEvents mandatory and enabling composable internal pipelines:
 - ADR 0019: CloudEvents Mandatory Specification 💡
 - ADR 0020: Non-Generic Message Type 💡
@@ -138,6 +139,7 @@ Proposed: Making CloudEvents mandatory and enabling composable internal pipeline
 - ADR 0022: Internal Message Routing via Topic 💡
 - ADR 0023: Internal Message Loop 💡
 - ADR 0024: Destination Attribute 💡
+- ADR 0025: SQL Event Store 💡
 
 Related:
 - [Feature 09-cloudevents-mandatory](../features/09-cloudevents-mandatory.md)
@@ -146,6 +148,7 @@ Related:
 - [Feature 12-internal-message-routing](../features/12-internal-message-routing.md)
 - [Feature 13-internal-message-loop](../features/13-internal-message-loop.md)
 - [Feature 14-nats-integration](../features/14-nats-integration.md)
+- [Feature 15-sql-event-store](../features/15-sql-event-store.md)
 - [CloudEvents Standardization Plan](../plans/cloudevents-standardization.md)
 
 ## Reading Order
@@ -160,7 +163,7 @@ For understanding the complete architecture, read ADRs in this order:
 6. **Standards** (0018) - CloudEvents alignment
 7. **CQRS** (0006) - Event-driven patterns
 8. **Advanced Patterns** (0007-0009) - Sagas and outbox (proposed)
-9. **CloudEvents Standardization** (0019-0024) - Proposed mandatory CE, internal routing, and message loop
+9. **CloudEvents Standardization** (0019-0025) - Proposed mandatory CE, internal routing, message loop, and event store
 
 ## Timeline
 
