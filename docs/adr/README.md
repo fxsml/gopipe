@@ -46,7 +46,7 @@ These ADRs describe proposed features that are documented but not yet implemente
 - **[ADR 0025](0025-sql-event-store.md)** - SQL Event Store
 - **[ADR 0026](0026-pipe-processor-simplification.md)** - Pipe and Processor Simplification
 - **[ADR 0027](0027-fan-out-pattern.md)** - Fan-Out Pattern
-- **[ADR 0028](0028-generator-source-patterns.md)** - Generator and Source Patterns
+- **[ADR 0028](0028-generator-source-patterns.md)** - Subscriber Patterns
 
 ### Superseded ⛔
 
@@ -138,7 +138,7 @@ Related: [Feature 06-message-cloudevents](../features/06-message-cloudevents.md)
 Proposed prerequisite for CloudEvents standardization:
 - ADR 0026: Pipe and Processor Simplification 💡
 - ADR 0027: Fan-Out Pattern 💡
-- ADR 0028: Generator and Source Patterns 💡
+- ADR 0028: Subscriber Patterns 💡
 
 Related:
 - [Feature 16-core-pipe-refactoring](../features/16-core-pipe-refactoring.md)

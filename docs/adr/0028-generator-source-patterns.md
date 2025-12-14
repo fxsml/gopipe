@@ -1,4 +1,4 @@
-# ADR 0028: Generator and Source Patterns
+# ADR 0028: Subscriber Patterns
 
 **Date:** 2025-12-13
 **Status:** Proposed
@@ -10,8 +10,20 @@ The current `Generator` implementation works but raises questions:
 
 1. What is the purpose of Generator in a messaging system?
 2. How does it relate to Subscriber?
-3. Should there be a unified "Source" abstraction?
+3. Should there be a unified abstraction?
 4. What use cases does Generator serve?
+
+### Naming Consideration
+
+Initially, we considered a "Source" interface. However, `source` is already a **CloudEvents required attribute** identifying the event origin. Using "Source" as an interface name would cause confusion:
+
+```go
+// Confusing - "source" means two different things
+msg.SetSource("gopipe://orders")  // CloudEvents attribute
+router.AddSource("orders", sub)   // Interface type
+```
+
+**Decision:** Use `Subscriber` as the base type for all message producers. This aligns with messaging terminology where you "subscribe" to various sources of events.
 
 ### Current Implementation
 
@@ -35,48 +47,23 @@ func (g *generator[Out]) Generate(ctx context.Context) <-chan Out {
 - No built-in support for common patterns (timers, polling)
 - Relationship to Subscriber unclear
 
-### Generator vs Subscriber Analysis
-
-| Aspect | Generator | Subscriber |
-|--------|-----------|------------|
-| **Source** | Internal logic | External system |
-| **Trigger** | Time/logic-driven | Event-driven |
-| **Examples** | Timer, poller, calculator | Kafka, NATS, HTTP |
-| **Rate Control** | Generator controls | External controls |
-| **Backpressure** | Can throttle | Must handle or drop |
-
-**Key Insight:** Both are **Sources** - they produce messages without consuming from upstream.
-
-```
-Source (no input) → Processor → Processor → Sink
-
-Generator (internal): Timer → Process → Publish
-Subscriber (external): Kafka → Process → Publish
-```
-
 ## Decision
 
-### 1. Unified Source Interface
+### 1. Subscriber as Unified Base Interface
 
-Define a common `Source` interface that both Generator and Subscriber implement:
+All message producers implement `Subscriber`:
 
 ```go
-// Source produces a stream of values without input
-type Source[Out any] interface {
-    // Start begins producing values until context cancellation
-    Start(ctx context.Context) <-chan Out
+// Subscriber produces a stream of messages
+type Subscriber[Out any] interface {
+    // Subscribe begins producing values until context cancellation
+    Subscribe(ctx context.Context) <-chan Out
 }
-
-// Generator is a Source that produces values from internal logic
-type Generator[Out any] Source[Out]
-
-// Subscriber is a Source that receives values from external systems
-type Subscriber[Out any] Source[Out]
 ```
 
 **Why not use Pipe?**
 
-`Pipe[In, Out]` requires an input channel. Sources have no input.
+`Pipe[In, Out]` requires an input channel. Subscribers have no input:
 
 ```go
 // Pipe - has input
@@ -84,35 +71,54 @@ type Pipe[In, Out any] interface {
     Start(ctx context.Context, in <-chan In) <-chan Out
 }
 
-// Source - no input
-type Source[Out any] interface {
-    Start(ctx context.Context) <-chan Out
+// Subscriber - no input
+type Subscriber[Out any] interface {
+    Subscribe(ctx context.Context) <-chan Out
 }
 ```
 
-### 2. Generator Config (Not Options)
+### 2. Subscriber Type Hierarchy
+
+```
+Subscriber[Out any]
+├── BrokerSubscriber      - External message brokers (Kafka, NATS, etc.)
+├── TickerSubscriber      - Time-triggered events (heartbeats, scheduled)
+├── PollingSubscriber     - Polls external APIs periodically
+├── ChannelSubscriber     - Receives from Go channels
+└── WatcherSubscriber     - File system, database changes
+```
+
+| Subscriber Type | Trigger | Use Case |
+|-----------------|---------|----------|
+| `BrokerSubscriber` | External events | Kafka, NATS, RabbitMQ messages |
+| `TickerSubscriber` | Time intervals | Heartbeats, scheduled tasks |
+| `PollingSubscriber` | Time + external | API polling, health checks |
+| `ChannelSubscriber` | Go channel | Internal pipelines, testing |
+| `WatcherSubscriber` | External changes | File changes, DB triggers |
+
+### 3. SubscriberConfig (Replaces GeneratorConfig)
 
 Following ADR 0026, use config struct instead of functional options:
 
 ```go
-type GeneratorConfig struct {
-    // Rate limiting
-    Interval    time.Duration // Min time between generations, 0 = as fast as possible
-    MaxPerBatch int           // Max items per generation call, 0 = unlimited
+type SubscriberConfig struct {
+    // Rate limiting (for ticker/polling types)
+    Interval    time.Duration // Min time between events, 0 = as fast as possible
+    MaxPerBatch int           // Max items per batch, 0 = unlimited
 
     // Error handling
-    OnError      func(err error) // Called on generation error
+    OnError      func(err error) // Called on error
     RetryOnError bool            // Retry on error, default: false
     MaxRetries   int             // Max consecutive retries, 0 = unlimited
 
     // Lifecycle
-    StopOnError bool // Stop generator on first error, default: false
+    StopOnError bool // Stop on first error, default: false
 
     // Output
     Buffer int // Output channel buffer, default: 0
 }
 
-var DefaultGeneratorConfig = GeneratorConfig{
+var DefaultSubscriberConfig = SubscriberConfig{
     Interval:     0,
     MaxPerBatch:  0,
     RetryOnError: false,
@@ -121,39 +127,67 @@ var DefaultGeneratorConfig = GeneratorConfig{
 }
 ```
 
-### 3. Generator Factory Functions
-
-Provide factory functions for common patterns:
+### 4. Subscriber Factory Functions
 
 ```go
-// NewGenerator creates a generator from a function
-func NewGenerator[Out any](
-    generate func(context.Context) ([]Out, error),
-    config GeneratorConfig,
-) Source[Out]
-
-// NewTickerGenerator generates on time intervals
-func NewTickerGenerator[Out any](
+// TickerSubscriber - time-triggered events
+func NewTickerSubscriber[Out any](
     interval time.Duration,
     generate func(ctx context.Context, tick time.Time) ([]Out, error),
-    config GeneratorConfig,
-) Source[Out]
+    config SubscriberConfig,
+) Subscriber[Out]
 
-// NewPollingGenerator polls an external source
-func NewPollingGenerator[Out any](
+// PollingSubscriber - polls external source
+func NewPollingSubscriber[Out any](
     interval time.Duration,
     poll func(ctx context.Context) ([]Out, error),
-    config GeneratorConfig,
-) Source[Out]
+    config SubscriberConfig,
+) Subscriber[Out]
+
+// ChannelSubscriber - wraps a Go channel
+func NewChannelSubscriber[Out any](
+    ch <-chan Out,
+) Subscriber[Out]
+
+// FuncSubscriber - custom logic (replaces NewGenerator)
+func NewFuncSubscriber[Out any](
+    generate func(ctx context.Context) ([]Out, error),
+    config SubscriberConfig,
+) Subscriber[Out]
 ```
 
-### 4. Generator Use Cases
+### 5. BrokerSubscriber Interface
+
+External brokers need additional capabilities:
+
+```go
+// BrokerSubscriber extends Subscriber with messaging-specific methods
+type BrokerSubscriber interface {
+    Subscriber[*Message]
+
+    // Messaging-specific
+    Acknowledge(ctx context.Context, msg *Message) error
+    Seek(ctx context.Context, offset int64) error
+
+    // Optional
+    Pause(ctx context.Context) error
+    Resume(ctx context.Context) error
+}
+```
+
+**Why separate interface?**
+
+- `TickerSubscriber` doesn't need Acknowledge (no external state)
+- `PollingSubscriber` doesn't need Seek (stateless)
+- `BrokerSubscriber` needs these for reliability
+
+### 6. Subscriber Use Cases
 
 #### Use Case 1: Time-Triggered Events (Heartbeats)
 
 ```go
 // Send heartbeat every 30 seconds
-heartbeat := NewTickerGenerator(
+heartbeat := NewTickerSubscriber(
     30*time.Second,
     func(ctx context.Context, tick time.Time) ([]*Message, error) {
         return []*Message{
@@ -164,16 +198,16 @@ heartbeat := NewTickerGenerator(
             ),
         }, nil
     },
-    GeneratorConfig{},
+    SubscriberConfig{},
 )
 ```
 
 #### Use Case 2: Scheduled Tasks (Cron-like)
 
 ```go
-// Generate daily report events at midnight
-scheduler := NewTickerGenerator(
-    24*time.Hour,
+// Generate daily report events
+scheduler := NewTickerSubscriber(
+    time.Hour,
     func(ctx context.Context, tick time.Time) ([]*Message, error) {
         if tick.Hour() != 0 { // Only at midnight
             return nil, nil
@@ -186,7 +220,7 @@ scheduler := NewTickerGenerator(
             ),
         }, nil
     },
-    GeneratorConfig{},
+    SubscriberConfig{},
 )
 ```
 
@@ -194,7 +228,7 @@ scheduler := NewTickerGenerator(
 
 ```go
 // Poll weather API every 5 minutes
-weatherPoller := NewPollingGenerator(
+weatherPoller := NewPollingSubscriber(
     5*time.Minute,
     func(ctx context.Context) ([]*Message, error) {
         resp, err := http.Get("https://api.weather.com/current")
@@ -216,7 +250,7 @@ weatherPoller := NewPollingGenerator(
             ),
         }, nil
     },
-    GeneratorConfig{
+    SubscriberConfig{
         RetryOnError: true,
         MaxRetries:   3,
     },
@@ -227,7 +261,7 @@ weatherPoller := NewPollingGenerator(
 
 ```go
 // Emit events when files change
-watcher := NewGenerator(
+watcher := NewFuncSubscriber(
     func(ctx context.Context) ([]*Message, error) {
         event, err := fsWatcher.Next(ctx)
         if err != nil {
@@ -241,161 +275,133 @@ watcher := NewGenerator(
             ),
         }, nil
     },
-    GeneratorConfig{},
+    SubscriberConfig{},
 )
 ```
 
-#### Use Case 5: Synthetic Events (Derived)
+#### Use Case 5: Kafka Broker
 
 ```go
-// Generate aggregate statistics every minute
-statsGenerator := NewTickerGenerator(
-    time.Minute,
-    func(ctx context.Context, tick time.Time) ([]*Message, error) {
-        stats := collectMetrics()
-        return []*Message{
-            NewMessage(
-                WithType("metrics.collected"),
-                WithSource("gopipe://metrics-collector"),
-                WithData(stats),
-            ),
-        }, nil
-    },
-    GeneratorConfig{},
-)
-```
+// Subscribe to Kafka topic
+kafkaSub := kafka.NewSubscriber(kafka.SubscriberConfig{
+    Brokers: []string{"localhost:9092"},
+    Topic:   "orders",
+    Group:   "order-processor",
+})
 
-### 5. Is Generator a Subscriber?
-
-**Answer: No, but they share the Source interface.**
-
-| Characteristic | Generator | Subscriber |
-|---------------|-----------|------------|
-| **Input source** | Internal logic | External broker |
-| **Who triggers?** | Generator (push) | Broker (push to subscriber) |
-| **Rate control** | Config.Interval | Broker delivery rate |
-| **Acknowledgment** | Not needed | Required for reliability |
-| **Replay** | N/A (stateless) | From offset/sequence |
-
-**However**, both:
-- Implement `Source[Out]` interface
-- Produce `<-chan Out`
-- Can be used interchangeably where a Source is needed
-
-```go
-// Router accepts any Source
-func (r *Router) AddSource(name string, source Source[*Message])
-
-// Can add either
-router.AddSource("heartbeats", heartbeatGenerator)
-router.AddSource("orders", kafkaSubscriber)
-```
-
-### 6. Subscriber as Specialized Source
-
-```go
-// Subscriber extends Source with messaging-specific methods
-type Subscriber interface {
-    Source[*Message]
-
-    // Messaging-specific
-    Acknowledge(ctx context.Context, msg *Message) error
-    Seek(ctx context.Context, offset int64) error
+// Use like any other subscriber
+msgs := kafkaSub.Subscribe(ctx)
+for msg := range msgs {
+    // Process message
+    kafkaSub.Acknowledge(ctx, msg)
 }
 ```
 
-**Why separate interface?**
+### 7. Subscriber Comparison Table
 
-- Generator doesn't need Acknowledge (no external state)
-- Generator doesn't need Seek (stateless)
-- Subscriber needs these for reliability
+| Feature | TickerSubscriber | PollingSubscriber | BrokerSubscriber |
+|---------|------------------|-------------------|------------------|
+| **Trigger** | Time interval | Time + external | External events |
+| **Rate control** | Config.Interval | Config.Interval | Broker controls |
+| **Acknowledgment** | Not needed | Not needed | Required |
+| **Replay/Seek** | N/A | N/A | Supported |
+| **Backpressure** | Drop or block | Drop or block | Broker handles |
+| **State** | Stateless | Stateless | Offset tracking |
 
-### 7. Message Generator (CloudEvents)
+### 8. Message-Aware Subscriber
 
-For CloudEvents compliance, provide message-specific generator:
+For CloudEvents compliance, provide message-specific subscriber:
 
 ```go
-// MessageGenerator produces CloudEvents-compliant messages
-type MessageGenerator interface {
-    Source[*Message]
-}
-
-// NewMessageGenerator enforces CloudEvents compliance
-func NewMessageGenerator(
+// MessageSubscriber produces CloudEvents-compliant messages
+func NewMessageSubscriber(
     eventType string,           // Required: CloudEvents type
     source string,              // Required: CloudEvents source
-    generate func(ctx context.Context) (any, error),  // Generate data
-    config GeneratorConfig,
-) MessageGenerator
+    generate func(ctx context.Context) (any, error),
+    config SubscriberConfig,
+) Subscriber[*Message]
 ```
 
 **Usage:**
 
 ```go
-// All generated messages have proper CloudEvents attributes
-gen := NewMessageGenerator(
+// All messages have proper CloudEvents attributes
+sub := NewMessageSubscriber(
     "order.timeout.check",
     "gopipe://timeout-checker",
     func(ctx context.Context) (any, error) {
         return TimeoutCheckRequest{Threshold: time.Hour}, nil
     },
-    GeneratorConfig{Interval: time.Minute},
+    SubscriberConfig{Interval: time.Minute},
 )
 ```
 
-### 8. Integration with Internal Loop (ADR 0023)
-
-Generators can publish to internal topics:
+### 9. Integration with Router
 
 ```go
-// Generator publishes to internal loop
-heartbeat := NewMessageGenerator(
-    "system.heartbeat",
-    "gopipe://service",
+// Router accepts any Subscriber
+func (r *Router) AddSubscriber(name string, sub Subscriber[*Message])
+
+// Can add any subscriber type
+router.AddSubscriber("heartbeats", heartbeatTicker)
+router.AddSubscriber("orders", kafkaBrokerSub)
+router.AddSubscriber("weather", weatherPoller)
+```
+
+### 10. Integration with Internal Loop (ADR 0023)
+
+```go
+// Ticker publishes to internal loop
+heartbeat := NewTickerSubscriber(
+    30*time.Second,
     generateHeartbeat,
-    GeneratorConfig{Interval: 30 * time.Second},
+    SubscriberConfig{},
 )
 
-// Route generator output to internal topic
-loop.AddSource("heartbeat-gen", heartbeat)
+// Route to internal topic
+loop.AddSubscriber("heartbeat-ticker", heartbeat)
 loop.Route("system.heartbeat", "gopipe://monitoring", monitoringHandler)
 ```
 
 ## Rationale
 
-### Why Separate Source from Pipe?
+### Why Use Subscriber Instead of Source?
 
-1. **Semantic clarity**: Sources have no input, Pipes transform
-2. **Type safety**: No `struct{}` hack needed
-3. **Config simplicity**: No unused input-related options
+1. **Avoids CloudEvents confusion**: `source` is a CE attribute
+2. **Messaging alignment**: "Subscribe" is standard messaging terminology
+3. **Clear intent**: You subscribe to time, brokers, APIs, etc.
+4. **Extensibility**: Easy to add new subscriber types
 
-### Why Not Make Generator a Subscriber?
+### Why Subscriber as Base Type?
 
-1. **Different semantics**: Generator is push, Subscriber is pull
-2. **Different lifecycle**: Generator controls rate, Subscriber follows broker
-3. **Different reliability**: Generator is stateless, Subscriber needs acks
+1. **Unified interface**: All message producers share same contract
+2. **Interchangeable**: Router accepts any Subscriber
+3. **Type safety**: No `struct{}` hack needed
+4. **Config simplicity**: No unused input-related options
 
-### Why Config Struct for Generator?
+### Why Specialized Subscriber Types?
 
-1. **Consistency**: Matches ADR 0026 pattern
-2. **Simplicity**: No generic parameters in config
-3. **Discoverability**: All options visible in struct
+1. **Clear purpose**: Name indicates what you're subscribing to
+2. **Optimized interfaces**: BrokerSubscriber has Ack, others don't
+3. **Documentation**: Easy to find right type for use case
+4. **Testing**: Can mock specific subscriber types
 
 ## Consequences
 
 ### Positive
 
-- Unified `Source` interface for Generators and Subscribers
-- Config-based Generator matches simplified Pipe (ADR 0026)
-- Factory functions for common patterns (ticker, polling)
-- CloudEvents-compliant MessageGenerator
-- Clear distinction from Subscriber
+- Avoids `source` attribute naming conflict
+- Clear subscriber type hierarchy
+- Config-based matches ADR 0026 pattern
+- Factory functions for common patterns
+- CloudEvents-compliant MessageSubscriber
+- BrokerSubscriber extends base for messaging needs
 
 ### Negative
 
-- New `Source` interface to learn
-- Migration from current Generator API
-- Two interfaces (Source, Subscriber) where one might seem sufficient
+- Rename from Generator to XxxSubscriber (breaking change)
+- Multiple subscriber types to learn
+- "Subscriber" may feel odd for time-based events
 
 ### Migration
 
@@ -406,14 +412,14 @@ gen := NewGenerator(func(ctx context.Context) ([]int, error) {
 }, WithConcurrency[struct{}, int](1))
 
 // New
-gen := NewGenerator(func(ctx context.Context) ([]int, error) {
+sub := NewFuncSubscriber(func(ctx context.Context) ([]int, error) {
     return []int{1, 2, 3}, nil
-}, GeneratorConfig{})
+}, SubscriberConfig{})
 
 // Or use ticker for time-based
-gen := NewTickerGenerator(time.Second, func(ctx context.Context, t time.Time) ([]int, error) {
+sub := NewTickerSubscriber(time.Second, func(ctx context.Context, t time.Time) ([]int, error) {
     return []int{1, 2, 3}, nil
-}, GeneratorConfig{})
+}, SubscriberConfig{})
 ```
 
 ## Links

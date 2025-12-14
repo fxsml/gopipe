@@ -54,7 +54,7 @@ Before implementing CloudEvents changes, simplify core abstractions:
 - Simplify cancel path (remove dedicated goroutine)
 - Clear separation of config vs middleware
 - Enhanced fan-out with slow-receiver handling
-- Unified Source interface for Generator and Subscriber
+- Unified Subscriber interface with specialized types (Ticker, Polling, Broker)
 
 ### Phase 1: CloudEvents Mandatory (ADR 0019)
 Enforce CloudEvents required attributes on all messages.
@@ -89,8 +89,8 @@ Durable event persistence with rich querying and transactional outbox support.
 │ - Simplified cancel path (no dedicated goroutine)                │
 │ - Config vs Middleware separation                                │
 │ - Enhanced FanOut with BroadcastConfig                           │
-│ - Unified Source interface (Generator, Subscriber)               │
-│ - GeneratorConfig and factory functions                          │
+│ - Unified Subscriber interface (Ticker, Polling, Broker)         │
+│ - SubscriberConfig and factory functions                         │
 └────────────────────────────┬─────────────────────────────────────┘
                              │
                              ▼
@@ -249,7 +249,7 @@ External System                    gopipe Internal                    External S
 |-----|-------|---------|
 | [0026](../adr/0026-pipe-processor-simplification.md) | Pipe Simplification | Non-generic config, simplified cancel |
 | [0027](../adr/0027-fan-out-pattern.md) | Fan-Out Pattern | Enhanced broadcast with config |
-| [0028](../adr/0028-generator-source-patterns.md) | Generator/Source | Unified Source interface |
+| [0028](../adr/0028-generator-source-patterns.md) | Subscriber Patterns | Unified Subscriber interface |
 | [0019](../adr/0019-cloudevents-mandatory.md) | CloudEvents Mandatory | Enforce required CE attributes |
 | [0020](../adr/0020-non-generic-message.md) | Non-Generic Message | Simplify message type |
 | [0021](../adr/0021-contenttype-serialization.md) | ContentType Serialization | Automatic boundary serialization |

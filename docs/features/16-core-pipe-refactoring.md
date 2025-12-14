@@ -7,7 +7,7 @@
 **Related ADRs:**
 - [ADR 0026](../adr/0026-pipe-processor-simplification.md) - Pipe and Processor Simplification
 - [ADR 0027](../adr/0027-fan-out-pattern.md) - Fan-Out Pattern
-- [ADR 0028](../adr/0028-generator-source-patterns.md) - Generator and Source Patterns
+- [ADR 0028](../adr/0028-generator-source-patterns.md) - Subscriber Patterns
 
 ## Summary
 
@@ -17,7 +17,7 @@ Before implementing CloudEvents standardization (ADRs 0019-0025), the core pipe 
 2. **Simplified Cancel Path** - Remove dedicated cancel goroutine
 3. **Clear Middleware Separation** - Distinguish config from behavioral middleware
 4. **Enhanced Fan-Out** - Configurable broadcast with slow-receiver handling
-5. **Unified Source Interface** - Generator and Subscriber share common Source interface
+5. **Unified Subscriber Interface** - Specialized subscriber types (Ticker, Polling, Broker, etc.)
 
 ## Implementation Order
 
@@ -33,7 +33,7 @@ Phase 0: Core Refactoring
 ├── 0.2: Simplified cancel path
 ├── 0.3: Middleware separation
 ├── 0.4: FanOut enhancement
-├── 0.5: Source interface (Generator/Subscriber)
+├── 0.5: Subscriber interface (replaces Generator)
 └── 0.6: Migration utilities
 ```
 
@@ -104,18 +104,18 @@ func NewProcessPipe[In, Out any](
     middleware ...Middleware[In, Out],
 ) Pipe[In, Out]
 
-// Generator with config
-func NewGenerator[Out any](
+// FuncSubscriber with config (replaces Generator)
+func NewFuncSubscriber[Out any](
     generate func(context.Context) ([]Out, error),
-    config GeneratorConfig,
-) Source[Out]
+    config SubscriberConfig,
+) Subscriber[Out]
 
-// Ticker generator
-func NewTickerGenerator[Out any](
+// TickerSubscriber for time-triggered events
+func NewTickerSubscriber[Out any](
     interval time.Duration,
     generate func(ctx context.Context, tick time.Time) ([]Out, error),
-    config GeneratorConfig,
-) Source[Out]
+    config SubscriberConfig,
+) Subscriber[Out]
 
 // Enhanced broadcast
 func BroadcastWithConfig[T any](
@@ -125,13 +125,19 @@ func BroadcastWithConfig[T any](
 ) []<-chan T
 ```
 
-### 5. Source Interface
+### 5. Subscriber Interface
 
 ```go
-// Source produces values without input (Generator, Subscriber)
-type Source[Out any] interface {
-    Start(ctx context.Context) <-chan Out
+// Subscriber produces a stream of messages (replaces Generator)
+type Subscriber[Out any] interface {
+    Subscribe(ctx context.Context) <-chan Out
 }
+
+// Specialized subscriber types
+// - BrokerSubscriber: External message brokers (Kafka, NATS)
+// - TickerSubscriber: Time-triggered events
+// - PollingSubscriber: API polling
+// - ChannelSubscriber: Go channels
 ```
 
 ## Implementation Steps
@@ -334,19 +340,23 @@ func WithRecover[In, Out any]() Option[In, Out]
 - `channel/broadcast.go` (modify)
 - `channel/broadcast_test.go` (modify)
 
-### Step 0.5: Source Interface
+### Step 0.5: Subscriber Interface
 
-1. Create `Source[Out]` interface
-2. Create `GeneratorConfig` struct
-3. Update Generator to use config
-4. Add `NewTickerGenerator` and `NewPollingGenerator`
-5. Update `message.Generator` to use new interface
+1. Create `Subscriber[Out]` interface
+2. Create `SubscriberConfig` struct
+3. Create specialized subscriber types:
+   - `NewTickerSubscriber` - time-triggered events
+   - `NewPollingSubscriber` - API polling
+   - `NewFuncSubscriber` - custom logic (replaces Generator)
+   - `NewChannelSubscriber` - Go channel wrapper
+4. Create `BrokerSubscriber` interface with Ack/Seek
+5. Update `message.Generator` to `message.Subscriber`
 
 **Files:**
-- `source.go` (new)
-- `generator.go` (modify)
-- `generator_config.go` (new)
-- `message/generator.go` (modify)
+- `subscriber.go` (new)
+- `subscriber_config.go` (new)
+- `generator.go` (deprecate, alias to subscriber)
+- `message/subscriber.go` (new, replaces generator.go)
 
 ### Step 0.6: Migration Utilities
 
@@ -379,21 +389,21 @@ pipe := NewProcessPipe(
 )
 ```
 
-### Time-Triggered Generator
+### Time-Triggered Subscriber
 
 ```go
-heartbeat := NewTickerGenerator(
+heartbeat := NewTickerSubscriber(
     30*time.Second,
     func(ctx context.Context, tick time.Time) ([]*Message, error) {
         return []*Message{
             message.NewMessage(
                 message.WithType("system.heartbeat"),
-                message.WithSource("gopipe://service"),
+                message.WithSource("gopipe://service"),  // CloudEvents source attribute
                 message.WithData(map[string]any{"timestamp": tick}),
             ),
         }, nil
     },
-    GeneratorConfig{
+    SubscriberConfig{
         OnError:      func(err error) { log.Printf("heartbeat error: %v", err) },
         RetryOnError: true,
     },
@@ -459,13 +469,13 @@ router.AddHandler("orders", orderHandler,
 - `StartProcessor` with config
 - Middleware ordering and composition
 - `BroadcastWithConfig` slow receiver handling
-- `NewTickerGenerator` timing accuracy
-- `Source` interface implementations
+- `NewTickerSubscriber` timing accuracy
+- `Subscriber` interface implementations
 
 ### Integration Tests
 
 - Full pipeline with config + middleware
-- Generator → Processor → Output flow
+- Subscriber → Processor → Output flow
 - Broadcast to multiple consumers
 - Error handling across pipeline
 
@@ -481,9 +491,9 @@ router.AddHandler("orders", orderHandler,
 
 **Core:**
 - `processor_config.go` - ProcessorConfig struct and defaults
-- `source.go` - Source interface
-- `generator_config.go` - GeneratorConfig struct
-- `deprecated.go` - Backward compatibility aliases
+- `subscriber.go` - Subscriber interface and factory functions
+- `subscriber_config.go` - SubscriberConfig struct
+- `deprecated.go` - Backward compatibility aliases (Generator → Subscriber)
 - `docs/migration/core-refactoring.md` - Migration guide
 
 **Middleware Package:**
@@ -506,7 +516,7 @@ router.AddHandler("orders", orderHandler,
 - `pipe.go` - New signature with config + middleware
 - `generator.go` - Config-based generator
 - `channel/broadcast.go` - BroadcastWithConfig
-- `message/generator.go` - Updated Generator interface
+- `message/generator.go` - Deprecated, alias to subscriber
 - `options.go` - Mark as deprecated
 - `retry.go` - Deprecate, re-export from middleware
 - `middleware/message.go` - Keep existing NewMessageMiddleware
@@ -534,8 +544,8 @@ This feature has no external dependencies but is a **prerequisite** for:
 2. [ ] Cancel path simplified (no dedicated goroutine)
 3. [ ] Clear separation between config and middleware
 4. [ ] `BroadcastWithConfig` handles slow receivers
-5. [ ] `Source` interface unifies Generator and Subscriber
-6. [ ] `NewTickerGenerator` supports time-based generation
+5. [ ] `Subscriber` interface with specialized types (Ticker, Polling, Broker)
+6. [ ] `NewTickerSubscriber` supports time-based generation
 
 ### Middleware Package
 7. [ ] `middleware.Chain()` combines multiple middleware
