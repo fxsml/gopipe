@@ -323,6 +323,276 @@ type MetricsCollector interface {
 func WithMetrics[In, Out any](collector MetricsCollector) Middleware[In, Out]
 ```
 
+### 8. Middleware Package Consolidation
+
+Consolidate all middleware into the `middleware/` package with clear organization:
+
+```
+middleware/
+├── middleware.go       # Core types and interfaces
+├── timeout.go          # Context timeout middleware
+├── retry.go            # Retry middleware (moved from root)
+├── metrics.go          # Metrics collection middleware
+├── logging.go          # Logging middleware
+├── recover.go          # Panic recovery middleware
+├── tracing.go          # OpenTelemetry tracing middleware
+├── message/            # Message-specific middleware
+│   ├── correlation.go  # Correlation ID propagation
+│   ├── validation.go   # CloudEvents validation
+│   └── routing.go      # Error routing middleware
+└── doc.go              # Package documentation
+```
+
+#### Core Middleware Interface
+
+```go
+// middleware/middleware.go
+package middleware
+
+import (
+    "github.com/fxsml/gopipe"
+)
+
+// Middleware wraps a processor with additional behavior
+type Middleware[In, Out any] = gopipe.Middleware[In, Out]
+
+// MiddlewareFunc is a function that creates middleware
+type MiddlewareFunc[In, Out any] = func(gopipe.Processor[In, Out]) gopipe.Processor[In, Out]
+
+// Chain combines multiple middleware into one
+func Chain[In, Out any](middleware ...Middleware[In, Out]) Middleware[In, Out] {
+    return func(next gopipe.Processor[In, Out]) gopipe.Processor[In, Out] {
+        for i := len(middleware) - 1; i >= 0; i-- {
+            next = middleware[i](next)
+        }
+        return next
+    }
+}
+```
+
+#### Timeout Middleware (New)
+
+```go
+// middleware/timeout.go
+package middleware
+
+import (
+    "context"
+    "time"
+
+    "github.com/fxsml/gopipe"
+)
+
+// TimeoutConfig configures timeout behavior
+type TimeoutConfig struct {
+    Duration           time.Duration // Per-item timeout
+    PropagateContext   bool          // Propagate parent context, default: true
+}
+
+// WithTimeout creates timeout middleware
+func WithTimeout[In, Out any](config TimeoutConfig) Middleware[In, Out] {
+    return func(next gopipe.Processor[In, Out]) gopipe.Processor[In, Out] {
+        return gopipe.ProcessFunc[In, Out](func(ctx context.Context, in In) ([]Out, error) {
+            if config.Duration > 0 {
+                var cancel context.CancelFunc
+                ctx, cancel = context.WithTimeout(ctx, config.Duration)
+                defer cancel()
+            }
+            if !config.PropagateContext {
+                ctx = context.Background()
+                if config.Duration > 0 {
+                    var cancel context.CancelFunc
+                    ctx, cancel = context.WithTimeout(ctx, config.Duration)
+                    defer cancel()
+                }
+            }
+            return next.Process(ctx, in)
+        })
+    }
+}
+```
+
+#### Retry Middleware (Moved from root)
+
+```go
+// middleware/retry.go
+package middleware
+
+// RetryConfig configures retry behavior (moved from gopipe.RetryConfig)
+type RetryConfig struct {
+    ShouldRetry ShouldRetryFunc
+    Backoff     BackoffFunc
+    MaxAttempts int
+    Timeout     time.Duration
+}
+
+// WithRetry creates retry middleware
+func WithRetry[In, Out any](config RetryConfig) Middleware[In, Out]
+
+// Backoff strategies
+func ConstantBackoff(delay time.Duration, jitter float64) BackoffFunc
+func ExponentialBackoff(initial time.Duration, factor float64, max time.Duration, jitter float64) BackoffFunc
+```
+
+#### Metrics Middleware
+
+```go
+// middleware/metrics.go
+package middleware
+
+import (
+    "time"
+)
+
+// MetricsCollector receives processing metrics
+type MetricsCollector interface {
+    // RecordProcessed records a processing attempt
+    RecordProcessed(duration time.Duration, success bool, labels map[string]string)
+    // RecordInFlight tracks concurrent processing
+    RecordInFlight(delta int, labels map[string]string)
+}
+
+// MetricsConfig configures metrics collection
+type MetricsConfig struct {
+    Collector    MetricsCollector
+    LabelFunc    func(in any) map[string]string // Extract labels from input
+    RecordInput  bool                           // Include input in labels
+}
+
+// WithMetrics creates metrics middleware
+func WithMetrics[In, Out any](config MetricsConfig) Middleware[In, Out]
+
+// PrometheusCollector implements MetricsCollector for Prometheus
+type PrometheusCollector struct {
+    ProcessedTotal   *prometheus.CounterVec
+    ProcessedLatency *prometheus.HistogramVec
+    InFlight         *prometheus.GaugeVec
+}
+
+func NewPrometheusCollector(namespace, subsystem string) *PrometheusCollector
+```
+
+#### Logging Middleware
+
+```go
+// middleware/logging.go
+package middleware
+
+// LogLevel defines logging verbosity
+type LogLevel int
+
+const (
+    LogLevelDebug LogLevel = iota
+    LogLevelInfo
+    LogLevelWarn
+    LogLevelError
+)
+
+// Logger interface for pluggable logging
+type Logger interface {
+    Log(level LogLevel, msg string, fields map[string]any)
+}
+
+// LoggingConfig configures logging behavior
+type LoggingConfig struct {
+    Logger       Logger
+    Level        LogLevel
+    LogInput     bool // Log input values (may be sensitive)
+    LogOutput    bool // Log output values
+    LogDuration  bool // Log processing duration
+}
+
+// WithLogging creates logging middleware
+func WithLogging[In, Out any](config LoggingConfig) Middleware[In, Out]
+
+// Adapters for popular loggers
+func SlogAdapter(logger *slog.Logger) Logger
+func ZapAdapter(logger *zap.Logger) Logger
+```
+
+#### Recovery Middleware
+
+```go
+// middleware/recover.go
+package middleware
+
+// RecoverConfig configures panic recovery
+type RecoverConfig struct {
+    OnPanic     func(input any, recovered any, stack []byte)
+    ReturnError bool // Return error instead of re-panicking
+}
+
+// WithRecover creates panic recovery middleware
+func WithRecover[In, Out any](config RecoverConfig) Middleware[In, Out]
+```
+
+#### Message-Specific Middleware
+
+```go
+// middleware/message/correlation.go
+package message
+
+import (
+    "github.com/fxsml/gopipe/message"
+    "github.com/fxsml/gopipe/middleware"
+)
+
+// WithCorrelation propagates correlation ID from input to outputs
+func WithCorrelation() middleware.Middleware[*message.Message, *message.Message]
+
+// WithTraceContext propagates OpenTelemetry trace context
+func WithTraceContext() middleware.Middleware[*message.Message, *message.Message]
+```
+
+```go
+// middleware/message/validation.go
+package message
+
+// WithValidation validates CloudEvents attributes on output messages
+func WithValidation(strict bool) middleware.Middleware[*message.Message, *message.Message]
+```
+
+```go
+// middleware/message/routing.go
+package message
+
+// ErrorRoutingConfig configures error message routing
+type ErrorRoutingConfig struct {
+    Destination    string // e.g., "gopipe://errors", "kafka://dlq"
+    IncludeInput   bool   // Include original message in error
+    IncludeStack   bool   // Include stack trace
+}
+
+// WithErrorRouting routes errors to a destination
+func WithErrorRouting(config ErrorRoutingConfig) middleware.Middleware[*message.Message, *message.Message]
+```
+
+#### Migration from Root Package
+
+| Old Location | New Location |
+|--------------|--------------|
+| `gopipe.WithRetryConfig` | `middleware.WithRetry` |
+| `gopipe.RetryConfig` | `middleware.RetryConfig` |
+| `gopipe.BackoffFunc` | `middleware.BackoffFunc` |
+| `gopipe.ShouldRetryFunc` | `middleware.ShouldRetryFunc` |
+| `gopipe.useMetrics` (internal) | `middleware.WithMetrics` |
+| `gopipe.useRecover` (internal) | `middleware.WithRecover` |
+| `gopipe.useContext` (internal) | `middleware.WithTimeout` |
+
+**Backward Compatibility:**
+
+```go
+// gopipe/deprecated.go
+package gopipe
+
+import "github.com/fxsml/gopipe/middleware"
+
+// Deprecated: Use middleware.WithRetry instead
+func WithRetryConfig[In, Out any](config RetryConfig) Option[In, Out] {
+    return WithMiddleware(middleware.WithRetry[In, Out](middleware.RetryConfig(config)))
+}
+```
+
 ## Rationale
 
 ### Why Non-Generic Config?

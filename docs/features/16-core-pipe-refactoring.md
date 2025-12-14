@@ -158,19 +158,170 @@ type Source[Out any] interface {
 - `processor.go` (modify)
 - `processor_test.go` (modify)
 
-### Step 0.3: Middleware Separation
+### Step 0.3: Middleware Package Consolidation
 
-1. Extract timeout, retry from options to middleware
-2. Create middleware package with standard middleware
-3. Update `NewProcessPipe` signature
-4. Document middleware vs config distinction
+Consolidate all middleware into the dedicated `middleware/` package with clear organization.
+
+#### Target Package Structure
+
+```
+middleware/
+├── middleware.go       # Core types, interfaces, Chain()
+├── timeout.go          # Context timeout middleware
+├── retry.go            # Retry middleware (moved from root)
+├── metrics.go          # Metrics collection middleware
+├── logging.go          # Logging middleware (slog, zap adapters)
+├── recover.go          # Panic recovery middleware
+├── tracing.go          # OpenTelemetry tracing middleware
+├── message/            # Message-specific middleware
+│   ├── correlation.go  # Correlation ID propagation (exists)
+│   ├── validation.go   # CloudEvents validation
+│   └── routing.go      # Error routing middleware
+└── doc.go              # Package documentation
+```
+
+#### Sub-steps
+
+**0.3.1: Core Middleware Types**
+
+Create `middleware/middleware.go`:
+```go
+package middleware
+
+// Chain combines multiple middleware into one
+func Chain[In, Out any](mw ...Middleware[In, Out]) Middleware[In, Out]
+
+// Type aliases for convenience
+type Middleware[In, Out any] = gopipe.Middleware[In, Out]
+type MiddlewareFunc[In, Out any] = func(gopipe.Processor[In, Out]) gopipe.Processor[In, Out]
+```
+
+**0.3.2: Timeout Middleware**
+
+Create `middleware/timeout.go`:
+```go
+type TimeoutConfig struct {
+    Duration         time.Duration
+    PropagateContext bool // default: true
+}
+
+func WithTimeout[In, Out any](config TimeoutConfig) Middleware[In, Out]
+```
+
+**0.3.3: Move Retry Middleware**
+
+Move from `gopipe/retry.go` to `middleware/retry.go`:
+```go
+type RetryConfig struct {
+    ShouldRetry ShouldRetryFunc
+    Backoff     BackoffFunc
+    MaxAttempts int
+    Timeout     time.Duration
+}
+
+func WithRetry[In, Out any](config RetryConfig) Middleware[In, Out]
+
+// Backoff strategies (moved)
+func ConstantBackoff(delay time.Duration, jitter float64) BackoffFunc
+func ExponentialBackoff(initial, factor, max time.Duration, jitter float64) BackoffFunc
+```
+
+**0.3.4: Metrics Middleware**
+
+Create `middleware/metrics.go`:
+```go
+type MetricsCollector interface {
+    RecordProcessed(duration time.Duration, success bool, labels map[string]string)
+    RecordInFlight(delta int, labels map[string]string)
+}
+
+type MetricsConfig struct {
+    Collector   MetricsCollector
+    LabelFunc   func(in any) map[string]string
+}
+
+func WithMetrics[In, Out any](config MetricsConfig) Middleware[In, Out]
+
+// Prometheus integration
+func NewPrometheusCollector(namespace, subsystem string) *PrometheusCollector
+```
+
+**0.3.5: Logging Middleware**
+
+Create `middleware/logging.go`:
+```go
+type Logger interface {
+    Log(level LogLevel, msg string, fields map[string]any)
+}
+
+type LoggingConfig struct {
+    Logger      Logger
+    Level       LogLevel
+    LogInput    bool
+    LogOutput   bool
+    LogDuration bool
+}
+
+func WithLogging[In, Out any](config LoggingConfig) Middleware[In, Out]
+
+// Adapters
+func SlogAdapter(logger *slog.Logger) Logger
+func ZapAdapter(logger *zap.Logger) Logger
+```
+
+**0.3.6: Recovery Middleware**
+
+Create `middleware/recover.go`:
+```go
+type RecoverConfig struct {
+    OnPanic     func(input any, recovered any, stack []byte)
+    ReturnError bool
+}
+
+func WithRecover[In, Out any](config RecoverConfig) Middleware[In, Out]
+```
+
+**0.3.7: Message-Specific Middleware**
+
+Enhance `middleware/message/`:
+```go
+// middleware/message/validation.go
+func WithValidation(strict bool) Middleware[*Message, *Message]
+
+// middleware/message/routing.go
+type ErrorRoutingConfig struct {
+    Destination  string // "gopipe://errors", "kafka://dlq"
+    IncludeInput bool
+    IncludeStack bool
+}
+func WithErrorRouting(config ErrorRoutingConfig) Middleware[*Message, *Message]
+```
+
+**0.3.8: Deprecate Root Package Functions**
+
+Create `gopipe/deprecated.go`:
+```go
+// Deprecated: Use middleware.WithRetry instead
+func WithRetryConfig[In, Out any](config RetryConfig) Option[In, Out]
+
+// Deprecated: Use middleware.WithRecover instead
+func WithRecover[In, Out any]() Option[In, Out]
+```
 
 **Files:**
-- `pipe.go` (modify)
-- `middleware/timeout.go` (new or modify)
-- `middleware/retry.go` (new or modify)
+- `middleware/middleware.go` (new)
+- `middleware/timeout.go` (new)
+- `middleware/retry.go` (new - moved from root)
 - `middleware/metrics.go` (new)
 - `middleware/logging.go` (new)
+- `middleware/recover.go` (new)
+- `middleware/message/validation.go` (new)
+- `middleware/message/routing.go` (new)
+- `middleware/message/correlation.go` (existing - keep)
+- `middleware/message.go` (existing - keep)
+- `deprecated.go` (new)
+- `retry.go` (deprecate, keep for backward compat)
+- `pipe.go` (modify signature)
 
 ### Step 0.4: FanOut Enhancement
 
@@ -261,6 +412,45 @@ outputs := BroadcastWithConfig(events, 3, BroadcastConfig{
 })
 ```
 
+### Middleware Package Usage
+
+```go
+import (
+    "github.com/fxsml/gopipe"
+    "github.com/fxsml/gopipe/middleware"
+    msgmw "github.com/fxsml/gopipe/middleware/message"
+)
+
+// Chain multiple middleware
+pipe := gopipe.NewProcessPipe(
+    handler,
+    gopipe.ProcessorConfig{Concurrency: 4},
+    middleware.Chain(
+        middleware.WithTimeout[Order, ShippingCommand](middleware.TimeoutConfig{
+            Duration: 5 * time.Second,
+        }),
+        middleware.WithRetry[Order, ShippingCommand](middleware.RetryConfig{
+            MaxAttempts: 3,
+            Backoff:     middleware.ExponentialBackoff(100*time.Millisecond, 2.0, 5*time.Second, 0.2),
+        }),
+        middleware.WithMetrics[Order, ShippingCommand](middleware.MetricsConfig{
+            Collector: middleware.NewPrometheusCollector("gopipe", "orders"),
+        }),
+    ),
+)
+
+// Message-specific middleware
+router.AddHandler("orders", orderHandler,
+    gopipe.ProcessorConfig{Concurrency: 4},
+    msgmw.WithCorrelation(),
+    msgmw.WithValidation(true),
+    msgmw.WithErrorRouting(msgmw.ErrorRoutingConfig{
+        Destination:  "gopipe://dead-letters",
+        IncludeInput: true,
+    }),
+)
+```
+
 ## Testing Strategy
 
 ### Unit Tests
@@ -289,13 +479,26 @@ outputs := BroadcastWithConfig(events, 3, BroadcastConfig{
 
 ### New Files
 
+**Core:**
 - `processor_config.go` - ProcessorConfig struct and defaults
 - `source.go` - Source interface
 - `generator_config.go` - GeneratorConfig struct
 - `deprecated.go` - Backward compatibility aliases
-- `middleware/metrics.go` - Metrics middleware
-- `middleware/logging.go` - Logging middleware
 - `docs/migration/core-refactoring.md` - Migration guide
+
+**Middleware Package:**
+- `middleware/middleware.go` - Core types, Chain(), type aliases
+- `middleware/timeout.go` - Context timeout middleware
+- `middleware/retry.go` - Retry middleware (moved from root)
+- `middleware/metrics.go` - Metrics collection, PrometheusCollector
+- `middleware/logging.go` - Logging middleware, slog/zap adapters
+- `middleware/recover.go` - Panic recovery middleware
+- `middleware/tracing.go` - OpenTelemetry tracing middleware (optional)
+- `middleware/doc.go` - Package documentation
+
+**Message Middleware:**
+- `middleware/message/validation.go` - CloudEvents validation
+- `middleware/message/routing.go` - Error routing middleware
 
 ### Modified Files
 
@@ -305,6 +508,9 @@ outputs := BroadcastWithConfig(events, 3, BroadcastConfig{
 - `channel/broadcast.go` - BroadcastWithConfig
 - `message/generator.go` - Updated Generator interface
 - `options.go` - Mark as deprecated
+- `retry.go` - Deprecate, re-export from middleware
+- `middleware/message.go` - Keep existing NewMessageMiddleware
+- `middleware/correlation.go` - Keep existing, maybe move to message/
 
 ## Dependencies
 
@@ -323,12 +529,27 @@ This feature has no external dependencies but is a **prerequisite** for:
 
 ## Acceptance Criteria
 
+### Core Refactoring
 1. [ ] `ProcessorConfig` replaces generic options for settings
 2. [ ] Cancel path simplified (no dedicated goroutine)
 3. [ ] Clear separation between config and middleware
 4. [ ] `BroadcastWithConfig` handles slow receivers
 5. [ ] `Source` interface unifies Generator and Subscriber
 6. [ ] `NewTickerGenerator` supports time-based generation
-7. [ ] All existing tests pass with new implementation
-8. [ ] Migration guide documents breaking changes
-9. [ ] Examples updated to use new API
+
+### Middleware Package
+7. [ ] `middleware.Chain()` combines multiple middleware
+8. [ ] `middleware.WithTimeout()` handles context timeouts
+9. [ ] `middleware.WithRetry()` provides retry logic (moved from root)
+10. [ ] `middleware.WithMetrics()` collects processing metrics
+11. [ ] `middleware.WithLogging()` provides pluggable logging
+12. [ ] `middleware.WithRecover()` handles panics
+13. [ ] `middleware/message.WithCorrelation()` propagates correlation IDs
+14. [ ] `middleware/message.WithValidation()` validates CloudEvents
+15. [ ] `middleware/message.WithErrorRouting()` routes errors to destinations
+
+### Migration
+16. [ ] All existing tests pass with new implementation
+17. [ ] Migration guide documents breaking changes
+18. [ ] Deprecated functions work with deprecation warnings
+19. [ ] Examples updated to use new API
