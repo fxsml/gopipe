@@ -13,9 +13,10 @@ This layer makes CloudEvents a mandatory specification for all gopipe messages, 
 ## Goals
 
 1. Enforce CloudEvents required attributes on all messages
-2. Replace `TypedMessage[T]` with `Message` where `Data any`
-3. Implement automatic serialization/deserialization at boundaries
-4. Provide TypeRegistry for type-safe deserialization
+2. Keep `TypedMessage[T]` for non-messaging pipelines (no validation)
+3. Define `Message = TypedMessage[any]` for CloudEvents messaging
+4. Implement automatic serialization/deserialization at boundaries
+5. Provide TypeRegistry for type-safe deserialization
 
 ## Prerequisites
 
@@ -73,9 +74,9 @@ msg := message.MustNew(data, attrs)  // Panics on error
 
 ---
 
-### Task 1.2: Non-Generic Message
+### Task 1.2: TypedMessage and Message Separation
 
-**Goal:** Remove generics, use `Data any`
+**Goal:** Keep TypedMessage for pipelines, use Message for CloudEvents messaging
 
 **Current:**
 ```go
@@ -84,16 +85,33 @@ type TypedMessage[T any] struct {
     Attributes Attributes
     a          *Acking
 }
-type Message = TypedMessage[[]byte]
+type Message = TypedMessage[[]byte]  // DEPRECATED
 ```
 
 **Target:**
 ```go
-type Message struct {
-    Data       any        // Go type internally, []byte at boundaries
+// TypedMessage stays - useful for non-messaging pipelines
+// New constructor without error return (current behavior preserved)
+type TypedMessage[T any] struct {
+    Data       T
     Attributes Attributes
     a          *Acking
 }
+
+// Deprecated: NewTyped - use message.NewTyped instead
+func New[T any](data T, attrs Attributes) *TypedMessage[T]  // DEPRECATED
+
+// NewTyped creates a typed message (no validation, for pipelines)
+func NewTyped[T any](data T, attrs Attributes) *TypedMessage[T]
+
+// Message is TypedMessage[any] for CloudEvents messaging
+type Message = TypedMessage[any]
+
+// New creates a Message with CloudEvents validation (returns error)
+func New(data any, attrs Attributes) (*Message, error)
+
+// MustNew panics on validation error (for tests)
+func MustNew(data any, attrs Attributes) *Message
 ```
 
 **Type Access:**
@@ -109,19 +127,30 @@ if err := msg.DataAs(&order); err != nil {
 ```
 
 **Files to Modify:**
-- `message/message.go` - Replace TypedMessage with Message
+- `message/message.go` - Add NewTyped, change Message alias, deprecate old New
 - `message/helpers.go` (new) - DataAs, MustDataAs helpers
+
+**Deprecations:**
+```go
+// Mark as deprecated in code
+// Deprecated: Use NewTyped for pipelines or New for CloudEvents messages.
+func New[T any](data T, attrs Attributes) *TypedMessage[T]
+
+// Deprecated: Message is now TypedMessage[any]. Use *Message for CloudEvents.
+type Message = TypedMessage[[]byte]
+```
 
 **Migration:**
 ```go
-// Old
-func handle(msg *message.TypedMessage[Order]) ([]*message.TypedMessage[ShippingCmd], error)
+// Pipeline (no CloudEvents) - use NewTyped
+msg := message.NewTyped(order, nil)  // No validation
 
-// New
-func handle(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-    order := msg.Data.(Order)
+// CloudEvents messaging - use New (validates)
+msg, err := message.New(order, message.Attributes{
+    message.AttrType:   "order.created",
+    message.AttrSource: "/orders",
     // ...
-}
+})
 ```
 
 ---
@@ -348,7 +377,10 @@ Before marking Layer 1 complete:
 
 - [ ] `New()` returns error when CE attributes missing
 - [ ] `MustNew()` panics with clear error message
-- [ ] `TypedMessage[T]` removed or deprecated
+- [ ] `NewTyped[T]()` works without validation (for pipelines)
+- [ ] `TypedMessage[T]` preserved for non-messaging use
+- [ ] `Message = TypedMessage[any]` for CloudEvents
+- [ ] Old `New[T]()` marked deprecated
 - [ ] `DataAs()` helper works with type assertions
 - [ ] TypeRegistry maps event types to Go types
 - [ ] SerializingSender serializes Go types to bytes

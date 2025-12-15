@@ -231,10 +231,25 @@ Several ADR code examples don't match current implementation:
 
 | ADR | Issue | Current | Proposed |
 |-----|-------|---------|----------|
-| 0019 | `New()` signature | Returns `*TypedMessage[T]` | Returns `(*Message, error)` |
-| 0020 | Message type | `TypedMessage[T any]` | `Message` with `Data any` |
+| 0019 | `New()` signature | Returns `*TypedMessage[T]` | `New()` returns `(*Message, error)` |
+| 0020 | Message type | `Message = TypedMessage[[]byte]` | `Message = TypedMessage[any]` |
 | 0026 | Options pattern | `Option[In, Out]` | `ProcessorConfig` struct |
 | 0028 | Generator | `Generator[Out]` | `Subscriber[Out]` interface |
+
+### TypedMessage Decision
+
+**TypedMessage stays** - useful for non-messaging pipelines:
+
+```go
+// Preserved: TypedMessage[T] for pipelines (no validation)
+msg := message.NewTyped(order, nil)
+
+// New: Message = TypedMessage[any] for CloudEvents (validates)
+msg, err := message.New(order, attrs)  // Returns error
+
+// Deprecated: Old generic New[T]
+msg := message.New(data, attrs)  // DEPRECATED
+```
 
 ### ✓ Working Pattern: Simple Mode
 
@@ -320,7 +335,9 @@ Each layer can be adopted independently:
 | Component | Strategy |
 |-----------|----------|
 | `Option[In, Out]` | Deprecated wrappers calling new APIs |
-| `TypedMessage[T]` | Keep as generic helper, internally uses `Message` |
+| `TypedMessage[T]` | **Preserved** for pipelines via `NewTyped[T]()` |
+| `Message = TypedMessage[[]byte]` | **Deprecated** → `Message = TypedMessage[any]` |
+| `New[T]()` | **Deprecated** → `NewTyped[T]()` or `New()` |
 | `Generator[Out]` | Deprecated, delegates to `FuncSubscriber` |
 | Current `Router` | Preserved, Engine is additive |
 
