@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -209,10 +210,9 @@ func TestSubscriber_Subscribe(t *testing.T) {
 
 	t.Run("subscription with config options", func(t *testing.T) {
 		mock := newMockReceiver()
-		callCount := 0
+		var callCount atomic.Int32
 		mock.receiveFunc = func(ctx context.Context, topic string) ([]*Message, error) {
-			callCount++
-			if callCount > 2 {
+			if callCount.Add(1) > 2 {
 				return nil, errors.New("done")
 			}
 			return []*Message{
