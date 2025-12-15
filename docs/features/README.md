@@ -2,6 +2,8 @@
 
 This directory contains feature documentation for the pub/sub branch, organized for systematic integration into the main branch.
 
+**For the big picture:** See the [Architecture Roadmap](../plans/architecture-roadmap.md) for how these features fit together.
+
 ## Feature Overview
 
 These features represent the complete pub/sub implementation for gopipe, grouped logically by package and dependency order.

@@ -2,6 +2,8 @@
 
 This directory contains Architecture Decision Records for gopipe, documenting significant architectural decisions made during development.
 
+**For the big picture:** See the [Architecture Roadmap](../plans/architecture-roadmap.md) for how these ADRs fit together.
+
 ## ADR Status
 
 ADRs are categorized by their current status:
