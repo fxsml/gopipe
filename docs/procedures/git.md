@@ -46,27 +46,136 @@ make install-tools  # Install git-semver
 
 ## Feature Integration
 
-### Step 1: Analyze Branch
+### Quick Integration
 
-```bash
-git fetch origin main
-git fetch origin <feature-branch>
-git log --oneline origin/main..origin/<feature-branch>
-git diff origin/main...origin/<feature-branch> --stat
-```
-
-### Step 2: Create Feature Branch
+For small features:
 
 ```bash
 git checkout develop
 git checkout -b feature/<name>
-```
-
-### Step 3: Create PR
-
-```bash
+# ... make changes ...
 gh pr create --base develop --title "feat: <name>" --body "..."
 ```
+
+### Large Feature Branch Integration
+
+For large feature branches with many commits across multiple packages.
+
+#### Step 1: Analyze Branch
+
+```bash
+# Fetch both branches
+git fetch origin main
+git fetch origin <feature-branch>
+
+# Compare branches
+git log --oneline origin/main..origin/<feature-branch>
+git diff origin/main...origin/<feature-branch> --stat
+
+# Identify affected packages
+git diff origin/main...origin/<feature-branch> --name-only | cut -d'/' -f1 | sort -u
+```
+
+#### Step 2: Review Documentation and ADRs
+
+```bash
+# List all ADRs
+ls -la docs/adr/
+
+# Extract status from each ADR
+for file in docs/adr/*.md; do
+    echo "=== $file ==="
+    grep -E "^\*\*Status:\*\*" "$file" || echo "No status found"
+done
+```
+
+**Categorize ADRs**:
+- **Implemented**: Features complete and tested
+- **Accepted**: Architectural decisions guiding development
+- **Proposed**: Planned features not yet implemented
+- **Superseded**: Decisions replaced by newer ADRs
+
+#### Step 3: Create Feature Documentation
+
+Create `docs/features/` with one file per feature:
+
+```
+docs/features/
+├── README.md                    # Overview and integration order
+├── 01-<prerequisite>.md         # Prerequisites first
+├── 02-<core-feature>.md         # Core features
+└── 03-<dependent>.md            # Features with dependencies
+```
+
+**Feature Document Template**:
+
+```markdown
+# Feature: <Name>
+
+**Package:** `<package-name>`
+**Status:** ✅ Implemented | 🔄 Proposed | ⛔ Superseded
+**Related ADRs:**
+- [ADR NNNN](../adr/NNNN-name.md)
+
+## Summary
+
+Brief description of what the feature provides.
+
+## Implementation
+
+Key types and functions:
+
+\`\`\`go
+type Foo struct { ... }
+func NewFoo() *Foo
+\`\`\`
+
+## Usage Example
+
+\`\`\`go
+foo := NewFoo()
+\`\`\`
+
+## Files Changed
+
+- `path/to/file.go` - Description
+```
+
+#### Step 4: Feature-by-Feature Integration
+
+For each feature (in dependency order):
+
+1. **Create feature branch from develop**:
+   ```bash
+   git checkout develop
+   git checkout -b feature/<feature-name>
+   ```
+
+2. **Cherry-pick or merge feature commits**
+
+3. **Create Pull Request to develop**:
+   ```bash
+   gh pr create --base develop --title "feat: <feature-name>" --body "..."
+   ```
+
+4. **Merge to develop after review**
+
+5. **Repeat for remaining features**
+
+#### Integration Principles
+
+1. **Feature Independence**: Each feature should be independently testable
+2. **Dependency Order**: Prerequisites must be integrated before dependents
+3. **Clear Documentation**: Each feature gets its own doc
+4. **Clean History**: Use git flow branches for clean merges
+5. **Test Coverage**: Tests must pass after each feature integration
+
+#### Common Pitfalls
+
+- **Don't** cherry-pick commits out of dependency order
+- **Don't** create feature docs without understanding ADRs
+- **Don't** squash unrelated features together
+- **Don't** skip test runs between features
 
 ## Release Process
 

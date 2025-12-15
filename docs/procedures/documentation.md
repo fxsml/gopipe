@@ -158,3 +158,39 @@ git diff --name-only main -- docs/
 # Creates: docs/state/cloudevents-state.md
 # From: docs/adr/0018-0029.md, docs/plans/*.md, docs/features/09-15.md
 ```
+
+## Compression Guidelines
+
+**CRITICAL**: Follow these rules when compressing or consolidating documentation.
+
+### Compression Hierarchy
+
+| Type | Compressibility | Rationale |
+|------|-----------------|-----------|
+| Procedures | **Minimal** | Must be precise and actionable |
+| ADRs | Low | Historical record of decisions |
+| Plans | Medium | Can reference state docs |
+| Features | Medium | Can reference state docs |
+| State docs | High | Summary by design |
+
+### Rules
+
+1. **Never delete procedures without explicit permission**
+   - Procedures are essential for repeatability
+   - Move to archive if truly obsolete, don't delete
+
+2. **Procedures require precision**
+   - Include exact commands and steps
+   - Keep all edge cases and caveats
+   - Don't summarize to the point of losing detail
+
+3. **Plans and features have more freedom**
+   - Can be consolidated into state documents
+   - Original files retained for history
+   - State doc becomes the reference
+
+4. **Always preserve**:
+   - Step-by-step procedures
+   - Command-line examples
+   - Checklists
+   - Templates
