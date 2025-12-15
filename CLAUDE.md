@@ -30,6 +30,7 @@ make vet    # Lint
 
 | Location | Content |
 |----------|---------|
+| [docs/state/](docs/state/) | **Current state** (compressed context) |
 | [docs/manual/](docs/manual/) | User manual |
 | [docs/plans/](docs/plans/) | Implementation roadmap |
 | [docs/adr/](docs/adr/) | Architecture decisions |
@@ -62,5 +63,5 @@ The prompt file contains only what's needed to execute the plan. See [planning.m
 
 ---
 
-**Version:** 3.0
+**Version:** 3.1
 **Last Updated:** 2025-12-15
