@@ -47,6 +47,7 @@ These ADRs describe proposed features that are documented but not yet implemente
 - **[ADR 0026](0026-pipe-processor-simplification.md)** - Pipe and Processor Simplification
 - **[ADR 0027](0027-fan-out-pattern.md)** - Fan-Out Pattern
 - **[ADR 0028](0028-generator-source-patterns.md)** - Subscriber Patterns
+- **[ADR 0029](0029-message-engine.md)** - Message Engine
 
 ### Superseded ⛔
 
@@ -134,14 +135,16 @@ Industry standard alignment:
 
 Related: [Feature 06-message-cloudevents](../features/06-message-cloudevents.md)
 
-### Core Pipe Refactoring (ADRs 0026-0028) 💡
+### Core Pipe Refactoring (ADRs 0026-0029) 💡
 Proposed prerequisite for CloudEvents standardization:
 - ADR 0026: Pipe and Processor Simplification 💡
 - ADR 0027: Fan-Out Pattern 💡
 - ADR 0028: Subscriber Patterns 💡
+- ADR 0029: Message Engine 💡
 
 Related:
 - [Feature 16-core-pipe-refactoring](../features/16-core-pipe-refactoring.md)
+- [Feature 17-message-engine](../features/17-message-engine.md)
 
 ### CloudEvents Standardization (ADRs 0019-0025) 💡
 Proposed: Making CloudEvents mandatory and enabling composable internal pipelines:
@@ -175,7 +178,7 @@ For understanding the complete architecture, read ADRs in this order:
 6. **Standards** (0018) - CloudEvents alignment
 7. **CQRS** (0006) - Event-driven patterns
 8. **Advanced Patterns** (0007-0009) - Sagas and outbox (proposed)
-9. **Core Pipe Refactoring** (0026-0028) - Proposed simplification (prerequisite)
+9. **Core Pipe Refactoring** (0026-0029) - Proposed simplification (prerequisite)
 10. **CloudEvents Standardization** (0019-0025) - Proposed mandatory CE, internal routing, message loop, and event store
 
 ## Timeline
@@ -185,6 +188,7 @@ For understanding the complete architecture, read ADRs in this order:
 - **2025-12-11**: CloudEvents terminology standardization (ADR 0018)
 - **2025-12-13**: CloudEvents standardization plan proposed (ADRs 0019-0025)
 - **2025-12-13**: Core pipe refactoring plan proposed (ADRs 0026-0028)
+- **2025-12-15**: Message Engine proposed (ADR 0029)
 
 ## Related Documentation
 

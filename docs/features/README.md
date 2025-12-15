@@ -28,7 +28,8 @@ These features are documented but not yet implemented:
 
 This is a **prerequisite** for CloudEvents standardization. Must be implemented first.
 
-16. **[Core Pipe Refactoring](16-core-pipe-refactoring.md)** - ProcessorConfig, simplified cancel, Source interface (ADRs 0026-0028)
+16. **[Core Pipe Refactoring](16-core-pipe-refactoring.md)** - ProcessorConfig, simplified cancel, Subscriber interface (ADRs 0026-0028)
+17. **[Message Engine](17-message-engine.md)** - Top-level orchestration with FanIn/FanOut (ADR 0029)
 
 ### CloudEvents Standardization (Proposed)
 
@@ -57,7 +58,7 @@ Features are numbered in dependency order. When integrating into main:
 7. Add **07-message-multiplex** (uses 03)
 8. Add **08-middleware-package** (uses 04)
 
-**Proposed Features (09-16) - Implementation Order:**
+**Proposed Features (09-17) - Implementation Order:**
 1. **16-core-pipe-refactoring** (PREREQUISITE - do first)
 2. **09-cloudevents-mandatory** (depends on 16)
 3. **10-non-generic-message** (depends on 09)
@@ -66,6 +67,7 @@ Features are numbered in dependency order. When integrating into main:
 6. **13-internal-message-loop** (depends on 12)
 7. **14-nats-integration** (depends on 13)
 8. **15-sql-event-store** (depends on 11)
+9. **17-message-engine** (depends on 12, 13, 16)
 
 ## Feature Document Structure
 
@@ -110,6 +112,10 @@ Architecture Decision Records are organized by status:
 - [ADR 0023](../adr/0023-internal-message-loop.md) - Internal Message Loop
 - [ADR 0024](../adr/0024-destination-attribute.md) - Destination Attribute
 - [ADR 0025](../adr/0025-sql-event-store.md) - SQL Event Store
+- [ADR 0026](../adr/0026-pipe-processor-simplification.md) - Pipe and Processor Simplification
+- [ADR 0027](../adr/0027-fan-out-pattern.md) - Fan-Out Pattern
+- [ADR 0028](../adr/0028-generator-source-patterns.md) - Subscriber Patterns
+- [ADR 0029](../adr/0029-message-engine.md) - Message Engine
 
 ### Superseded
 - [ADR 0011](../adr/0011-cloudevents-compatibility.md) - Superseded by ADR 0018

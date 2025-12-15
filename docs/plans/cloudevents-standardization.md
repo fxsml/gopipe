@@ -80,6 +80,9 @@ Optional external package for advanced messaging features (persistence, clusteri
 ### Phase 7: SQL Event Store (ADR 0025)
 Durable event persistence with rich querying and transactional outbox support.
 
+### Phase 8: Message Engine (ADR 0029)
+Top-level orchestration component that declaratively wires subscribers, routers, and publishers with automatic internal loop handling.
+
 ## Implementation Order
 
 ```
@@ -159,6 +162,18 @@ Durable event persistence with rich querying and transactional outbox support.
 │ - Query by CloudEvents attributes                                │
 │ - Transactional outbox support                                   │
 │ - Event replay for projections                                   │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ Phase 8: Message Engine (ADR 0029)                               │
+│ - Engine as top-level orchestrator                               │
+│ - Declarative subscriber/router/publisher registration           │
+│ - RoutingFanIn for merging subscriber outputs                    │
+│ - RoutingFanOut for destination-based routing                    │
+│ - Automatic internal loops via gopipe:// destination             │
+│ - Source matching for router selection                           │
+│ - Simple mode: Subscriber → Router → Publisher chain             │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -257,6 +272,7 @@ External System                    gopipe Internal                    External S
 | [0024](../adr/0024-destination-attribute.md) | Destination Attribute | URI-based routing destinations |
 | [0023](../adr/0023-internal-message-loop.md) | Internal Message Loop | Feedback loop with pluggable transport |
 | [0025](../adr/0025-sql-event-store.md) | SQL Event Store | Durable persistence with querying |
+| [0029](../adr/0029-message-engine.md) | Message Engine | Top-level orchestration component |
 
 ## Related Features
 
@@ -270,6 +286,7 @@ External System                    gopipe Internal                    External S
 | [13](../features/13-internal-message-loop.md) | Internal Message Loop | Feedback loop implementation |
 | [14](../features/14-nats-integration.md) | NATS Integration | External package plan |
 | [15](../features/15-sql-event-store.md) | SQL Event Store | Persistence and querying |
+| [17](../features/17-message-engine.md) | Message Engine | Engine orchestration implementation |
 
 ## Success Criteria
 

@@ -167,6 +167,84 @@ msg ├→ Consumer B            msg ─┼→ Consumer B (if type == "payment")
 - **Fan-Out**: Message goes to ALL outputs
 - **Router**: Message goes to ONE output (based on predicate)
 
+### 7. Routing FanOut (Destination-Based)
+
+For `message.Engine` (ADR 0029), we need a FanOut that routes to ONE output based on a routing function. This is distinct from Broadcast (all outputs) and complements Router (type-based).
+
+```go
+// RoutingFanOut routes each message to ONE output based on routing function
+type RoutingFanOut[T any] struct {
+    router   RoutingFunc[T]
+    outputs  map[string]chan<- T
+    config   RoutingFanOutConfig
+}
+
+// RoutingFunc determines the output key for a message
+type RoutingFunc[T any] func(msg T) string
+
+// RoutingFanOutConfig configures routing behavior
+type RoutingFanOutConfig struct {
+    DefaultOutput    string                              // fallback if no match
+    OnNoMatch        func(msg any)                       // called when no route matches
+    OnSlowConsumer   func(dest string, msg any, elapsed time.Duration)
+    BufferPerOutput  int                                 // per-output buffer size
+}
+
+// Factory function
+func NewRoutingFanOut[T any](
+    router RoutingFunc[T],
+    config RoutingFanOutConfig,
+) *RoutingFanOut[T]
+
+// AddOutput registers an output channel for a key/pattern
+func (f *RoutingFanOut[T]) AddOutput(key string, out chan<- T)
+
+// Start begins routing from input to outputs
+func (f *RoutingFanOut[T]) Start(ctx context.Context, in <-chan T)
+```
+
+**Use Case: Destination-Based Routing for Engine**
+
+```go
+// Route messages by destination scheme
+fanout := NewRoutingFanOut(
+    func(msg *Message) string {
+        dest := msg.Destination()
+        if idx := strings.Index(dest, "://"); idx != -1 {
+            return dest[:idx+3]  // "kafka://topic" → "kafka://"
+        }
+        return "default"
+    },
+    RoutingFanOutConfig{
+        DefaultOutput: "gopipe://",
+        BufferPerOutput: 100,
+    },
+)
+
+// Register outputs for different destination schemes
+fanout.AddOutput("kafka://", kafkaPublisherChan)
+fanout.AddOutput("nats://", natsPublisherChan)
+fanout.AddOutput("http://", httpPublisherChan)
+fanout.AddOutput("gopipe://", internalLoopChan)
+
+fanout.Start(ctx, routerOutput)
+```
+
+**Comparison Table:**
+
+| Component | Routes To | Criteria | Use Case |
+|-----------|-----------|----------|----------|
+| **Broadcast** | ALL outputs | None | CQRS projections, audit |
+| **Router** | ONE handler | Event type/topic | Handler dispatch |
+| **RoutingFanOut** | ONE output | Custom function | Destination routing |
+
+**When to Use RoutingFanOut:**
+
+- Route by message destination attribute
+- Route by custom criteria (not type-based)
+- Engine's publisher/loop routing
+- Multi-protocol publishing
+
 ## Usage Scenarios
 
 ### Scenario 1: Event Audit Trail
@@ -287,4 +365,6 @@ outputs := channel.BroadcastWithConfig(in, 3, BroadcastConfig{
 
 - [ADR 0026: Pipe and Processor Simplification](0026-pipe-processor-simplification.md)
 - [ADR 0022: Internal Message Routing](0022-internal-message-routing.md)
+- [ADR 0029: Message Engine](0029-message-engine.md)
 - [Feature 16: Core Pipe Refactoring](../features/16-core-pipe-refactoring.md)
+- [Feature 17: Message Engine](../features/17-message-engine.md)
