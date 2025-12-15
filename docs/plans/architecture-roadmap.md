@@ -175,6 +175,91 @@ engine.Start(ctx)
 
 ---
 
+## Release Roadmap
+
+### Release v1.0.0 (Q1 2025)
+
+**Core Framework Release** - All layers implemented
+
+| Component | Layer | Status |
+|-----------|-------|--------|
+| Foundation Cleanup | Layer 0 | Planned |
+| CloudEvents Standardization | Layer 1 | Planned |
+| Routing Infrastructure | Layer 2 | Planned |
+| Message Engine | Layer 3 | Planned |
+
+**Planning for v1.1:**
+- Persistence architecture
+- Outbox pattern design
+- Transaction handling
+
+---
+
+### Release v1.1.0
+
+**Persistence & Transactions**
+
+| Feature | Description |
+|---------|-------------|
+| Event Persistence | SQL Event Store implementation |
+| Outbox Pattern | Transactional outbox for reliable messaging |
+| Transactions | Cross-component transaction support |
+
+**Planning for v1.2:**
+- Saga pattern
+- Reply-to function for request/response
+
+---
+
+### Release v1.2.0
+
+**Adapters Release** - External system integrations
+
+> **Note:** All adapters are independent plugin modules maintained in separate repositories.
+
+| Adapter | Repository | Features |
+|---------|------------|----------|
+| File Watcher | `gopipe-filewatcher` | inotify-based file system events |
+| CDC (Postgres/MariaDB) | `gopipe-cdc` | Database change data capture via [Debezium CloudEvents](https://debezium.io/documentation/reference/3.4/integrations/cloudevents.html) |
+| Redis | `gopipe-redis` | Messaging + Event Store |
+| Postgres | `gopipe-postgres` | Messaging + Event Store + Outbox |
+| GraphQL | `gopipe-graphql` | Leveraging GraphQL subscriptions |
+| Azure Service Bus | `gopipe-azservicebus` | CloudEvents binding + AMQP format |
+| CLI | `gopipe-cli` | Command-line adapter |
+
+---
+
+### Release v1.3.0
+
+**Advanced Features**
+
+| Feature | Description |
+|---------|-------------|
+| Peek Function | Non-destructive message inspection for receivers |
+| Saga Pattern | Distributed transaction coordination |
+| Reply-To | Request/response messaging pattern |
+
+---
+
+### Example Application: Basic ERP/Ecom
+
+**Reference implementation demonstrating gopipe capabilities**
+
+| Aspect | Implementation |
+|--------|----------------|
+| Language | Go |
+| Messaging | gopipe |
+| Default Adapter | NATS.io |
+| Patterns | Event Store, CQRS, Outbox |
+
+**Scoped Use Cases:**
+- Upsert Product
+- Payment Processing
+- Order Management
+- Inventory Updates
+
+---
+
 ## Implementation Phases
 
 ```
@@ -193,6 +278,20 @@ Phase 0: Foundation                Phase 1: Messages           Phase 2: Routing
                                   │ FanIn / FanOut       │   │ NATS Integration    │
                                   │ Internal loops       │   │ (separate package)  │
                                   └──────────────────────┘   └─────────────────────┘
+```
+
+### Release Mapping
+
+```
+v1.0.0 (Q1 2025)          v1.1.0                    v1.2.0                 v1.3.0
+┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐   ┌──────────────┐
+│ Layer 0-3        │      │ Persistence      │      │ Adapters         │   │ Advanced     │
+│ ─────────────────│      │ ─────────────────│      │ ─────────────────│   │ ─────────────│
+│ • Foundation     │      │ • Event Store    │      │ • gopipe-cdc     │   │ • Peek       │
+│ • CloudEvents    │─────►│ • Outbox         │─────►│ • gopipe-redis   │──►│ • Saga       │
+│ • Routing        │      │ • Transactions   │      │ • gopipe-postgres│   │ • Reply-To   │
+│ • Engine         │      │                  │      │ • gopipe-az...   │   │              │
+└──────────────────┘      └──────────────────┘      └──────────────────┘   └──────────────┘
 ```
 
 ## Component Taxonomy
@@ -223,32 +322,32 @@ Phase 0: Foundation                Phase 1: Messages           Phase 2: Routing
 | `RoutingFanOut` | Routes by destination |
 | `LoopChannel` | Internal feedback |
 
-## Code Example Validation
+## API Changes (v1.0.0)
 
-### ⚠️ Examples Requiring Updates
+### Planned Breaking Changes
 
-Several ADR code examples don't match current implementation:
+These changes are planned for v1.0.0. ADR code examples show the **target API**, not the current implementation.
 
-| ADR | Issue | Current | Proposed |
-|-----|-------|---------|----------|
-| 0019 | `New()` signature | Returns `*TypedMessage[T]` | `New()` returns `(*Message, error)` |
-| 0020 | Message type | `Message = TypedMessage[[]byte]` | `Message = TypedMessage[any]` |
-| 0026 | Options pattern | `Option[In, Out]` | `ProcessorConfig` struct |
-| 0028 | Generator | `Generator[Out]` | `Subscriber[Out]` interface |
+| Component | Current API | Target API (v1.0.0) | ADR |
+|-----------|-------------|---------------------|-----|
+| Message type | `Message = TypedMessage[[]byte]` | `Message = TypedMessage[any]` | 0020 |
+| Constructor | `New[T]() *TypedMessage[T]` | `New() (*Message, error)` with validation | 0019 |
+| Options | `Option[In, Out]` funcs | `ProcessorConfig` struct | 0026 |
+| Sources | `Generator[Out]` | `Subscriber[Out]` interface | 0028 |
 
 ### TypedMessage Decision
 
-**TypedMessage stays** - useful for non-messaging pipelines:
+**TypedMessage[T] stays** - useful for non-messaging pipelines:
 
 ```go
 // Preserved: TypedMessage[T] for pipelines (no validation)
 msg := message.NewTyped(order, nil)
 
 // New: Message = TypedMessage[any] for CloudEvents (validates)
-msg, err := message.New(order, attrs)  // Returns error
+msg, err := message.New(order, attrs)  // Returns error if missing CE attrs
 
 // Deprecated: Old generic New[T]
-msg := message.New(data, attrs)  // DEPRECATED
+msg := message.New(data, attrs)  // Will be deprecated
 ```
 
 ### ✓ Working Pattern: Simple Mode
@@ -365,8 +464,27 @@ Each layer can be adopted independently:
 
 ## Next Steps
 
-1. **Implement Layer 0** - Foundation cleanup (2-3 PRs)
-2. **Implement Layer 1** - Message standardization (3-4 PRs)
-3. **Implement Layer 2** - Routing infrastructure (2-3 PRs)
-4. **Implement Layer 3** - Engine (1-2 PRs)
-5. **Extensions** - Event store, NATS (separate packages)
+### For v1.0.0 (Q1 2026)
+
+1. **Implement Layer 0** - Foundation cleanup
+2. **Implement Layer 1** - Message standardization
+3. **Implement Layer 2** - Routing infrastructure
+4. **Implement Layer 3** - Engine orchestration
+5. **Plan persistence** - Design event store and outbox
+
+### For v1.1.0
+
+1. **Event Persistence** - SQL Event Store implementation
+2. **Outbox Pattern** - Transactional message delivery
+3. **Plan adapters** - Design adapter plugin architecture
+
+### For v1.2.0
+
+1. **Create adapter repos** - gopipe-cdc, gopipe-redis, etc.
+2. **Implement core adapters** - PostgreSQL, Redis
+3. **External adapters** - Azure Service Bus, CDC
+
+### Future
+
+1. **v1.3.0** - Advanced patterns (Peek, Saga, Reply-To)
+2. **Example app** - ERP/Ecom reference implementation
