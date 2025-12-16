@@ -125,6 +125,61 @@ func Apply[In, Out any](proc gopipe.Processor[In, Out], mw ...Middleware[In, Out
 }
 ```
 
+### Type-Agnostic Middleware Chains
+
+**Problem:** Typed middleware chains (`Chain[Order, Cmd](...)`) can only be used with one pipe type.
+
+**Solution:** Store configs, instantiate with types at application time.
+
+```go
+// MiddlewareChain holds configs for deferred typed instantiation.
+type MiddlewareChain struct {
+    builders []middlewareBuilder
+}
+
+// NewChain creates a chain from middleware configs (no type params!).
+func NewChain(configs ...any) MiddlewareChain
+
+// ApplyChain instantiates the chain with specific types.
+// Go doesn't allow type parameters on methods, so this is a function.
+func ApplyChain[In, Out any](chain MiddlewareChain) Middleware[In, Out]
+```
+
+**Usage:**
+
+```go
+// Define ONCE - no type parameters!
+productionChain := NewChain(
+    RecoverConfig{OnPanic: panicHandler},
+    RetryConfig{MaxAttempts: 3},
+    TimeoutConfig{Duration: 5 * time.Second},
+    LoggingConfig{OnDrop: true},
+)
+
+// Use with ANY pipe type - types specified at application time
+orderPipe := NewProcessPipe(orderHandler, nil, config,
+    ApplyChain[Order, ShippingCmd](productionChain))
+
+paymentPipe := NewProcessPipe(paymentHandler, nil, config,
+    ApplyChain[Payment, Receipt](productionChain))  // Same chain, different types!
+```
+
+**Runnable example:** [main_chain.go](main_chain.go)
+
+**Alternative: Fluent Builder**
+
+```go
+chain := middleware.Build().
+    WithRecover(RecoverConfig{}).
+    WithRetry(RetryConfig{MaxAttempts: 3}).
+    WithTimeout(TimeoutConfig{Duration: time.Second}).
+    WithLogging(LoggingConfig{OnDrop: true}).
+    Chain()
+
+// Use with any pipe
+pipe := NewProcessPipe(handler, nil, config, ApplyChain[In, Out](chain))
+```
+
 ### Middleware Implementations
 
 #### Timeout Middleware

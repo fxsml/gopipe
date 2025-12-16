@@ -1,3 +1,5 @@
+//go:build ignore
+
 // Example demonstrating the proposed middleware architecture.
 //
 // This example shows how middleware would work after refactoring:
@@ -5,6 +7,8 @@
 // - Explicit middleware composition via Chain()
 // - No implicit behavior (logging is opt-in)
 // - Reusable middleware chains across processors
+//
+// Run with: go run main.go
 package main
 
 import (
