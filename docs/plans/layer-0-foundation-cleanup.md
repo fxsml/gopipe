@@ -57,46 +57,127 @@ pipe := NewProcessPipe(handler, ProcessorConfig{
 
 ---
 
-### Task 0.2: Simplified Cancel Path
+### Task 0.2: Drop Path Refactoring
 
-**Goal:** Remove dedicated cancel goroutine from processor
+**Goal:** Make drop handling explicit with unified handler and config fallback
 
-**Current:** (processor.go:151-159)
+**Analysis:** See [cancel-path-refactoring/](cancel-path-refactoring/) for detailed evaluation of 6 options.
+
+**Decision:** Option 5 - Hybrid (Explicit Drop + Config Default)
+
+#### Key Design Decisions
+
+1. **Keep the cancel goroutine** - It's a resilience mechanism preventing deadlocks
+2. **Single unified handler** - Handles both errors and cancellations
+3. **Error type distinguishes cause** - `ErrCancel` vs `ErrFailure`
+4. **Explicit drop parameter** - In pipe constructors (nil = use config fallback)
+5. **Non-generic config** - `OnDrop func(any, error)` enables sharing across types
+
+#### Naming Options (Decision Pending)
+
+| Current | Option 1 | Option 2 | Option 3 | Notes |
+|---------|----------|----------|----------|-------|
+| `Cancel` | `Drop` | `Reject` | `Discard` | Method on Processor |
+| `CancelFunc` | `DropFunc` | `RejectFunc` | `DiscardFunc` | Type alias |
+| `OnCancel` | `OnDrop` | `OnReject` | `OnDiscard` | Config field |
+| `ErrCancel` | `ErrCanceled` | - | - | Keep (matches context) |
+| `ErrFailure` | `ErrFailed` | `ErrProcessFailed` | - | Sentinel error |
+
+**Preferred:** `Drop` / `OnDrop` - accurately describes what happens (item dropped from pipeline)
+
+#### Current vs Target
+
+**Current:** (processor.go)
 ```go
-wgCancel := sync.WaitGroup{}
-wgCancel.Add(1)
-go func() {
-    <-ctx.Done()
-    for val := range in {
-        proc.Cancel(val, newErrCancel(ctx.Err()))
-    }
-    wgCancel.Done()
-}()
+type Processor[In, Out any] interface {
+    Process(context.Context, In) ([]Out, error)
+    Cancel(In, error)  // Called for both errors and cancellations
+}
+
+// Pipes pass nil, masking the explicit path
+proc := NewProcessor(handle, nil)
 ```
 
 **Target:**
 ```go
-// Workers just return on context cancellation
-select {
-case <-ctx.Done():
-    return  // No drain
-case val, ok := <-in:
-    // ...
+// Processor interface (consider renaming Cancel to Drop)
+type Processor[In, Out any] interface {
+    Process(context.Context, In) ([]Out, error)
+    Drop(In, error)  // Renamed from Cancel
 }
 
-// Error handling via config callback
-if config.OnError != nil {
-    config.OnError(val, err)
+// Sentinel errors distinguish cause
+var (
+    ErrCanceled = errors.New("gopipe: canceled")
+    ErrFailed   = errors.New("gopipe: processing failed")
+)
+
+// Non-generic config with unified handler
+type ProcessorConfig struct {
+    Concurrency int
+    Buffer      int
+    OnDrop      func(input any, err error)  // Fallback handler
 }
+
+// Pipe constructors with explicit drop parameter
+func NewProcessPipe[In, Out any](
+    process func(context.Context, In) ([]Out, error),
+    drop func(In, error),  // Explicit, type-safe (nil = use config.OnDrop)
+    config ProcessorConfig,
+    middleware ...Middleware[In, Out],
+) Pipe[In, Out]
 ```
 
-**Files to Modify:**
-- `processor.go` - Remove cancel goroutine, add OnError callback
+#### Example Implementation
 
-**Trade-offs:**
-- **Lost:** Draining in-flight items on cancel
-- **Gained:** Simpler model, one less goroutine per processor
-- **Mitigation:** Use message acknowledgments for reliability
+```go
+// Shared config - reusable across processors of different types
+sharedConfig := ProcessorConfig{
+    Concurrency: 4,
+    OnDrop: func(input any, err error) {
+        if errors.Is(err, ErrCanceled) {
+            slog.Warn("item canceled", "type", fmt.Sprintf("%T", input))
+        } else {
+            slog.Error("item failed", "type", fmt.Sprintf("%T", input))
+        }
+    },
+}
+
+// Pipe 1: Order -> ShippingCommand (uses config fallback)
+orderPipe := NewProcessPipe(orderHandler, nil, sharedConfig)
+
+// Pipe 2: Payment -> Notification (same config reused!)
+paymentPipe := NewProcessPipe(paymentHandler, nil, sharedConfig)
+
+// Pipe 3: Critical orders (explicit type-safe handler)
+criticalPipe := NewProcessPipe(
+    orderHandler,
+    func(order Order, err error) {
+        // Type-safe: can access order.ID directly
+        alerting.Send("VIP order dropped: " + order.ID)
+    },
+    sharedConfig,
+)
+```
+
+**Runnable example:** [cancel-path-refactoring/main.go](cancel-path-refactoring/main.go)
+
+#### Files to Modify
+
+- `errors.go` - Add `ErrCanceled`, `ErrFailed` (or keep existing names)
+- `processor.go` - Rename `Cancel` to `Drop`, update goroutine logic
+- `processor_config.go` - Add `OnDrop` field
+- `pipe.go` - Add explicit `drop` parameter to constructors
+- `option.go` - Deprecate `WithCancel`, add `WithDrop`
+
+#### Acceptance Criteria
+
+- [ ] Cancel goroutine preserved (resilience mechanism)
+- [ ] Single `OnDrop` handler in ProcessorConfig
+- [ ] Explicit drop parameter in pipe constructors
+- [ ] Error types distinguish cancel vs failure
+- [ ] Runnable example demonstrates shared config
+- [ ] Tests cover both error paths
 
 ---
 
