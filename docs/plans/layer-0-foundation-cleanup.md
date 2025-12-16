@@ -183,38 +183,106 @@ criticalPipe := NewProcessPipe(
 
 ### Task 0.3: Middleware Package Consolidation
 
-**Goal:** Move all middleware to `middleware/` package
+**Goal:** Move all middleware to `middleware/` package with explicit composition
 
-**Structure:**
+**Analysis:** See [middleware-refactoring/](middleware-refactoring/) for detailed evaluation
+
+**Decision:** Option A - Full Migration
+
+#### Key Design Decisions
+
+1. **Move all middleware** from root to `middleware/` package
+2. **Explicit composition** via `Chain()` function
+3. **No implicit behavior** - logging becomes opt-in (breaking change)
+4. **Config struct pattern** for all middleware
+5. **Drop handler middleware** wraps `Drop()` method
+
+#### Package Structure
+
 ```
 middleware/
-├── middleware.go       # Core types, Chain()
+├── doc.go              # Package documentation
+├── middleware.go       # Core types, Chain(), Apply()
 ├── timeout.go          # Context timeout
-├── retry.go            # Retry (moved from root)
-├── metrics.go          # PrometheusCollector
-├── logging.go          # slog/zap adapters
+├── retry.go            # Retry with backoff
 ├── recover.go          # Panic recovery
+├── metrics.go          # Metrics collection (interface-based)
+├── logging.go          # Structured logging (slog)
+├── drop.go             # Drop/cancel handler
 ├── message/            # Message-specific
-│   ├── correlation.go
-│   ├── validation.go
-│   └── routing.go
-└── doc.go
+│   ├── correlation.go  # Correlation ID propagation
+│   ├── validation.go   # CloudEvents validation (future)
+│   └── tracing.go      # Distributed tracing (future)
+└── internal/
+    └── backoff.go      # Backoff implementations
 ```
 
-**Migration Table:**
-| Old Location | New Location |
-|--------------|--------------|
-| `gopipe.WithRetryConfig` | `middleware.WithRetry` |
-| `gopipe.RetryConfig` | `middleware.RetryConfig` |
-| `gopipe.useMetrics` | `middleware.WithMetrics` |
-| `gopipe.useRecover` | `middleware.WithRecover` |
-| `gopipe.useContext` | `middleware.WithTimeout` |
+#### Core Types
 
-**Acceptance Criteria:**
-- [ ] All middleware in `middleware/` package
+```go
+// Middleware wraps a Processor with additional behavior.
+type Middleware[In, Out any] = gopipe.MiddlewareFunc[In, Out]
+
+// Chain combines multiple middleware into one.
+// Execution order: first middleware is outermost.
+func Chain[In, Out any](mw ...Middleware[In, Out]) Middleware[In, Out]
+```
+
+#### Migration Table
+
+| Current | New | Notes |
+|---------|-----|-------|
+| `gopipe.WithRetryConfig` | `middleware.Retry` | Config struct |
+| `gopipe.WithRecover` | `middleware.Recover` | Config struct |
+| `gopipe.WithTimeout` | `middleware.Timeout` | Config struct |
+| `gopipe.WithMetricsCollector` | `middleware.Metrics` | Interface-based |
+| `gopipe.WithLogConfig` | `middleware.Logging` | Opt-in |
+| `gopipe.WithMetadataProvider` | `middleware.Metadata` | Config struct |
+
+#### Example Usage
+
+```go
+// Reusable middleware chain
+productionMiddleware := middleware.Chain(
+    middleware.Recover[Order, Cmd](middleware.RecoverConfig{
+        OnPanic: func(input any, val any, stack string) { ... },
+    }),
+    middleware.Logging[Order, Cmd](middleware.LoggingConfig{
+        Logger:     slog.Default(),
+        OnDrop:     true,
+    }),
+    middleware.Metrics[Order, Cmd](middleware.MetricsConfig{
+        Recorder: prometheusRecorder,
+    }),
+    middleware.Timeout[Order, Cmd](middleware.TimeoutConfig{
+        Duration: 5 * time.Second,
+    }),
+    middleware.Retry[Order, Cmd](middleware.RetryConfig{
+        MaxAttempts: 3,
+        Backoff:     middleware.ExponentialBackoff(100*time.Millisecond, 2, 5*time.Second, 0.2),
+    }),
+)
+
+// Apply to pipe
+pipe := gopipe.NewProcessPipe(handler, nil, config, productionMiddleware)
+```
+
+**Runnable example:** [middleware-refactoring/main.go](middleware-refactoring/main.go)
+
+#### Breaking Changes
+
+1. **Implicit logging removed** - Must explicitly add `middleware.Logging`
+2. **Option functions deprecated** - Use middleware directly
+3. **MetricsCollector → MetricsRecorder** - Interface-based
+
+#### Acceptance Criteria
+
+- [ ] All middleware moved to `middleware/` package
+- [ ] `Chain()` function for combining middleware
 - [ ] Deprecated wrappers in `gopipe/deprecated.go`
-- [ ] `middleware.Chain()` for combining middleware
 - [ ] Logger adapters for slog
+- [ ] Drop handler middleware wraps `Drop()` method
+- [ ] Runnable example demonstrates all middleware
 - [ ] Tests cover all middleware
 
 ---
