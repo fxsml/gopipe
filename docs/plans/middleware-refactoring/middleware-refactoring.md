@@ -125,60 +125,94 @@ func Apply[In, Out any](proc gopipe.Processor[In, Out], mw ...Middleware[In, Out
 }
 ```
 
-### Type-Agnostic Middleware Chains
+### Type-Agnostic Middleware Chains (RECOMMENDED)
 
-**Problem:** Typed middleware chains (`Chain[Order, Cmd](...)`) can only be used with one pipe type.
+**Problem:** Typed middleware chains (`Chain[Order, Cmd](...)`) can only be used with one pipe type. Also, storing configs requires a switch statement that must know all middleware types.
 
-**Solution:** Store configs, instantiate with types at application time.
+**Solution:** Use a shared `WrapperFunc` signature that all middleware implement. This enables:
+1. Type-agnostic chain definition
+2. Custom middleware support (no switch statement needed)
 
 ```go
-// MiddlewareChain holds configs for deferred typed instantiation.
-type MiddlewareChain struct {
-    builders []middlewareBuilder
+// WrapperFunc is the SHARED signature for all middleware.
+// It wraps process and drop functions (type-erased).
+type WrapperFunc func(
+    process func(context.Context, any) ([]any, error),
+    drop func(any, error),
+) (
+    wrappedProcess func(context.Context, any) ([]any, error),
+    wrappedDrop func(any, error),
+)
+
+// MiddlewareBuilder holds a WrapperFunc for deferred typed instantiation.
+type MiddlewareBuilder struct {
+    wrap WrapperFunc
 }
 
-// NewChain creates a chain from middleware configs (no type params!).
-func NewChain(configs ...any) MiddlewareChain
+// Chain combines builders (no type params!)
+func Chain(builders ...MiddlewareBuilder) MiddlewareBuilder
 
-// ApplyChain instantiates the chain with specific types.
-// Go doesn't allow type parameters on methods, so this is a function.
-func ApplyChain[In, Out any](chain MiddlewareChain) Middleware[In, Out]
+// Apply instantiates with specific types
+func Apply[In, Out any](b MiddlewareBuilder) Middleware[In, Out]
+```
+
+**Middleware returns MiddlewareBuilder, not Middleware[In, Out]:**
+
+```go
+// NO type parameters - returns a builder
+func Retry(cfg RetryConfig) MiddlewareBuilder {
+    return MiddlewareBuilder{
+        wrap: func(process func(context.Context, any) ([]any, error), drop func(any, error)) (...) {
+            return func(ctx context.Context, in any) ([]any, error) {
+                // Retry logic here - works with any types
+                return process(ctx, in)
+            }, drop
+        },
+    }
+}
+```
+
+**Custom middleware uses the SAME pattern:**
+
+```go
+// Custom middleware - exact same API as standard middleware
+func CircuitBreaker(cfg CircuitBreakerConfig) MiddlewareBuilder {
+    return MiddlewareBuilder{
+        wrap: func(process func(context.Context, any) ([]any, error), drop func(any, error)) (...) {
+            // Custom logic here
+            return wrappedProcess, drop
+        },
+    }
+}
 ```
 
 **Usage:**
 
 ```go
-// Define ONCE - no type parameters!
-productionChain := NewChain(
-    RecoverConfig{OnPanic: panicHandler},
-    RetryConfig{MaxAttempts: 3},
-    TimeoutConfig{Duration: 5 * time.Second},
-    LoggingConfig{OnDrop: true},
+// Define ONCE - no type parameters, includes CUSTOM middleware!
+productionChain := Chain(
+    Recover(RecoverConfig{...}),
+    Logging(LoggingConfig{OnDrop: true}),
+    Metrics(MetricsConfig{Recorder: recorder}),
+    CircuitBreaker(CircuitBreakerConfig{Threshold: 3}),  // Custom!
+    Retry(RetryConfig{MaxAttempts: 3}),
 )
 
-// Use with ANY pipe type - types specified at application time
+// Apply to ANY pipe type
 orderPipe := NewProcessPipe(orderHandler, nil, config,
-    ApplyChain[Order, ShippingCmd](productionChain))
+    Apply[Order, ShippingCmd](productionChain))
 
 paymentPipe := NewProcessPipe(paymentHandler, nil, config,
-    ApplyChain[Payment, Receipt](productionChain))  // Same chain, different types!
+    Apply[Payment, Receipt](productionChain))  // Same chain!
 ```
 
-**Runnable example:** [main_chain.go](main_chain.go)
+**Runnable example:** [main_builder.go](main_builder.go)
 
-**Alternative: Fluent Builder**
-
-```go
-chain := middleware.Build().
-    WithRecover(RecoverConfig{}).
-    WithRetry(RetryConfig{MaxAttempts: 3}).
-    WithTimeout(TimeoutConfig{Duration: time.Second}).
-    WithLogging(LoggingConfig{OnDrop: true}).
-    Chain()
-
-// Use with any pipe
-pipe := NewProcessPipe(handler, nil, config, ApplyChain[In, Out](chain))
-```
+**Key Benefits:**
+1. **Type-agnostic** - Chain defined once, used with any types
+2. **Extensible** - Custom middleware uses same API
+3. **No switch statements** - No need to enumerate all middleware types
+4. **Shared signature** - All middleware implement `WrapperFunc`
 
 ### Middleware Implementations
 
