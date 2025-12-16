@@ -399,25 +399,80 @@ type BrokerSubscriber interface {
 
 ---
 
+### Task 0.7: Package Restructuring
+
+**Goal:** Restructure gopipe to focus on messaging, move generic primitives to subpackage
+
+**Analysis:** See [package-restructuring.md](package-restructuring.md) for detailed plan
+
+#### Key Design Decisions
+
+1. **Main package focuses on messaging** - Router, Handler, Publisher, Subscriber
+2. **Generic pipes move to `pipe/`** - Processor[In, Out], Pipe[In, Out]
+3. **Message entity stays in `message/`** - Message, Attributes, Acking only
+4. **Middleware is message-specific** - Stays in `middleware/`
+5. **Subpackages promoted** - broker/, cloudevents/, cqrs/ become top-level
+
+#### New Package Hierarchy
+
+```
+gopipe/                 # Message pipeline framework
+├── message/            # Message entity only
+├── pipe/               # Generic processor/pipe primitives
+├── middleware/         # Message middleware
+├── broker/             # Broker implementations
+├── cloudevents/        # CloudEvents support
+├── cqrs/               # CQRS patterns
+└── channel/            # Channel utilities
+```
+
+#### Migration Summary
+
+| From | To |
+|------|-----|
+| `message.Router` | `gopipe.Router` |
+| `message.Handler` | `gopipe.Handler` |
+| `message.Publisher` | `gopipe.Publisher` |
+| `message.Subscriber` | `gopipe.Subscriber` |
+| `gopipe.Processor[I,O]` | `pipe.Processor[I,O]` |
+| `gopipe.NewProcessPipe` | `pipe.NewProcessPipe` |
+| `message/broker.*` | `broker.*` |
+
+#### Acceptance Criteria
+
+- [ ] `pipe/` package contains all generic processor/pipe types
+- [ ] Main `gopipe/` package exports Router, Handler, Publisher, Subscriber
+- [ ] `message/` package contains only Message entity and related types
+- [ ] `middleware/` package contains all middleware implementations
+- [ ] `broker/`, `cloudevents/`, `cqrs/` are top-level packages
+- [ ] Deprecated wrappers provide backward compatibility
+- [ ] All tests pass
+- [ ] Examples updated to new import paths
+
+---
+
 ## Implementation Order
 
 ```
 1. ProcessorConfig ──────────────────────┐
                                          │
-2. Simplified Cancel ────────────────────┼──► 4. BroadcastConfig
+2. Drop Path Refactoring ────────────────┼──► 4. BroadcastConfig
                                          │
 3. Middleware Package ───────────────────┤
                                          │
                                          └──► 5. RoutingFanOut
 
 6. Subscriber Interface ─────────────────────► Depends on 1, 2
+
+7. Package Restructuring ────────────────────► Depends on 1, 2, 3, 6
 ```
 
 **Recommended PR Sequence:**
-1. **PR 1:** ProcessorConfig + Simplified Cancel
+1. **PR 1:** ProcessorConfig + Drop Path Refactoring
 2. **PR 2:** Middleware Package Consolidation
 3. **PR 3:** BroadcastConfig + RoutingFanOut
 4. **PR 4:** Subscriber Interface
+5. **PR 5:** Package Restructuring (major refactoring)
 
 ## Validation Checklist
 
@@ -429,6 +484,7 @@ Before marking Layer 0 complete:
 - [ ] Middleware package is self-contained
 - [ ] RoutingFanOut tested with message types
 - [ ] Subscriber hierarchy documented
+- [ ] Package restructuring complete with backward compat
 - [ ] CHANGELOG updated
 
 ## Related Documentation
@@ -437,3 +493,4 @@ Before marking Layer 0 complete:
 - [ADR 0027: Fan-Out Pattern](../adr/0027-fan-out-pattern.md)
 - [ADR 0028: Subscriber Patterns](../adr/0028-generator-source-patterns.md)
 - [Feature 16: Core Pipe Refactoring](../features/16-core-pipe-refactoring.md)
+- [Package Restructuring](package-restructuring.md)
