@@ -125,94 +125,55 @@ func Apply[In, Out any](proc gopipe.Processor[In, Out], mw ...Middleware[In, Out
 }
 ```
 
-### Type-Agnostic Middleware Chains (RECOMMENDED)
+### Shared Middleware Chains for Message Pipelines
 
-**Problem:** Typed middleware chains (`Chain[Order, Cmd](...)`) can only be used with one pipe type. Also, storing configs requires a switch statement that must know all middleware types.
+**Problem:** Typed middleware chains (`Chain[Order, Cmd](...)`) require type parameters, making it verbose to define reusable chains.
 
-**Solution:** Use a shared `WrapperFunc` signature that all middleware implement. This enables:
-1. Type-agnostic chain definition
-2. Custom middleware support (no switch statement needed)
+**Practical Solution:** For message-based pipelines, all processors typically use `*Message → *Message`. This means a single typed middleware chain can be defined once and reused across all message processors.
 
 ```go
-// WrapperFunc is the SHARED signature for all middleware.
-// It wraps process and drop functions (type-erased).
-type WrapperFunc func(
-    process func(context.Context, any) ([]any, error),
-    drop func(any, error),
-) (
-    wrappedProcess func(context.Context, any) ([]any, error),
-    wrappedDrop func(any, error),
+// Type alias for message middleware - defined ONCE
+type MessageMiddleware = Middleware[*Message, *Message]
+type MessageProcessor = Processor[*Message, *Message]
+
+// Define production middleware chain ONCE
+productionMiddleware := Chain(
+    Recover(RecoverConfig{
+        OnPanic: func(msg *Message, val any, stack string) {
+            slog.Error("PANIC", "msg_id", msg.ID, "panic", val)
+        },
+    }),
+    Logging(LoggingConfig{
+        Logger:  slog.Default(),
+        OnDrop:  true,
+    }),
+    Metrics(MetricsConfig{
+        Recorder: prometheusRecorder,
+    }),
+    Timeout(TimeoutConfig{
+        Duration: 5 * time.Second,
+    }),
+    Retry(RetryConfig{
+        MaxAttempts: 3,
+        Backoff:     func(attempt int) time.Duration { return 100 * time.Millisecond },
+    }),
 )
 
-// MiddlewareBuilder holds a WrapperFunc for deferred typed instantiation.
-type MiddlewareBuilder struct {
-    wrap WrapperFunc
-}
-
-// Chain combines builders (no type params!)
-func Chain(builders ...MiddlewareBuilder) MiddlewareBuilder
-
-// Apply instantiates with specific types
-func Apply[In, Out any](b MiddlewareBuilder) Middleware[In, Out]
+// Apply to ANY message processor - same chain works for all!
+orderHandler := productionMiddleware(orderProcessor)
+paymentHandler := productionMiddleware(paymentProcessor)
+notificationHandler := productionMiddleware(notificationProcessor)
 ```
 
-**Middleware returns MiddlewareBuilder, not Middleware[In, Out]:**
-
-```go
-// NO type parameters - returns a builder
-func Retry(cfg RetryConfig) MiddlewareBuilder {
-    return MiddlewareBuilder{
-        wrap: func(process func(context.Context, any) ([]any, error), drop func(any, error)) (...) {
-            return func(ctx context.Context, in any) ([]any, error) {
-                // Retry logic here - works with any types
-                return process(ctx, in)
-            }, drop
-        },
-    }
-}
-```
-
-**Custom middleware uses the SAME pattern:**
-
-```go
-// Custom middleware - exact same API as standard middleware
-func CircuitBreaker(cfg CircuitBreakerConfig) MiddlewareBuilder {
-    return MiddlewareBuilder{
-        wrap: func(process func(context.Context, any) ([]any, error), drop func(any, error)) (...) {
-            // Custom logic here
-            return wrappedProcess, drop
-        },
-    }
-}
-```
-
-**Usage:**
-
-```go
-// Define ONCE - no type parameters, includes CUSTOM middleware!
-productionChain := Chain(
-    Recover(RecoverConfig{...}),
-    Logging(LoggingConfig{OnDrop: true}),
-    Metrics(MetricsConfig{Recorder: recorder}),
-    CircuitBreaker(CircuitBreakerConfig{Threshold: 3}),  // Custom!
-    Retry(RetryConfig{MaxAttempts: 3}),
-)
-
-// Apply to ANY pipe type
-orderPipe := NewProcessPipe(orderHandler, nil, config,
-    Apply[Order, ShippingCmd](productionChain))
-
-paymentPipe := NewProcessPipe(paymentHandler, nil, config,
-    Apply[Payment, Receipt](productionChain))  // Same chain!
-```
-
-**Runnable example:** [main_builder.go](main_builder.go)
+**Runnable example:** [main.go](main.go)
 
 **Key Benefits:**
-1. **Type-agnostic** - Chain defined once, used with any types
-2. **Extensible** - Custom middleware uses same API
-3. **No switch statements** - No need to enumerate all middleware types
-4. **Shared signature** - All middleware implement `WrapperFunc`
+1. **Simple** - Uses existing `Middleware[In, Out]` type, no new abstractions
+2. **Reusable** - One chain works for all `*Message` processors
+3. **Type-safe** - Full type safety within message processing
+4. **Practical** - Covers the common message pipeline use case
+
+**Note:** For pipelines with heterogeneous types (e.g., `Order → ShippingCmd`, `Payment → Receipt`), each type combination requires its own middleware chain. This is by design - Go's type system ensures type safety at compile time.
 
 ### Middleware Implementations
 

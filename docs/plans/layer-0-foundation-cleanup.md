@@ -280,9 +280,9 @@ pipe := gopipe.NewProcessPipe(handler, nil, config, productionMiddleware)
 - [ ] All middleware moved to `middleware/` package
 - [ ] `Chain()` function for combining middleware
 - [ ] Deprecated wrappers in `gopipe/deprecated.go`
-- [ ] Logger adapters for slog
+- [ ] Logging middleware uses `log/slog` directly
 - [ ] Drop handler middleware wraps `Drop()` method
-- [ ] Runnable example demonstrates all middleware
+- [ ] Runnable example demonstrates shared message middleware chain
 - [ ] Tests cover all middleware
 
 ---
