@@ -133,7 +133,7 @@ middleware/
 - [ ] All middleware in `middleware/` package
 - [ ] Deprecated wrappers in `gopipe/deprecated.go`
 - [ ] `middleware.Chain()` for combining middleware
-- [ ] Logger adapters for slog and zap
+- [ ] Logger adapters for slog
 - [ ] Tests cover all middleware
 
 ---
