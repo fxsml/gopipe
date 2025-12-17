@@ -28,6 +28,11 @@ type ChannelBrokerConfig struct {
 	// Zero means no timeout (blocks until delivered or context canceled).
 	SendTimeout time.Duration
 
+	// ReceiveTimeout is the maximum duration to wait for messages in Receive.
+	// Zero means block indefinitely until a message arrives or context is canceled.
+	// Default: 0 (blocking).
+	ReceiveTimeout time.Duration
+
 	// CloseTimeout is the maximum duration to wait for graceful shutdown.
 	// Default: 5 seconds.
 	CloseTimeout time.Duration
@@ -185,9 +190,11 @@ func (b *ChannelBroker) Send(ctx context.Context, topic string, msgs []*message.
 	return nil
 }
 
-// Receive polls for messages from the specified topic.
-// Creates a temporary subscription, collects available messages, and returns.
-// For continuous message consumption, use Subscribe instead.
+// Receive waits for messages from the specified topic.
+// If ReceiveTimeout is configured, returns after timeout even if no messages received.
+// If ReceiveTimeout is zero (default), blocks until at least one message arrives.
+// After receiving the first message, collects any additional immediately available messages.
+// Returns when context is canceled, broker is closed, or timeout is reached.
 func (b *ChannelBroker) Receive(ctx context.Context, topic string) ([]*message.Message, error) {
 	b.mu.Lock()
 	if b.closed {
@@ -204,12 +211,6 @@ func (b *ChannelBroker) Receive(ctx context.Context, topic string) ([]*message.M
 	b.subs[id] = sub
 	b.mu.Unlock()
 
-	// Collect messages with short timeout
-	var result []*message.Message
-	timeout := 100 * time.Millisecond
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
 	defer func() {
 		b.mu.Lock()
 		if _, exists := b.subs[id]; exists {
@@ -219,15 +220,48 @@ func (b *ChannelBroker) Receive(ctx context.Context, topic string) ([]*message.M
 		b.mu.Unlock()
 	}()
 
-	for {
+	var result []*message.Message
+
+	// Wait for first message with optional timeout
+	if b.config.ReceiveTimeout > 0 {
+		timer := time.NewTimer(b.config.ReceiveTimeout)
+		defer timer.Stop()
+
 		select {
 		case <-ctx.Done():
-			return result, ctx.Err()
+			return nil, ctx.Err()
 		case <-timer.C:
-			return result, nil
-		case msg := <-sub.ch:
+			return nil, nil // Timeout, return empty (no error)
+		case msg, ok := <-sub.ch:
+			if !ok {
+				return nil, ErrBrokerClosed
+			}
 			result = append(result, msg)
-			timer.Reset(10 * time.Millisecond)
+		}
+	} else {
+		// Block indefinitely until message arrives
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case msg, ok := <-sub.ch:
+			if !ok {
+				return nil, ErrBrokerClosed
+			}
+			result = append(result, msg)
+		}
+	}
+
+	// Collect any additional immediately available messages (non-blocking)
+	for {
+		select {
+		case msg, ok := <-sub.ch:
+			if !ok {
+				return result, nil
+			}
+			result = append(result, msg)
+		default:
+			// No more messages immediately available
+			return result, nil
 		}
 	}
 }
