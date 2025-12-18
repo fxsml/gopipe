@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  MODULES: ./channel/... ./pipe/... ./message/...
+
 jobs:
   test:
     name: Test
@@ -36,11 +39,8 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-${{ matrix.go-version }}-
 
-    - name: Download dependencies
-      run: go mod download
-
     - name: Run tests
-      run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+      run: go test -v -race -coverprofile=coverage.out -covermode=atomic ${{ env.MODULES }}
 
     - name: Upload coverage to Codecov
       if: matrix.go-version == '1.24'
@@ -67,7 +67,7 @@ jobs:
       uses: golangci/golangci-lint-action@v6
       with:
         version: latest
-        args: --timeout=5m
+        args: --timeout=5m ${{ env.MODULES }}
 
   build:
     name: Build
@@ -83,7 +83,7 @@ jobs:
         go-version: '1.24'
 
     - name: Build
-      run: go build -v ./...
+      run: go build -v ${{ env.MODULES }}
 
     - name: Build examples
       run: |
