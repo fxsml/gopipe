@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
 )
 
@@ -12,8 +12,8 @@ import (
 type Publisher struct {
 	sender Sender
 	config PublisherConfig
-	proc   gopipe.Processor[channel.Group[string, *Message], struct{}]
-	opts   []gopipe.Option[channel.Group[string, *Message], struct{}]
+	proc   pipe.Processor[channel.Group[string, *Message], struct{}]
+	opts   []pipe.Option[channel.Group[string, *Message], struct{}]
 }
 
 // Publish consumes messages from the input channel, batches them by topic,
@@ -28,7 +28,7 @@ func (p *Publisher) Publish(ctx context.Context, msgs <-chan *Message) <-chan st
 		MaxBatchSize: p.config.MaxBatchSize,
 		MaxDuration:  p.config.MaxDuration,
 	})
-	return gopipe.StartProcessor(ctx, group, p.proc, p.opts...)
+	return pipe.StartProcessor(ctx, group, p.proc, p.opts...)
 }
 
 // PublisherConfig configures the Publisher behavior.
@@ -42,7 +42,7 @@ type PublisherConfig struct {
 	// Timeout is the maximum duration for each send operation.
 	Timeout time.Duration
 	// Retry configures automatic retry on failures.
-	Retry *gopipe.RetryConfig
+	Retry *pipe.RetryConfig
 	// Recover enables panic recovery in send operations.
 	Recover bool
 }
@@ -63,28 +63,28 @@ func NewPublisher(
 	if sender == nil {
 		panic("message: sender cannot be nil")
 	}
-	proc := gopipe.NewProcessor(func(ctx context.Context, group channel.Group[string, *Message]) ([]struct{}, error) {
+	proc := pipe.NewProcessor(func(ctx context.Context, group channel.Group[string, *Message]) ([]struct{}, error) {
 		return nil, sender.Send(ctx, group.Key, group.Items)
 	}, nil)
 
-	opts := []gopipe.Option[channel.Group[string, *Message], struct{}]{
-		gopipe.WithLogConfig[channel.Group[string, *Message], struct{}](gopipe.LogConfig{
+	opts := []pipe.Option[channel.Group[string, *Message], struct{}]{
+		pipe.WithLogConfig[channel.Group[string, *Message], struct{}](pipe.LogConfig{
 			MessageSuccess: "Published messages",
 			MessageFailure: "Failed to publish messages",
 			MessageCancel:  "Canceled publishing messages",
 		}),
 	}
 	if config.Recover {
-		opts = append(opts, gopipe.WithRecover[channel.Group[string, *Message], struct{}]())
+		opts = append(opts, pipe.WithRecover[channel.Group[string, *Message], struct{}]())
 	}
 	if config.Concurrency > 0 {
-		opts = append(opts, gopipe.WithConcurrency[channel.Group[string, *Message], struct{}](config.Concurrency))
+		opts = append(opts, pipe.WithConcurrency[channel.Group[string, *Message], struct{}](config.Concurrency))
 	}
 	if config.Timeout > 0 {
-		opts = append(opts, gopipe.WithTimeout[channel.Group[string, *Message], struct{}](config.Timeout))
+		opts = append(opts, pipe.WithTimeout[channel.Group[string, *Message], struct{}](config.Timeout))
 	}
 	if config.Retry != nil {
-		opts = append(opts, gopipe.WithRetryConfig[channel.Group[string, *Message], struct{}](*config.Retry))
+		opts = append(opts, pipe.WithRetryConfig[channel.Group[string, *Message], struct{}](*config.Retry))
 	}
 
 	return &Publisher{

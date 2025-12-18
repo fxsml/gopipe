@@ -3,6 +3,9 @@
 # Default Go binary
 GO := go
 
+# Modules in the workspace
+MODULES := ./channel/... ./pipe/... ./message/...
+
 # Coverage output file
 COVERAGE_FILE := coverage.out
 
@@ -14,18 +17,18 @@ help: ## Display this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 test: ## Run tests
-	$(GO) test -v ./...
+	$(GO) test -v $(MODULES)
 
 test-race: ## Run tests with race detector
-	$(GO) test -v -race ./...
+	$(GO) test -v -race $(MODULES)
 
 test-coverage: ## Run tests with coverage report
-	$(GO) test -v -race -coverprofile=$(COVERAGE_FILE) -covermode=atomic ./...
+	$(GO) test -v -race -coverprofile=$(COVERAGE_FILE) -covermode=atomic $(MODULES)
 	$(GO) tool cover -html=$(COVERAGE_FILE) -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
 build: ## Build the library (validate it compiles)
-	$(GO) build -v ./...
+	$(GO) build -v $(MODULES)
 
 clean: ## Clean build artifacts
 	$(GO) clean -testcache
@@ -33,16 +36,18 @@ clean: ## Clean build artifacts
 
 lint: ## Run linter (requires golangci-lint)
 	@which golangci-lint > /dev/null || (echo "golangci-lint not installed. Run 'make install-tools' first." && exit 1)
-	golangci-lint run --timeout=5m
+	golangci-lint run --timeout=5m $(MODULES)
 
 fmt: ## Format code
-	$(GO) fmt ./...
+	$(GO) fmt $(MODULES)
 
 vet: ## Run go vet
-	$(GO) vet ./...
+	$(GO) vet $(MODULES)
 
 tidy: ## Tidy go modules
-	$(GO) mod tidy
+	cd channel && $(GO) mod tidy
+	cd pipe && $(GO) mod tidy
+	cd message && $(GO) mod tidy
 
 check: fmt vet test ## Run all checks (fmt, vet, test)
 

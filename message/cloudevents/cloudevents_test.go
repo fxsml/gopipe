@@ -50,7 +50,7 @@ func TestFromMessage_Defaults(t *testing.T) {
 	}
 	// Should use default type
 	if event.Type != "com.gopipe.message" {
-		t.Errorf("Expected default type com.gopipe.message, got %s", event.Type)
+		t.Errorf("Expected default type com.pipe.message, got %s", event.Type)
 	}
 }
 

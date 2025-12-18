@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/message/cqrs"
@@ -306,7 +306,7 @@ func TestRouter_WithCommandPipe(t *testing.T) {
 	marshaler := cqrs.NewJSONCommandMarshaler(cqrs.WithTypeOf())
 
 	// Create a typed pipe that doubles the order amount
-	pipe := gopipe.NewTransformPipe(func(ctx context.Context, order Order) (Order, error) {
+	pipe := pipe.NewTransformPipe(func(ctx context.Context, order Order) (Order, error) {
 		order.Amount *= 2
 		return order, nil
 	})
@@ -348,7 +348,7 @@ func TestRouter_PipeWithHandlerFallback(t *testing.T) {
 	marshaler := cqrs.NewJSONCommandMarshaler(cqrs.WithTypeOf())
 
 	// Pipe for "double" operations
-	doublePipe := gopipe.NewTransformPipe(func(ctx context.Context, order Order) (Order, error) {
+	doublePipe := pipe.NewTransformPipe(func(ctx context.Context, order Order) (Order, error) {
 		order.Amount *= 2
 		return order, nil
 	})

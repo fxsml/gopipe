@@ -340,7 +340,7 @@ func TestHTTPCloudEvents_DefaultAttributes(t *testing.T) {
 
 	// Verify default type
 	if eventType, ok := rcvMsg.Attributes.Type(); !ok || eventType != "com.gopipe.message" {
-		t.Errorf("Expected default type 'com.gopipe.message', got '%s'", eventType)
+		t.Errorf("Expected default type 'com.pipe.message', got '%s'", eventType)
 	}
 
 	// Verify specversion

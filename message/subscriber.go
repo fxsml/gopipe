@@ -4,13 +4,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/pipe"
 )
 
 // Subscriber provides channel-based message consumption from a Receiver.
 type Subscriber struct {
 	receiver Receiver
-	opts     []gopipe.Option[struct{}, *Message]
+	opts     []pipe.Option[struct{}, *Message]
 }
 
 // Subscribe creates a channel that polls the specified topic and emits received messages.
@@ -22,7 +22,7 @@ type Subscriber struct {
 // Receiver implementation - the Subscriber does not prevent or deduplicate multiple
 // subscriptions to the same topic.
 func (s *Subscriber) Subscribe(ctx context.Context, topic string) <-chan *Message {
-	return gopipe.NewGenerator(func(ctx context.Context) ([]*Message, error) {
+	return pipe.NewGenerator(func(ctx context.Context) ([]*Message, error) {
 		return s.receiver.Receive(ctx, topic)
 	}, s.opts...).Generate(ctx)
 }
@@ -34,7 +34,7 @@ type SubscriberConfig struct {
 	// Timeout is the maximum duration for each receive operation.
 	Timeout time.Duration
 	// Retry configures automatic retry on failures.
-	Retry *gopipe.RetryConfig
+	Retry *pipe.RetryConfig
 	// Recover enables panic recovery in receive operations.
 	Recover bool
 }
@@ -55,24 +55,24 @@ func NewSubscriber(
 	if receiver == nil {
 		panic("message: receiver cannot be nil")
 	}
-	opts := []gopipe.Option[struct{}, *Message]{
-		gopipe.WithLogConfig[struct{}, *Message](gopipe.LogConfig{
+	opts := []pipe.Option[struct{}, *Message]{
+		pipe.WithLogConfig[struct{}, *Message](pipe.LogConfig{
 			MessageSuccess: "Received messages",
 			MessageFailure: "Failed to receive messages",
 			MessageCancel:  "Canceled receiving messages",
 		}),
 	}
 	if config.Recover {
-		opts = append(opts, gopipe.WithRecover[struct{}, *Message]())
+		opts = append(opts, pipe.WithRecover[struct{}, *Message]())
 	}
 	if config.Concurrency > 0 {
-		opts = append(opts, gopipe.WithConcurrency[struct{}, *Message](config.Concurrency))
+		opts = append(opts, pipe.WithConcurrency[struct{}, *Message](config.Concurrency))
 	}
 	if config.Timeout > 0 {
-		opts = append(opts, gopipe.WithTimeout[struct{}, *Message](config.Timeout))
+		opts = append(opts, pipe.WithTimeout[struct{}, *Message](config.Timeout))
 	}
 	if config.Retry != nil {
-		opts = append(opts, gopipe.WithRetryConfig[struct{}, *Message](*config.Retry))
+		opts = append(opts, pipe.WithRetryConfig[struct{}, *Message](*config.Retry))
 	}
 
 	return &Subscriber{

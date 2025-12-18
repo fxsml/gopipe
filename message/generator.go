@@ -1,7 +1,7 @@
 package message
 
-import "github.com/fxsml/gopipe"
+import "github.com/fxsml/gopipe/pipe"
 
 type Generator interface {
-	gopipe.Generator[*Message]
+	pipe.Generator[*Message]
 }

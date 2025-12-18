@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
 )
 
@@ -14,7 +14,7 @@ import (
 type RouterConfig struct {
 	Concurrency int
 	Timeout     time.Duration
-	Retry       *gopipe.RetryConfig
+	Retry       *pipe.RetryConfig
 	Recover     bool
 	Middleware  []MiddlewareFunc
 }
@@ -178,14 +178,14 @@ func (r *Router) startWithHandlers(ctx context.Context, msgs <-chan *Message, ha
 		return nil, err
 	}
 
-	opts := []gopipe.Option[*Message, *Message]{
-		gopipe.WithLogConfig[*Message, *Message](gopipe.LogConfig{
+	opts := []pipe.Option[*Message, *Message]{
+		pipe.WithLogConfig[*Message, *Message](pipe.LogConfig{
 			MessageSuccess: "Processed messages",
 			MessageFailure: "Failed to process messages",
 			MessageCancel:  "Canceled processing messages",
 		}),
-		gopipe.WithMetadataProvider[*Message, *Message](func(msg *Message) gopipe.Metadata {
-			metadata := gopipe.Metadata{}
+		pipe.WithMetadataProvider[*Message, *Message](func(msg *Message) pipe.Metadata {
+			metadata := pipe.Metadata{}
 			if id, ok := msg.Attributes.ID(); ok {
 				metadata[AttrID] = id
 			}
@@ -197,20 +197,20 @@ func (r *Router) startWithHandlers(ctx context.Context, msgs <-chan *Message, ha
 		}),
 	}
 	if r.config.Recover {
-		opts = append(opts, gopipe.WithRecover[*Message, *Message]())
+		opts = append(opts, pipe.WithRecover[*Message, *Message]())
 	}
 	if r.config.Concurrency > 0 {
-		opts = append(opts, gopipe.WithConcurrency[*Message, *Message](r.config.Concurrency))
+		opts = append(opts, pipe.WithConcurrency[*Message, *Message](r.config.Concurrency))
 	}
 	if r.config.Timeout > 0 {
-		opts = append(opts, gopipe.WithTimeout[*Message, *Message](r.config.Timeout))
+		opts = append(opts, pipe.WithTimeout[*Message, *Message](r.config.Timeout))
 	}
 	if r.config.Retry != nil {
-		opts = append(opts, gopipe.WithRetryConfig[*Message, *Message](*r.config.Retry))
+		opts = append(opts, pipe.WithRetryConfig[*Message, *Message](*r.config.Retry))
 	}
 	for _, m := range r.config.Middleware {
-		opts = append(opts, gopipe.WithMiddleware(m))
+		opts = append(opts, pipe.WithMiddleware(m))
 	}
 
-	return gopipe.NewProcessPipe(handle, opts...).Start(ctx, msgs)
+	return pipe.NewProcessPipe(handle, opts...).Start(ctx, msgs)
 }
