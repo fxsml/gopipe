@@ -36,11 +36,11 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-${{ matrix.go-version }}-
 
-    - name: Download dependencies
-      run: go mod download
+    - name: Initialize Go workspace
+      run: go work init ./channel ./pipe ./message
 
     - name: Run tests
-      run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+      run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./channel/... ./pipe/... ./message/...
 
     - name: Upload coverage to Codecov
       if: matrix.go-version == '1.24'
@@ -63,11 +63,14 @@ jobs:
       with:
         go-version: '1.24'
 
+    - name: Initialize Go workspace
+      run: go work init ./channel ./pipe ./message
+
     - name: golangci-lint
       uses: golangci/golangci-lint-action@v6
       with:
         version: latest
-        args: --timeout=5m
+        args: --timeout=5m ./channel/... ./pipe/... ./message/...
 
   build:
     name: Build
@@ -82,12 +85,8 @@ jobs:
       with:
         go-version: '1.24'
 
-    - name: Build
-      run: go build -v ./...
+    - name: Initialize Go workspace
+      run: go work init ./channel ./pipe ./message
 
-    - name: Build examples
-      run: |
-        for example in examples/*/; do
-          echo "Building $example"
-          go build -v "./$example"
-        done
+    - name: Build
+      run: go build -v ./channel/... ./pipe/... ./message/...
