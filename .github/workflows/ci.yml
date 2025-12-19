@@ -86,7 +86,7 @@ jobs:
         go-version: '1.24'
 
     - name: Initialize Go workspace
-      run: go work init ./channel ./pipe ./message
+      run: go work init ./channel ./pipe ./message ./examples
 
     - name: Build
-      run: go build -v ./channel/... ./pipe/... ./message/...
+      run: go build -v ./channel/... ./pipe/... ./message/... ./examples/...

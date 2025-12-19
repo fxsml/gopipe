@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
 )
 
@@ -64,11 +64,11 @@ func main() {
 	}()
 
 	// Create a pipe
-	pipe := gopipe.NewBatchPipe(
+	pipe := pipe.NewBatchPipe(
 		NewCreateUserHandler(),
 		5,                   // Max batch size
 		10*time.Millisecond, // Max batch duration
-		gopipe.WithBuffer[[]string, UserResponse](10), // Buffer up to 10 results
+		pipe.WithBuffer[[]string, UserResponse](10), // Buffer up to 10 results
 	)
 
 	// Create new users in batches

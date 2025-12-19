@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 )
@@ -32,7 +32,7 @@ func main() {
 	)
 
 	// Create pipe with acknowledgment
-	pipe := gopipe.NewTransformPipe(
+	pipe := pipe.NewTransformPipe(
 		func(ctx context.Context, msg *message.TypedMessage[int]) (*message.TypedMessage[int], error) {
 			// Add processed timestamp
 			msg.Attributes["processed_at"] = time.Now().Format(time.RFC3339)

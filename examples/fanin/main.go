@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
 )
 
@@ -14,7 +14,7 @@ func main() {
 	defer cancel()
 
 	// Create FanIn with buffered output and shutdown timeout
-	fanin := gopipe.NewFanIn[string](gopipe.FanInConfig{
+	fanin := pipe.NewFanIn[string](pipe.FanInConfig{
 		Buffer:          10,
 		ShutdownTimeout: 500 * time.Millisecond,
 	})

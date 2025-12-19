@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
 )
 
@@ -20,14 +20,14 @@ func main() {
 	})
 
 	// Create a transform pipe that converts strings to integers
-	pipe := gopipe.NewTransformPipe(
+	pipe := pipe.NewTransformPipe(
 		func(ctx context.Context, val string) (int, error) {
 			time.Sleep(100 * time.Millisecond)
 			return strconv.Atoi(val)
 		},
-		gopipe.WithConcurrency[string, int](5), // 5 workers
-		gopipe.WithBuffer[string, int](10),     // Buffer up to 10 results
-		gopipe.WithRecover[string, int](),      // Recover from panics
+		pipe.WithConcurrency[string, int](5), // 5 workers
+		pipe.WithBuffer[string, int](10),     // Buffer up to 10 results
+		pipe.WithRecover[string, int](),      // Recover from panics
 	)
 
 	// Start the pipe
