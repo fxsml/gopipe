@@ -1,150 +1,108 @@
-# Architecture Decision Records (ADRs)
+# gopipe Architecture Decision Records
 
-This directory contains Architecture Decision Records for gopipe, documenting significant architectural decisions made during development.
+ADRs numbered sequentially by creation date.
 
-## ADR Status
+## Convention
 
-ADRs are categorized by their current status:
+- ADRs are numbered sequentially (0001, 0002, ...)
+- Numbers reflect chronological order of when the decision was made
+- No status prefixes in filenames - status is tracked in the ADR content
 
-### Implemented ✅
+## ADR Index
 
-These ADRs describe features that have been fully implemented and are part of the codebase:
+| ADR | Created | Title | Status | Issue |
+|-----|---------|-------|--------|-------|
+| [0001](0001-processor-abstraction.md) | 2025-10-14 | Processor Abstraction | Implemented | [#12](https://github.com/fxsml/gopipe/issues/12) |
+| [0002](0002-middleware-pattern.md) | 2025-10-14 | Middleware Pattern | Implemented | [#9](https://github.com/fxsml/gopipe/issues/9) |
+| [0003](0003-composable-pipe.md) | 2025-10-16 | Composable Pipe | Implemented | [#8](https://github.com/fxsml/gopipe/issues/8) |
+| [0004](0004-remove-functional-options.md) | 2025-10-28 | Remove Functional Options | Implemented | [#3](https://github.com/fxsml/gopipe/issues/3) |
+| [0005](0005-channel-package.md) | 2025-10-30 | Channel Package | Implemented | [#23](https://github.com/fxsml/gopipe/issues/23) |
+| [0006](0006-message-acknowledgment.md) | 2025-11-14 | Message Acknowledgment | Implemented | [#51](https://github.com/fxsml/gopipe/issues/51) |
+| [0007](0007-public-message-fields.md) | 2025-12-06 | Public Message Fields | Implemented | [#52](https://github.com/fxsml/gopipe/issues/52) |
+| [0008](0008-remove-properties-thread-safety.md) | 2025-12-06 | Remove Properties Thread Safety | Implemented | [#53](https://github.com/fxsml/gopipe/issues/53) |
+| [0009](0009-remove-noisy-properties.md) | 2025-12-06 | Remove Noisy Properties | Implemented | [#54](https://github.com/fxsml/gopipe/issues/54) |
+| [0010](0010-dual-message-types.md) | 2025-12-07 | Dual Message Types | Implemented | [#55](https://github.com/fxsml/gopipe/issues/55) |
+| [0011](0011-cqrs-implementation.md) | 2025-12-08 | CQRS Implementation | Implemented | [#56](https://github.com/fxsml/gopipe/issues/56) |
+| [0012](0012-pubsub-package-structure.md) | 2025-12-08 | Pub/Sub Package Structure | Implemented | [#57](https://github.com/fxsml/gopipe/issues/57) |
+| [0013](0013-multiplex-pubsub.md) | 2025-12-09 | Multiplex Pub/Sub | Implemented | [#58](https://github.com/fxsml/gopipe/issues/58) |
+| [0014](0014-go-workspaces-modularization.md) | 2025-12-17 | Go Workspaces Modularization | Implemented | [#48](https://github.com/fxsml/gopipe/issues/48) |
 
-- **[ADR 0001](0001-public-message-fields.md)** - Public Message Fields
-- **[ADR 0002](0002-remove-properties-thread-safety.md)** - Remove Properties Thread Safety
-- **[ADR 0003](0003-remove-noisy-properties.md)** - Remove Noisy Properties
-- **[ADR 0004](0004-dual-message-types.md)** - Dual Message Types
-- **[ADR 0005](0005-remove-functional-options.md)** - Remove Functional Options
-- **[ADR 0006](0006-cqrs-implementation.md)** - CQRS Implementation
-- **[ADR 0010](0010-pubsub-package-structure.md)** - Pub/Sub Package Structure
-- **[ADR 0012](0012-multiplex-pubsub.md)** - Multiplex Pub/Sub
-- **[ADR 0013](0013-processor-abstraction.md)** - Processor Abstraction
-- **[ADR 0014](0014-composable-pipe.md)** - Composable Pipe
-- **[ADR 0015](0015-middleware-pattern.md)** - Middleware Pattern
-- **[ADR 0016](0016-channel-package.md)** - Channel Package
-- **[ADR 0017](0017-message-acknowledgment.md)** - Message Acknowledgment
+## Migration from Previous Numbering
 
-### Accepted ✓
+This folder establishes a new sequential numbering scheme. The mapping from previous numbers:
 
-These ADRs describe accepted decisions that guide current and future development:
+| New | Old (IMP-) | Original (adr-) | Title |
+|-----|------------|-----------------|-------|
+| 0001 | IMP-0013 | adr-12 | Processor Abstraction |
+| 0002 | IMP-0015 | adr-9 | Middleware Pattern |
+| 0003 | IMP-0014 | adr-8 | Composable Pipe |
+| 0004 | IMP-0005 | adr-3 | Remove Functional Options |
+| 0005 | IMP-0016 | adr-23 | Channel Package |
+| 0006 | IMP-0017 | adr-24 | Message Acknowledgment |
+| 0007 | IMP-0001 | - | Public Message Fields |
+| 0008 | IMP-0002 | - | Remove Properties Thread Safety |
+| 0009 | IMP-0003 | - | Remove Noisy Properties |
+| 0010 | IMP-0004 | - | Dual Message Types |
+| 0011 | IMP-0006 | - | CQRS Implementation |
+| 0012 | IMP-0010 | adr-25 | Pub/Sub Package Structure |
+| 0013 | IMP-0012 | - | Multiplex Pub/Sub |
+| 0014 | 0000 / PRO-0047 | - | Go Workspaces Modularization |
 
-- **[ADR 0018](0018-cloudevents-terminology.md)** - CloudEvents Terminology
+## Pending Migration
 
-### Proposed 💡
+The following ADRs from `docs/adr/` still need to be reorganized:
 
-These ADRs describe proposed features that are documented but not yet implemented:
+### Accepted (to be added)
 
-- **[ADR 0007](0007-saga-coordinator-pattern.md)** - Saga Coordinator Pattern
-- **[ADR 0008](0008-compensating-saga-pattern.md)** - Compensating Saga Pattern
-- **[ADR 0009](0009-transactional-outbox-pattern.md)** - Transactional Outbox Pattern
+- ACC-0018: CloudEvents Terminology (2025-12-10)
+- ACC-0026: Pipe Processor Simplification
 
-### Superseded ⛔
+### Proposed (to be reviewed)
 
-These ADRs have been superseded by later decisions:
+- PRO-0026 series: Pipe Simplification
+- PRO-0027-0030: Distribution Patterns
+- PRO-0031 series: Known Issues Solutions
 
-- **[ADR 0011](0011-cloudevents-compatibility.md)** - CloudEvents Compatibility (superseded by ADR 0018)
+### Superseded (for reference)
 
-## ADR Format
+- SUP-0011: CloudEvents Compatibility (superseded by ACC-0018)
 
-Each ADR follows a standard format:
+### Moved to goengine
 
-```markdown
-# ADR NNNN: Title
+- Saga patterns (old 0007-0009) → goengine PRO-0001-0003
+- CloudEvents ADRs (old 0019-0029) → goengine PRO-0004-0012
 
-**Date:** YYYY-MM-DD
-**Status:** [Proposed|Accepted|Implemented|Superseded]
+---
 
-## Context
-What is the issue we're facing?
+## History
 
-## Decision
-What decision have we made?
+<details>
+<summary>Previous numbering schemes (click to expand)</summary>
 
-## Consequences
-What are the positive and negative consequences?
+### Original Scheme (Oct-Nov 2025)
 
-## Links (optional)
-Related ADRs, documentation, or code
-```
+ADR numbers matched GitHub issue numbers:
+- `docs/adr-N_name.md` format
+- Numbers: 3, 8, 9, 12, 15, 23, 24, 25
 
-## Feature Mapping
+### v0.10.0 Scheme (Dec 2025)
 
-ADRs are organized into logical feature groups. See [../features/](../features/) for complete feature documentation.
+Sequential numbering in `docs/adr/` folder:
+- Numbers: 0001-0018
+- Did NOT reflect creation order
 
-### Core Message Refactoring (ADRs 0001-0005)
-Foundation for simplified message handling:
-- ADR 0001: Public Message Fields
-- ADR 0002: Remove Properties Thread Safety
-- ADR 0003: Remove Noisy Properties
-- ADR 0004: Dual Message Types
-- ADR 0005: Remove Functional Options
+### Post-v0.10.0 Scheme
 
-Related: [Feature 02-message-core-refactor](../features/02-message-core-refactor.md)
+Status prefixes added:
+- IMP- (Implemented)
+- ACC- (Accepted)
+- PRO- (Proposed)
+- SUP- (Superseded)
 
-### CQRS and Saga Patterns (ADRs 0006-0009)
-Event-driven architecture support:
-- ADR 0006: CQRS Implementation ✅
-- ADR 0007: Saga Coordinator Pattern 💡
-- ADR 0008: Compensating Saga Pattern 💡
-- ADR 0009: Transactional Outbox Pattern 💡
+### Current Scheme
 
-Related: [Feature 05-message-cqrs](../features/05-message-cqrs.md)
+Sequential by creation date, no prefixes:
+- Numbers: 0001-0014 (implemented)
+- Future ADRs continue the sequence
 
-### Pub/Sub Infrastructure (ADRs 0010-0012)
-Message broker and routing:
-- ADR 0010: Pub/Sub Package Structure
-- ADR 0012: Multiplex Pub/Sub
-
-Related:
-- [Feature 03-message-pubsub](../features/03-message-pubsub.md)
-- [Feature 07-message-multiplex](../features/07-message-multiplex.md)
-
-### Pipeline Abstractions (ADRs 0013-0015)
-Composable message processing:
-- ADR 0013: Processor Abstraction
-- ADR 0014: Composable Pipe
-- ADR 0015: Middleware Pattern
-
-Related:
-- [Feature 04-message-router](../features/04-message-router.md)
-- [Feature 08-middleware-package](../features/08-middleware-package.md)
-
-### Infrastructure (ADRs 0016-0017)
-Supporting utilities:
-- ADR 0016: Channel Package
-- ADR 0017: Message Acknowledgment
-
-Related:
-- [Feature 01-channel-groupby](../features/01-channel-groupby.md)
-- [Feature 02-message-core-refactor](../features/02-message-core-refactor.md)
-
-### Standards and Compatibility (ADR 0018)
-Industry standard alignment:
-- ADR 0018: CloudEvents Terminology
-
-Related: [Feature 06-message-cloudevents](../features/06-message-cloudevents.md)
-
-## Reading Order
-
-For understanding the complete architecture, read ADRs in this order:
-
-1. **Core Message Design** (0001-0005) - Foundation
-2. **Package Structure** (0010) - Organization
-3. **Infrastructure** (0016-0017) - Supporting components
-4. **Routing & Handling** (0013-0015) - Message processing
-5. **Pub/Sub** (0012) - Message distribution
-6. **Standards** (0018) - CloudEvents alignment
-7. **CQRS** (0006) - Event-driven patterns
-8. **Advanced Patterns** (0007-0009) - Sagas and outbox (proposed)
-
-## Timeline
-
-- **2025-11-01**: Initial message refactoring (ADRs 0001-0005)
-- **2025-12-08**: CQRS and pub/sub implementation (ADRs 0006-0017)
-- **2025-12-11**: CloudEvents terminology standardization (ADR 0018)
-
-## Related Documentation
-
-- [Features](../features/) - Feature-level documentation for each implementation
-- [Analysis Documents](../) - Detailed design analysis and comparisons
-- [Examples](../../examples/) - Working code examples
+</details>

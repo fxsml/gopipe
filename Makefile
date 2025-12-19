@@ -1,4 +1,4 @@
-.PHONY: help test test-race test-coverage build clean lint fmt vet tidy check install-tools version
+.PHONY: help test test-race test-coverage build clean lint fmt vet tidy check install-tools version docs-lint
 
 # Default Go binary
 GO := go
@@ -62,3 +62,7 @@ install-tools: ## Install development tools (golangci-lint, git-semver)
 	@echo "Installing git-semver..."
 	@which git-semver > /dev/null || \
 		$(GO) install github.com/mdomke/git-semver/v6@v6.10.0
+
+docs-lint: ## Run documentation lint procedure via Claude
+	@which claude > /dev/null || (echo "claude CLI not installed" && exit 1)
+	@claude -p "Execute the Documentation Lint Procedure from docs/procedures/documentation.md. Run ALL steps. Output a report of changes made."
