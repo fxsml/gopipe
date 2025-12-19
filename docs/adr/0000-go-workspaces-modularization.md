@@ -14,7 +14,7 @@ We chose `message` as the top-level module name rather than `engine` because `me
 
 ## Decision
 
-Split gopipe into three Go modules using Go workspaces:
+Split gopipe into three Go modules using Go workspaces, plus a non-versioned examples module:
 
 ```
 gopipe/
@@ -30,15 +30,20 @@ gopipe/
 │   ├── processor.go
 │   ├── pipe.go
 │   └── ...
-└── message/        # Message types, routing, pub/sub
-    ├── go.mod      # module github.com/fxsml/gopipe/message
-    ├── message.go
-    ├── router.go
-    ├── publisher.go
-    ├── subscriber.go
-    ├── middleware/  # Message-specific middleware (not a separate module)
-    ├── broker/      # Broker implementations
-    ├── cqrs/        # CQRS patterns
+├── message/        # Message types, routing, pub/sub
+│   ├── go.mod      # module github.com/fxsml/gopipe/message
+│   ├── message.go
+│   ├── router.go
+│   ├── publisher.go
+│   ├── subscriber.go
+│   ├── middleware/  # Message-specific middleware (not a separate module)
+│   ├── broker/      # Broker implementations
+│   ├── cqrs/        # CQRS patterns
+│   └── ...
+└── examples/       # Example programs (not versioned/released)
+    ├── go.mod      # module github.com/fxsml/gopipe/examples
+    ├── basic-channel-operations/
+    ├── transform-pipe/
     └── ...
 ```
 
