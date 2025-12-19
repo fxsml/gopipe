@@ -3,19 +3,19 @@ package message
 import (
 	"context"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/pipe"
 )
 
 // Pipe is a concrete type alias for a gopipe Pipe that processes Messages.
-// type Pipe = gopipe.Pipe[*Message, *Message]
+// type Pipe = pipe.Pipe[*Message, *Message]
 type Pipe interface {
-	gopipe.Pipe[*Message, *Message]
+	pipe.Pipe[*Message, *Message]
 	Match(attrs Attributes) bool
 }
 
-// NewPipe creates a message.Pipe from a gopipe.Pipe and a matcher function.
+// NewPipe creates a message.Pipe from a pipe.Pipe and a matcher function.
 func NewPipe(
-	pipe gopipe.Pipe[*Message, *Message],
+	pipe pipe.Pipe[*Message, *Message],
 	match func(attrs Attributes) bool,
 ) Pipe {
 	return &messagePipe{
@@ -25,7 +25,7 @@ func NewPipe(
 }
 
 type messagePipe struct {
-	pipe  gopipe.Pipe[*Message, *Message]
+	pipe  pipe.Pipe[*Message, *Message]
 	match func(attrs Attributes) bool
 }
 

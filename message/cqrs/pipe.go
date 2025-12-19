@@ -3,14 +3,14 @@ package cqrs
 import (
 	"context"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/message"
 )
 
 type pipeAdapter[In, Out any] struct {
-	pipe      gopipe.Pipe[In, Out]
-	marshal   gopipe.Pipe[Out, *message.Message]
-	unmarshal gopipe.Pipe[*message.Message, In]
+	pipe      pipe.Pipe[In, Out]
+	marshal   pipe.Pipe[Out, *message.Message]
+	unmarshal pipe.Pipe[*message.Message, In]
 	match     message.Matcher
 }
 
@@ -22,14 +22,14 @@ func (p *pipeAdapter[In, Out]) Match(attrs message.Attributes) bool {
 	return p.match(attrs)
 }
 
-// NewCommandPipe creates a message.Pipe that wraps a gopipe.Pipe[In, Out],
+// NewCommandPipe creates a message.Pipe that wraps a pipe.Pipe[In, Out],
 // using the provided CommandMarshaler for serialization and deserialization.
 func NewCommandPipe[In, Out any](
-	pipe gopipe.Pipe[In, Out],
+	p pipe.Pipe[In, Out],
 	match message.Matcher,
 	marshaler CommandMarshaler,
 ) message.Pipe {
-	unmarshal := gopipe.NewTransformPipe(func(ctx context.Context, msg *message.Message) (In, error) {
+	unmarshal := pipe.NewTransformPipe(func(ctx context.Context, msg *message.Message) (In, error) {
 		in := new(In)
 		err := marshaler.Unmarshal(msg.Data, in)
 		if err != nil {
@@ -38,21 +38,21 @@ func NewCommandPipe[In, Out any](
 		}
 		msg.Ack()
 		return *in, nil
-	}, gopipe.WithLogConfig[*message.Message, In](gopipe.LogConfig{
+	}, pipe.WithLogConfig[*message.Message, In](pipe.LogConfig{
 		MessageFailure: "Failed to unmarshal message",
 	}))
-	marshal := gopipe.NewTransformPipe(func(ctx context.Context, out Out) (*message.Message, error) {
+	marshal := pipe.NewTransformPipe(func(ctx context.Context, out Out) (*message.Message, error) {
 		data, err := marshaler.Marshal(out)
 		if err != nil {
 			return nil, err
 		}
 		msg := message.New(data, marshaler.Attributes(out))
 		return msg, nil
-	}, gopipe.WithLogConfig[Out, *message.Message](gopipe.LogConfig{
+	}, pipe.WithLogConfig[Out, *message.Message](pipe.LogConfig{
 		MessageFailure: "Failed to marshal message",
 	}))
 	return &pipeAdapter[In, Out]{
-		pipe:      pipe,
+		pipe:      p,
 		unmarshal: unmarshal,
 		marshal:   marshal,
 		match:     match,

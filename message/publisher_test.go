@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 )
@@ -173,9 +173,9 @@ func TestPublisher_ErrorHandling(t *testing.T) {
 		message.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
-			Retry: &gopipe.RetryConfig{
+			Retry: &pipe.RetryConfig{
 				MaxAttempts: 2,
-				Backoff:     gopipe.ConstantBackoff(time.Millisecond, 0),
+				Backoff:     pipe.ConstantBackoff(time.Millisecond, 0),
 			},
 		},
 	)
@@ -282,9 +282,9 @@ func TestSubscriber_ErrorHandling(t *testing.T) {
 	subscriber := message.NewSubscriber(
 		receiver,
 		message.SubscriberConfig{
-			Retry: &gopipe.RetryConfig{
+			Retry: &pipe.RetryConfig{
 				MaxAttempts: 3,
-				Backoff:     gopipe.ConstantBackoff(time.Millisecond, 0),
+				Backoff:     pipe.ConstantBackoff(time.Millisecond, 0),
 			},
 		},
 	)

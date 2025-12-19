@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fxsml/gopipe"
+	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 )
@@ -326,7 +326,7 @@ func TestRouter_MultipleOutputMessages(t *testing.T) {
 }
 
 func TestRouter_AddPipe_Basic(t *testing.T) {
-	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+	pipe := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		out := message.Copy(msg, append(msg.Data, []byte("-piped")...))
 		out.Attributes[message.AttrSubject] = "piped"
 		return []*message.Message{out}, nil
@@ -364,7 +364,7 @@ func TestRouter_AddPipe_Basic(t *testing.T) {
 }
 
 func TestRouter_AddPipe_WithHandlers(t *testing.T) {
-	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+	pipe := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		out := message.Copy(msg, []byte("from-pipe"))
 		out.Attributes[message.AttrSubject] = "pipe-out"
 		return []*message.Message{out}, nil
@@ -408,13 +408,13 @@ func TestRouter_AddPipe_WithHandlers(t *testing.T) {
 }
 
 func TestRouter_AddPipe_MultiplePipes(t *testing.T) {
-	pipe1 := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+	pipe1 := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		out := message.Copy(msg, []byte("pipe1"))
 		out.Attributes[message.AttrSubject] = "out1"
 		return []*message.Message{out}, nil
 	})
 
-	pipe2 := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+	pipe2 := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		out := message.Copy(msg, []byte("pipe2"))
 		out.Attributes[message.AttrSubject] = "out2"
 		return []*message.Message{out}, nil
@@ -449,7 +449,7 @@ func TestRouter_AddPipe_MultiplePipes(t *testing.T) {
 }
 
 func TestRouter_AddPipe_NoMatch(t *testing.T) {
-	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+	pipe := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		t.Error("Pipe should not be called for non-matching message")
 		return []*message.Message{msg}, nil
 	})
@@ -491,7 +491,7 @@ func TestRouter_AddPipe_NoMatch(t *testing.T) {
 }
 
 func TestRouter_AddPipe_MultipleOutputs(t *testing.T) {
-	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+	pipe := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		out1 := message.Copy(msg, []byte("out1"))
 		out2 := message.Copy(msg, []byte("out2"))
 		return []*message.Message{out1, out2}, nil
@@ -548,7 +548,7 @@ func TestRouter_AddHandlerAfterStart(t *testing.T) {
 }
 
 func TestRouter_AddPipeAfterStart(t *testing.T) {
-	pipe := gopipe.NewTransformPipe(func(ctx context.Context, msg *message.Message) (*message.Message, error) {
+	pipe := pipe.NewTransformPipe(func(ctx context.Context, msg *message.Message) (*message.Message, error) {
 		return msg, nil
 	})
 
@@ -744,7 +744,7 @@ func TestRouter_EmptyInput(t *testing.T) {
 }
 
 func TestRouter_OnlyPipes_NoHandlers(t *testing.T) {
-	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+	pipe := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		out := message.Copy(msg, []byte("piped"))
 		return []*message.Message{out}, nil
 	})
@@ -777,7 +777,7 @@ func TestRouter_OnlyPipes_NoHandlers(t *testing.T) {
 }
 
 func TestRouter_OnlyPipes_MessageNotMatchingPipe(t *testing.T) {
-	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+	pipe := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		out := message.Copy(msg, []byte("piped"))
 		return []*message.Message{out}, nil
 	})
@@ -1010,7 +1010,7 @@ func TestRouter_AddGenerator_Multiple(t *testing.T) {
 }
 
 func TestRouter_AddGenerator_WithPipe(t *testing.T) {
-	pipe := gopipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+	pipe := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		out := message.Copy(msg, append(msg.Data, []byte("-piped")...))
 		return []*message.Message{out}, nil
 	})

@@ -1,5 +1,5 @@
 package message
 
-import "github.com/fxsml/gopipe"
+import "github.com/fxsml/gopipe/pipe"
 
-type MiddlewareFunc = gopipe.MiddlewareFunc[*Message, *Message]
+type MiddlewareFunc = pipe.MiddlewareFunc[*Message, *Message]
