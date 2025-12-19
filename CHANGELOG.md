@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Go Workspaces Modularization
+- ADR 0014: Decision to split gopipe into channel, pipe, and message modules
+- Examples module (`examples/go.mod`) added as non-versioned workspace member
+- See: [docs/adr/0014-go-workspaces-modularization.md](docs/adr/0014-go-workspaces-modularization.md)
+
 #### UUID Generation
 - `message.NewID()` - Zero-dependency RFC 4122 UUID v4 generator
 - `message.DefaultIDGenerator` - Configurable ID generator variable
