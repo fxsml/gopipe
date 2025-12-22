@@ -1,4 +1,4 @@
-# ADR 0005: Remove Functional Options from Message Construction
+# ADR 0004: Remove Functional Options from Message Construction
 
 **Date:** 2025-12-07
 **Status:** Implemented
@@ -24,19 +24,24 @@ type Attributes map[string]any
 
 ## Consequences
 
-**Positive:**
+**Breaking Changes:**
+- All existing code using functional options must be updated
+
+**Benefits:**
 - No type parameters on options
 - Attributes visible at construction time
 - Follows standard Go patterns
 - Attributes can be built incrementally and reused
 
-**Negative:**
-- Breaking change: all existing code must be updated
+**Drawbacks:**
 - Less discoverable via IDE autocomplete
 - More verbose for single property (need to create map)
 
 ## Links
 
-- ADR 0001: Public Message Fields
-- ADR 0004: Dual Message Types
-- Supersedes: ADR-3 Functional Options
+- Related: ADR 0007 (Public Message Fields)
+- Related: ADR 0010 (Dual Message Types)
+
+## Updates
+
+**2025-12-22:** Fixed Links references. Updated Consequences format to match ADR template.

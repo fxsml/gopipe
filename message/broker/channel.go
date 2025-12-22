@@ -85,15 +85,15 @@ func NewChannelBroker(config ChannelBrokerConfig) *ChannelBroker {
 // Subscribe creates a subscription to the specified topic.
 // Returns a channel that receives messages sent to that topic.
 // The channel is closed when the context is canceled or the broker is closed.
-func (b *ChannelBroker) Subscribe(ctx context.Context, topic string) <-chan *message.Message {
-	out := make(chan *message.Message, b.config.BufferSize)
-
+// Returns ErrBrokerClosed if the broker has been closed.
+func (b *ChannelBroker) Subscribe(ctx context.Context, topic string) (<-chan *message.Message, error) {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
-		close(out)
-		return out
+		return nil, ErrBrokerClosed
 	}
+
+	out := make(chan *message.Message, b.config.BufferSize)
 
 	id := b.nextSubID()
 	sub := &subscription{
@@ -133,7 +133,7 @@ func (b *ChannelBroker) Subscribe(ctx context.Context, topic string) <-chan *mes
 		}
 	}()
 
-	return out
+	return out, nil
 }
 
 // Send publishes messages to all subscribers of the specified topic.

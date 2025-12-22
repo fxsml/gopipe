@@ -1,4 +1,4 @@
-# ADR 0000: Go Workspaces Modularization
+# ADR 0014: Go Workspaces Modularization
 
 **Date:** 2025-12-17
 **Status:** Implemented
@@ -92,7 +92,7 @@ The `pipe` module uses `package pipe` (not `package gopipe`) to match the direct
 
 ## Consequences
 
-**Positive:**
+**Benefits:**
 - Clear dependency boundaries
 - Core modules remain lightweight and portable
 - Independent versioning possible
@@ -100,7 +100,7 @@ The `pipe` module uses `package pipe` (not `package gopipe`) to match the direct
 - Users can import only what they need
 - `message.NewRouter()` is explicit about working with messages
 
-**Negative:**
+**Drawbacks:**
 - More complex build/release process
 - Cross-module refactoring requires coordination
 - Version synchronization between modules
@@ -113,5 +113,9 @@ The `pipe` module uses `package pipe` (not `package gopipe`) to match the direct
 
 ## Links
 
-- Related: [PRO-0006](../plans/PRO-0006-package-restructuring/) - Package Restructuring
-- Related: [PRO-0030](PRO-0030-remove-sender-receiver.md) - Remove Sender/Receiver
+- Related: ADR 0005 (Channel Package Separation)
+- Related: ADR 0012 (Message Package Structure)
+
+## Updates
+
+**2025-12-22:** Fixed Links references. Updated Consequences format to match ADR template.

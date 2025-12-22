@@ -1,4 +1,4 @@
-# ADR 0017: Message Acknowledgment Pattern
+# ADR 0006: Message Acknowledgment Pattern
 
 **Date:** 2025-10-01
 **Status:** Implemented
@@ -28,15 +28,19 @@ Key behaviors:
 
 ## Consequences
 
-**Positive:**
+**Benefits:**
 - Framework handles ack/nack automatically
 - Thread-safe with mutex protection
 - Works with all existing gopipe options
 
-**Negative:**
+**Drawbacks:**
 - No compile-time type safety (runtime type assertions)
 - Users must write idempotent handlers
 
 ## Links
 
 - Package: `github.com/fxsml/gopipe/message`
+
+## Updates
+
+**2025-12-22:** Updated Consequences format to match ADR template.

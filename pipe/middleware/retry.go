@@ -1,4 +1,4 @@
-package pipe
+package middleware
 
 import (
 	"context"
@@ -10,16 +10,16 @@ import (
 )
 
 var (
-	// ErrRetry is the base error for retry operations
+	// ErrRetry is the base error for retry operations.
 	ErrRetry = errors.New("gopipe retry")
 
-	// ErrRetryMaxAttempts is returned when all retry attempts fail
+	// ErrRetryMaxAttempts is returned when all retry attempts fail.
 	ErrRetryMaxAttempts = fmt.Errorf("%w: max attempts reached", ErrRetry)
 
-	// ErrRetryTimeout is returned when the overall retry operation times out
+	// ErrRetryTimeout is returned when the overall retry operation times out.
 	ErrRetryTimeout = fmt.Errorf("%w: timeout reached", ErrRetry)
 
-	// ErrRetryNotRetryable is returned when an error is not retryable
+	// ErrRetryNotRetryable is returned when an error is not retryable.
 	ErrRetryNotRetryable = fmt.Errorf("%w: not retryable", ErrRetry)
 )
 
@@ -30,11 +30,7 @@ type BackoffFunc func(attempt int) time.Duration
 // ConstantBackoff creates a backoff function that returns a constant duration with optional jitter.
 // The delay parameter specifies the base wait time for all retry attempts.
 // The jitter parameter controls randomization: 0.0 = no jitter, 0.2 = ±20% variation.
-// Jitter helps prevent thundering herd problems in distributed systems.
-func ConstantBackoff(
-	delay time.Duration,
-	jitter float64,
-) BackoffFunc {
+func ConstantBackoff(delay time.Duration, jitter float64) BackoffFunc {
 	applyJitter := newApplyJitterFunc(jitter)
 	return func(attempt int) time.Duration {
 		return applyJitter(delay)
@@ -43,24 +39,14 @@ func ConstantBackoff(
 
 // ExponentialBackoff creates a backoff function with exponential backoff and jitter.
 // Each retry attempt uses baseDelay * factor^(attempt-1) with random jitter applied.
-// The factor parameter controls growth rate (e.g., 2.0 doubles delay each attempt).
 // The maxDelay parameter caps the maximum backoff duration (0 = no limit).
-// The jitter parameter controls randomization: 0.0 = no jitter, 0.2 = ±20% variation.
-// Jitter is applied after the exponential calculation and max delay capping.
-func ExponentialBackoff(
-	initialDelay time.Duration,
-	factor float64,
-	maxDelay time.Duration,
-	jitter float64,
-) BackoffFunc {
+func ExponentialBackoff(initialDelay time.Duration, factor float64, maxDelay time.Duration, jitter float64) BackoffFunc {
 	applyJitter := newApplyJitterFunc(jitter)
 	return func(attempt int) time.Duration {
 		backoff := time.Duration(float64(initialDelay) * math.Pow(factor, float64(attempt-1)))
-
 		if maxDelay > 0 && backoff > maxDelay {
 			backoff = maxDelay
 		}
-
 		return applyJitter(backoff)
 	}
 }
@@ -70,12 +56,9 @@ type ShouldRetryFunc func(error) bool
 
 // ShouldRetry creates a function that retries on specific errors.
 // If no errors are specified, all errors trigger retries.
-// If errors are specified, only matching errors (using errors.Is) trigger retries.
 func ShouldRetry(errs ...error) ShouldRetryFunc {
 	if len(errs) == 0 {
-		return func(err error) bool {
-			return true
-		}
+		return func(err error) bool { return true }
 	}
 	return func(err error) bool {
 		for _, e := range errs {
@@ -89,12 +72,9 @@ func ShouldRetry(errs ...error) ShouldRetryFunc {
 
 // ShouldNotRetry creates a function that skips retries on specific errors.
 // If no errors are specified, no errors trigger retries.
-// If errors are specified, matching errors (using errors.Is) skip retries.
 func ShouldNotRetry(errs ...error) ShouldRetryFunc {
 	if len(errs) == 0 {
-		return func(err error) bool {
-			return false
-		}
+		return func(err error) bool { return false }
 	}
 	return func(err error) bool {
 		for _, e := range errs {
@@ -125,33 +105,17 @@ type RetryConfig struct {
 	Timeout time.Duration
 }
 
-// WithRetryConfig adds retry middleware to the processing pipeline.
-// Failed operations are retried based on ShouldRetry logic, with Backoff between attempts,
-// until MaxAttempts is reached or Timeout expires. Nil fields use default values.
-func WithRetryConfig[In, Out any](retryConfig RetryConfig) Option[In, Out] {
-	return func(cfg *config[In, Out]) {
-		cfg.retry = useRetry[In, Out](retryConfig)
-	}
-}
-
 // RetryState tracks the progress and history of retry attempts.
 type RetryState struct {
 	// Timeout is the configured overall timeout for all attempts.
 	Timeout time.Duration
 	// MaxAttempts is the configured maximum number of attempts.
 	MaxAttempts int
-
-	// Start is the time when the first attempt started. Duration and
-	// Attempts are measured relative to this timestamp.
+	// Start is the time when the first attempt started.
 	Start time.Time
-	// Attempts is the total number of processing attempts made. It is
-	// 1-based and includes the initial (first) attempt. For example,
-	// Attempts==1 means the initial attempt has been made and no retries
-	// occurred yet.
+	// Attempts is the total number of processing attempts made (1-based).
 	Attempts int
-	// Duration is the total elapsed time since Start. This includes the
-	// time spent in each attempt as well as any backoff/wait time between
-	// attempts.
+	// Duration is the total elapsed time since Start.
 	Duration time.Duration
 	// Causes is a list of all errors encountered during attempts.
 	Causes []error
@@ -209,10 +173,7 @@ func (c RetryConfig) parse() RetryConfig {
 	return c
 }
 
-func newRetryState(
-	timeout time.Duration,
-	maxAttempts int,
-) *RetryState {
+func newRetryState(timeout time.Duration, maxAttempts int) *RetryState {
 	return &RetryState{
 		Timeout:     timeout,
 		MaxAttempts: maxAttempts,
@@ -231,6 +192,7 @@ func (s *RetryState) error(err error) error {
 	s.Err = err
 	return &retryStateErrorWrapper{state: s}
 }
+
 func (s *RetryState) context(ctx context.Context) context.Context {
 	s.Attempts++
 	return context.WithValue(ctx, retryStateKey, s)
@@ -268,48 +230,46 @@ func newApplyJitterFunc(jitter float64) func(d time.Duration) time.Duration {
 	}
 }
 
-func useRetry[In, Out any](config RetryConfig) MiddlewareFunc[In, Out] {
-	config = config.parse()
-	return func(next Processor[In, Out]) Processor[In, Out] {
-		return NewProcessor(
-			func(ctx context.Context, in In) ([]Out, error) {
-				state := newRetryState(config.Timeout, config.MaxAttempts)
+// Retry wraps a ProcessFunc with retry logic.
+// Failed operations are retried based on ShouldRetry logic, with Backoff between attempts,
+// until MaxAttempts is reached or Timeout expires.
+func Retry[In, Out any](cfg RetryConfig) Middleware[In, Out] {
+	cfg = cfg.parse()
+	return func(next ProcessFunc[In, Out]) ProcessFunc[In, Out] {
+		return func(ctx context.Context, in In) ([]Out, error) {
+			state := newRetryState(cfg.Timeout, cfg.MaxAttempts)
 
-				for {
-					out, err := next.Process(state.context(ctx), in)
-					if err == nil {
-						return out, nil
-					}
-					state.appendCause(err)
-					if !config.ShouldRetry(err) {
-						return nil, state.error(ErrRetryNotRetryable)
-					}
-
-					if config.MaxAttempts > 0 && state.Attempts >= config.MaxAttempts {
-						return nil, state.error(ErrRetryMaxAttempts)
-					}
-
-					var timeoutCh <-chan time.Time
-					if config.Timeout > 0 {
-						remaining := config.Timeout - time.Since(state.Start)
-						if remaining <= 0 {
-							return nil, state.error(ErrRetryTimeout)
-						}
-						timeoutCh = time.After(remaining)
-					}
-
-					select {
-					case <-ctx.Done():
-						return nil, state.error(ctx.Err())
-					case <-timeoutCh: // Will be nil if no timeout, so won't trigger
-						return nil, state.error(ErrRetryTimeout)
-					case <-time.After(config.Backoff(state.Attempts)):
-					}
+			for {
+				out, err := next(state.context(ctx), in)
+				if err == nil {
+					return out, nil
 				}
-			},
-			func(in In, err error) {
-				next.Cancel(in, err)
-			},
-		)
+				state.appendCause(err)
+				if !cfg.ShouldRetry(err) {
+					return nil, state.error(ErrRetryNotRetryable)
+				}
+
+				if cfg.MaxAttempts > 0 && state.Attempts >= cfg.MaxAttempts {
+					return nil, state.error(ErrRetryMaxAttempts)
+				}
+
+				var timeoutCh <-chan time.Time
+				if cfg.Timeout > 0 {
+					remaining := cfg.Timeout - time.Since(state.Start)
+					if remaining <= 0 {
+						return nil, state.error(ErrRetryTimeout)
+					}
+					timeoutCh = time.After(remaining)
+				}
+
+				select {
+				case <-ctx.Done():
+					return nil, state.error(ctx.Err())
+				case <-timeoutCh:
+					return nil, state.error(ErrRetryTimeout)
+				case <-time.After(cfg.Backoff(state.Attempts)):
+				}
+			}
+		}
 	}
 }

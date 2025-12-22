@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 // Mock sender for testing
@@ -103,7 +103,8 @@ func TestPublisher_Basic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	<-publisher.Publish(ctx, msgs)
+	done, _ := publisher.Publish(ctx, msgs)
+	<-done
 
 	// Verify messages were sent
 	topicA := sender.getSent("topic-a")
@@ -154,7 +155,8 @@ func TestPublisher_Batching(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	<-publisher.Publish(ctx, msgs)
+	done, _ := publisher.Publish(ctx, msgs)
+	<-done
 
 	batches := sender.getSent("topic")
 	// Should have 3 full batches of 3 and 1 partial batch of 1
@@ -173,9 +175,9 @@ func TestPublisher_ErrorHandling(t *testing.T) {
 		message.PublisherConfig{
 			MaxBatchSize: 10,
 			MaxDuration:  time.Hour,
-			Retry: &pipe.RetryConfig{
+			Retry: &middleware.RetryConfig{
 				MaxAttempts: 2,
-				Backoff:     pipe.ConstantBackoff(time.Millisecond, 0),
+				Backoff:     middleware.ConstantBackoff(time.Millisecond, 0),
 			},
 		},
 	)
@@ -189,7 +191,8 @@ func TestPublisher_ErrorHandling(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	<-publisher.Publish(ctx, msgs)
+	done, _ := publisher.Publish(ctx, msgs)
+	<-done
 	// Should complete even with errors due to retry exhaustion
 }
 
@@ -226,7 +229,8 @@ func TestPublisher_Concurrency(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	<-publisher.Publish(ctx, msgs)
+	done, _ := publisher.Publish(ctx, msgs)
+	<-done
 
 	if sendCount != 10 {
 		t.Errorf("Expected 10 sends, got %d", sendCount)
@@ -259,7 +263,7 @@ func TestSubscriber_Basic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx, "topic-a")
+	msgs, _ := subscriber.Subscribe(ctx, "topic-a")
 
 	var count int
 	for range msgs {
@@ -282,9 +286,9 @@ func TestSubscriber_ErrorHandling(t *testing.T) {
 	subscriber := message.NewSubscriber(
 		receiver,
 		message.SubscriberConfig{
-			Retry: &pipe.RetryConfig{
+			Retry: &middleware.RetryConfig{
 				MaxAttempts: 3,
-				Backoff:     pipe.ConstantBackoff(time.Millisecond, 0),
+				Backoff:     middleware.ConstantBackoff(time.Millisecond, 0),
 			},
 		},
 	)
@@ -292,7 +296,7 @@ func TestSubscriber_ErrorHandling(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx, "topic-a")
+	msgs, _ := subscriber.Subscribe(ctx, "topic-a")
 
 	// Should receive no messages due to errors
 	for range msgs {
@@ -325,7 +329,7 @@ func TestSubscriber_MultipleReceives(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx, "topic-a")
+	msgs, _ := subscriber.Subscribe(ctx, "topic-a")
 
 	var count int
 	for range msgs {
@@ -365,7 +369,8 @@ func TestPublisher_WithRecover(t *testing.T) {
 	defer cancel()
 
 	// Should not panic due to Recover option
-	<-publisher.Publish(ctx, msgs)
+	done, _ := publisher.Publish(ctx, msgs)
+	<-done
 }
 
 func TestSubscriber_WithRecover(t *testing.T) {
@@ -384,7 +389,7 @@ func TestSubscriber_WithRecover(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx, "topic-a")
+	msgs, _ := subscriber.Subscribe(ctx, "topic-a")
 
 	// Should not panic due to Recover option
 	for range msgs {
@@ -427,8 +432,8 @@ func TestSubscriber_MultipleTopics(t *testing.T) {
 	defer cancel()
 
 	// Subscribe to multiple topics and merge them
-	topicA := subscriber.Subscribe(ctx, "topic-a")
-	topicB := subscriber.Subscribe(ctx, "topic-b")
+	topicA, _ := subscriber.Subscribe(ctx, "topic-a")
+	topicB, _ := subscriber.Subscribe(ctx, "topic-b")
 	msgs := channel.Merge(topicA, topicB)
 
 	var received []string
@@ -478,7 +483,7 @@ func TestSubscriber_NoMessages(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	msgs := subscriber.Subscribe(ctx, "topic-a")
+	msgs, _ := subscriber.Subscribe(ctx, "topic-a")
 
 	var count int
 	for range msgs {

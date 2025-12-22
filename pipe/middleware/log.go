@@ -1,4 +1,4 @@
-package pipe
+package middleware
 
 import (
 	"errors"
@@ -33,51 +33,33 @@ type Logger interface {
 }
 
 // LogConfig holds configuration for the logger middleware.
-// All fields can be customized individually. Defaults from the
-// global defaultLoggerConfig are used for any fields not set.
 type LogConfig struct {
 	// Args are additional arguments to include in all log messages.
 	Args []any
 
 	// LevelSuccess is the log level used for successful processing.
-	// Defaults to LogLevelDebug.
 	LevelSuccess LogLevel
 	// LevelCancel is the log level used when processing is canceled.
-	// Defaults to LogLevelWarn.
 	LevelCancel LogLevel
 	// LevelFailure is the log level used when processing fails.
-	// Defaults to LogLevelError.
 	LevelFailure LogLevel
 	// LevelRetry is the log level used when a retry is attempted.
-	// Defaults to LogLevelWarn.
 	LevelRetry LogLevel
 
 	// MessageSuccess is the message logged on successful processing.
-	// Defaults to "GOPIPE: Success".
 	MessageSuccess string
 	// MessageCancel is the message logged when processing is canceled.
-	// Defaults to "GOPIPE: Cancel".
 	MessageCancel string
 	// MessageFailure is the message logged when processing fails.
-	// Defaults to "GOPIPE: Failure".
 	MessageFailure string
 	// MessageRetry is the message logged when a retry is attempted.
-	// Defaults to "GOPIPE: Retry".
 	MessageRetry string
 
 	// Disabled disables all logging when set to true.
 	Disabled bool
 }
 
-// WithLogConfig overrides the default logger configuration for the pipe.
-func WithLogConfig[In, Out any](logConfig LogConfig) Option[In, Out] {
-	return func(cfg *config[In, Out]) {
-		cfg.logConfig = &logConfig
-	}
-}
-
 // SetDefaultLogConfig sets the default logger configuration for all pipes.
-// May be overridden per-pipe using WithLoggerConfig.
 func SetDefaultLogConfig(config LogConfig) {
 	defaultLogConfig = config.parse()
 }
@@ -163,7 +145,8 @@ func appendArgs(args ...[]any) []any {
 	return result
 }
 
-func newMetricsLogger(config LogConfig) MetricsCollector {
+// NewLogCollector creates a MetricsCollector that logs processing results.
+func NewLogCollector(config LogConfig) MetricsCollector {
 	config = config.parse()
 	if config.Disabled {
 		return nil
@@ -182,25 +165,37 @@ func newMetricsLogger(config LogConfig) MetricsCollector {
 		}
 		if metrics.Error == nil {
 			logSuccess(config.MessageSuccess,
-				appendArgs(config.Args, metrics.Metadata.args(), []any{"duration", metrics.Duration}, retryArgs)...)
+				appendArgs(config.Args, metrics.Metadata.Args(), []any{"duration", metrics.Duration}, retryArgs)...)
 			return
 		}
 		if errors.Is(metrics.Error, ErrCancel) {
 			logCancel(config.MessageCancel,
-				appendArgs(config.Args, metrics.Metadata.args(), []any{"error", metrics.Error})...)
+				appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error})...)
 			return
 		}
 		if metrics.RetryState != nil && metrics.RetryState.Err != nil {
 			logFailure(config.MessageFailure,
-				appendArgs(config.Args, metrics.Metadata.args(), []any{"error", metrics.Error}, retryArgs)...)
+				appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error}, retryArgs)...)
 			return
 		}
 		if metrics.RetryState != nil {
 			logRetry(config.MessageRetry,
-				appendArgs(config.Args, metrics.Metadata.args(), []any{"error", metrics.Error, "duration", metrics.Duration}, retryArgs)...)
+				appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error, "duration", metrics.Duration}, retryArgs)...)
 			return
 		}
 		logFailure(config.MessageFailure,
-			appendArgs(config.Args, metrics.Metadata.args(), []any{"error", metrics.Error, "duration", metrics.Duration}, retryArgs)...)
+			appendArgs(config.Args, metrics.Metadata.Args(), []any{"error", metrics.Error, "duration", metrics.Duration}, retryArgs)...)
 	}
+}
+
+// Log creates a logging middleware that logs processing metrics.
+func Log[In, Out any](config LogConfig) Middleware[In, Out] {
+	collector := NewLogCollector(config)
+	if collector == nil {
+		// Return a no-op middleware when logging is disabled
+		return func(next ProcessFunc[In, Out]) ProcessFunc[In, Out] {
+			return next
+		}
+	}
+	return MetricsMiddleware[In, Out](collector)
 }

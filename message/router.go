@@ -6,17 +6,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
+	"github.com/fxsml/gopipe/pipe"
+	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 // RouterConfig configures message routing behavior.
 type RouterConfig struct {
 	Concurrency int
 	Timeout     time.Duration
-	Retry       *pipe.RetryConfig
+	Retry       *middleware.RetryConfig
 	Recover     bool
-	Middleware  []MiddlewareFunc
+	Middleware  []Middleware
 }
 
 // Router dispatches messages to handlers based on attribute matching.
@@ -77,13 +78,13 @@ func (r *Router) AddGenerator(generator Generator) bool {
 }
 
 // Start processes messages through matched handlers and pipes.
-// Can only be called once. Subsequent calls return nil.
-// Returns nil if msgs is nil and no generators are configured.
-func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Message {
+// Returns ErrAlreadyStarted if called more than once.
+// Returns (nil, nil) if msgs is nil and no generators are configured.
+func (r *Router) Start(ctx context.Context, msgs <-chan *Message) (<-chan *Message, error) {
 	r.mu.Lock()
 	if r.started {
 		r.mu.Unlock()
-		return nil
+		return nil, ErrAlreadyStarted
 	}
 	r.started = true
 	// Take a snapshot of handlers, pipes, and generators under lock
@@ -94,7 +95,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Messag
 
 	// Return nil if no input and no generators
 	if msgs == nil && len(generators) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Start all generators and merge with input
@@ -103,7 +104,11 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Messag
 		allInputs = append(allInputs, msgs)
 	}
 	for _, gen := range generators {
-		allInputs = append(allInputs, gen.Generate(ctx))
+		out, err := gen.Generate(ctx)
+		if err != nil {
+			continue // skip failed generators
+		}
+		allInputs = append(allInputs, out)
 	}
 
 	// Merge all inputs into a single channel
@@ -116,7 +121,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Messag
 
 	// If no pipes, use simple handler-based routing
 	if len(pipes) == 0 {
-		return r.startWithHandlers(ctx, mergedInput, handlers)
+		return r.startWithHandlers(ctx, mergedInput, handlers), nil
 	}
 
 	// Start all pipes and create their input channels
@@ -125,7 +130,12 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Messag
 
 	for i, pe := range pipes {
 		pipeInputs[i] = make(chan *Message)
-		pipeOutputs[i] = pe.Start(ctx, pipeInputs[i])
+		out, err := pe.Start(ctx, pipeInputs[i])
+		if err != nil {
+			close(pipeInputs[i])
+			continue
+		}
+		pipeOutputs[i] = out
 	}
 
 	// Create handler input channel
@@ -162,7 +172,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message) <-chan *Messag
 
 	// Merge all outputs
 	allOutputs := append(pipeOutputs, handlerOutput)
-	return channel.Merge(allOutputs...)
+	return channel.Merge(allOutputs...), nil
 }
 
 // startWithHandlers processes messages through the given handlers.
@@ -178,39 +188,58 @@ func (r *Router) startWithHandlers(ctx context.Context, msgs <-chan *Message, ha
 		return nil, err
 	}
 
-	opts := []pipe.Option[*Message, *Message]{
-		pipe.WithLogConfig[*Message, *Message](pipe.LogConfig{
-			MessageSuccess: "Processed messages",
-			MessageFailure: "Failed to process messages",
-			MessageCancel:  "Canceled processing messages",
-		}),
-		pipe.WithMetadataProvider[*Message, *Message](func(msg *Message) pipe.Metadata {
-			metadata := pipe.Metadata{}
-			if id, ok := msg.Attributes.ID(); ok {
-				metadata[AttrID] = id
-			}
-			if corr, ok := msg.Attributes.CorrelationID(); ok {
-				metadata[AttrCorrelationID] = corr
-			}
+	// Build middleware chain
+	var mw []middleware.Middleware[*Message, *Message]
 
-			return metadata
-		}),
-	}
-	if r.config.Recover {
-		opts = append(opts, pipe.WithRecover[*Message, *Message]())
-	}
-	if r.config.Concurrency > 0 {
-		opts = append(opts, pipe.WithConcurrency[*Message, *Message](r.config.Concurrency))
-	}
-	if r.config.Timeout > 0 {
-		opts = append(opts, pipe.WithTimeout[*Message, *Message](r.config.Timeout))
-	}
+	// Metadata provider first (outermost)
+	mw = append(mw, middleware.MetadataProvider[*Message, *Message](func(msg *Message) middleware.Metadata {
+		metadata := middleware.Metadata{}
+		if id, ok := msg.Attributes.ID(); ok {
+			metadata[AttrID] = id
+		}
+		if corr, ok := msg.Attributes.CorrelationID(); ok {
+			metadata[AttrCorrelationID] = corr
+		}
+		return metadata
+	}))
+
+	// Logging
+	mw = append(mw, middleware.Log[*Message, *Message](middleware.LogConfig{
+		MessageSuccess: "Processed messages",
+		MessageFailure: "Failed to process messages",
+		MessageCancel:  "Canceled processing messages",
+	}))
+
+	// Retry
 	if r.config.Retry != nil {
-		opts = append(opts, pipe.WithRetryConfig[*Message, *Message](*r.config.Retry))
-	}
-	for _, m := range r.config.Middleware {
-		opts = append(opts, pipe.WithMiddleware(m))
+		mw = append(mw, middleware.Retry[*Message, *Message](*r.config.Retry))
 	}
 
-	return pipe.NewProcessPipe(handle, opts...).Start(ctx, msgs)
+	// Timeout
+	if r.config.Timeout > 0 {
+		mw = append(mw, middleware.Context[*Message, *Message](middleware.ContextConfig{
+			Timeout:    r.config.Timeout,
+			Background: true,
+		}))
+	}
+
+	// User middleware
+	mw = append(mw, r.config.Middleware...)
+
+	// Recover (innermost, closest to handler)
+	if r.config.Recover {
+		mw = append(mw, middleware.Recover[*Message, *Message]())
+	}
+
+	cfg := pipe.Config{
+		Concurrency: r.config.Concurrency,
+	}
+	if cfg.Concurrency <= 0 {
+		cfg.Concurrency = 1
+	}
+
+	pp := pipe.NewProcessPipe(handle, cfg)
+	_ = pp.ApplyMiddleware(mw...) // error only if already started
+	out, _ := pp.Start(ctx, msgs) // error only if already started
+	return out
 }

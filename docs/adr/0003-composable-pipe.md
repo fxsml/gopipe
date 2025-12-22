@@ -1,4 +1,4 @@
-# ADR 0014: Composable Pipe Architecture
+# ADR 0003: Composable Pipe Architecture
 
 **Date:** 2025-10-01
 **Status:** Implemented
@@ -12,9 +12,11 @@ The library needs clear separation between pipeline configuration and runtime ex
 1. Introduce Pipe interface with Start method:
 ```go
 type Pipe[Pre, Out any] interface {
-    Start(ctx context.Context, pre <-chan Pre) <-chan Out
+    Start(ctx context.Context, pre <-chan Pre) (<-chan Out, error)
 }
 ```
+
+Start returns error (e.g., `ErrAlreadyStarted`) to prevent reuse of stateful pipes.
 
 2. Introduce PreProcessorFunc for input transformation:
 ```go
@@ -25,15 +27,21 @@ type PreProcessorFunc[Pre, In any] func(in <-chan Pre) <-chan In
 
 ## Consequences
 
-**Positive:**
+**Breaking Changes:**
+- Existing Processor implementations must be updated
+
+**Benefits:**
 - Separates configuration from execution
 - Enables pipeline reuse across contexts
 - Supports zero, one, or multiple outputs per input
 
-**Negative:**
-- Breaking change for existing Processor implementations
+**Drawbacks:**
 - Performance overhead for single-output operations
 
 ## Links
 
-- Related: ADR 0013, ADR 0015
+- Related: ADR 0015, ADR 0016, ADR 0017
+
+## Updates
+
+**2025-12-22:** Updated `Start` signature to return error. Updated Consequences format to match ADR template.

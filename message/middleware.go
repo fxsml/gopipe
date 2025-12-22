@@ -1,5 +1,6 @@
 package message
 
-import "github.com/fxsml/gopipe/pipe"
+import "github.com/fxsml/gopipe/pipe/middleware"
 
-type MiddlewareFunc = pipe.MiddlewareFunc[*Message, *Message]
+// Middleware wraps a message ProcessFunc with additional behavior.
+type Middleware = middleware.Middleware[*Message, *Message]

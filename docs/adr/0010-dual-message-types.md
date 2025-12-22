@@ -1,4 +1,4 @@
-# ADR 0004: Dual Message Types
+# ADR 0010: Dual Message Types
 
 **Date:** 2025-12-07
 **Status:** Implemented
@@ -24,17 +24,21 @@ type Message = TypedMessage[[]byte]
 
 ## Consequences
 
-**Positive:**
+**Benefits:**
 - Clean API for pub/sub (no `[[]byte]` type parameters)
 - Type-safe pipelines preserved with `TypedMessage[T]`
 - Zero runtime overhead (type alias is compile-time only)
 - Code reuse: all methods work for both types
 
-**Negative:**
+**Drawbacks:**
 - Users must choose appropriate type for their use case
 - `TypedMessage` naming less intuitive than `Message`
 
 ## Links
 
-- ADR 0001: Public Message Fields
-- ADR 0002: Remove Attributes Thread-Safety
+- Related: ADR 0007 (Public Message Fields)
+- Related: ADR 0008 (Remove Attributes Thread-Safety)
+
+## Updates
+
+**2025-12-22:** Fixed Links references. Updated Consequences format to match ADR template.

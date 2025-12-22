@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 // TestNewMessageMiddleware_ModificationBeforeNext verifies that modifications
@@ -21,19 +21,16 @@ func TestNewMessageMiddleware_ModificationBeforeNext(t *testing.T) {
 	var receivedPayload []byte
 	var receivedProperty string
 
-	// Create an inner processor that records what it receives
-	innerProc := pipe.NewProcessor(
-		func(ctx context.Context, m *message.Message) ([]*message.Message, error) {
-			receivedMsg = m
-			receivedPayload = m.Data
-			receivedProperty, _ = m.Attributes["modified-key"].(string)
-			return []*message.Message{m}, nil
-		},
-		func(m *message.Message, err error) {},
-	)
+	// Create an inner ProcessFunc that records what it receives
+	innerFunc := func(ctx context.Context, m *message.Message) ([]*message.Message, error) {
+		receivedMsg = m
+		receivedPayload = m.Data
+		receivedProperty, _ = m.Attributes["modified-key"].(string)
+		return []*message.Message{m}, nil
+	}
 
 	// Create middleware that modifies the message before calling next()
-	middleware := NewMessageMiddleware(
+	mw := NewMessageMiddleware(
 		func(ctx context.Context, m *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
 			// Modify payload
 			m.Data = []byte("modified payload")
@@ -49,12 +46,12 @@ func TestNewMessageMiddleware_ModificationBeforeNext(t *testing.T) {
 		},
 	)
 
-	// Apply middleware to inner processor
-	wrappedProc := middleware(innerProc)
+	// Apply middleware to inner function
+	wrappedFunc := mw(middleware.ProcessFunc[*message.Message, *message.Message](innerFunc))
 
 	// Process the message
 	ctx := context.Background()
-	results, err := wrappedProc.Process(ctx, msg)
+	results, err := wrappedFunc(ctx, msg)
 
 	// Verify no error
 	if err != nil {
@@ -100,14 +97,11 @@ func TestNewMessageMiddleware_MultipleModifications(t *testing.T) {
 	// Track what the inner processor receives
 	var receivedMsg *message.Message
 
-	// Create an inner processor
-	innerProc := pipe.NewProcessor(
-		func(ctx context.Context, m *message.Message) ([]*message.Message, error) {
-			receivedMsg = m
-			return []*message.Message{m}, nil
-		},
-		func(m *message.Message, err error) {},
-	)
+	// Create an inner ProcessFunc
+	innerFunc := func(ctx context.Context, m *message.Message) ([]*message.Message, error) {
+		receivedMsg = m
+		return []*message.Message{m}, nil
+	}
 
 	// Create first middleware that adds property "step1"
 	middleware1 := NewMessageMiddleware(
@@ -143,11 +137,11 @@ func TestNewMessageMiddleware_MultipleModifications(t *testing.T) {
 	)
 
 	// Apply middleware in order: 1 -> 2 -> 3 -> inner
-	wrappedProc := middleware1(middleware2(middleware3(innerProc)))
+	wrappedFunc := middleware1(middleware2(middleware3(middleware.ProcessFunc[*message.Message, *message.Message](innerFunc))))
 
 	// Process the message
 	ctx := context.Background()
-	_, err := wrappedProc.Process(ctx, msg)
+	_, err := wrappedFunc(ctx, msg)
 
 	// Verify no error
 	if err != nil {
@@ -184,19 +178,16 @@ func TestNewMessageMiddleware_ModificationAfterNext(t *testing.T) {
 	// Create a test message
 	msg := message.New([]byte("input"), message.Attributes{})
 
-	// Create an inner processor that returns a message
-	innerProc := pipe.NewProcessor(
-		func(ctx context.Context, m *message.Message) ([]*message.Message, error) {
-			outMsg := message.New([]byte("output"), message.Attributes{
-				"inner": "value",
-			})
-			return []*message.Message{outMsg}, nil
-		},
-		func(m *message.Message, err error) {},
-	)
+	// Create an inner ProcessFunc that returns a message
+	innerFunc := func(ctx context.Context, m *message.Message) ([]*message.Message, error) {
+		outMsg := message.New([]byte("output"), message.Attributes{
+			"inner": "value",
+		})
+		return []*message.Message{outMsg}, nil
+	}
 
 	// Create middleware that modifies output messages
-	middleware := NewMessageMiddleware(
+	mw := NewMessageMiddleware(
 		func(ctx context.Context, m *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
 			results, err := next()
 			if err != nil {
@@ -216,11 +207,11 @@ func TestNewMessageMiddleware_ModificationAfterNext(t *testing.T) {
 	)
 
 	// Apply middleware
-	wrappedProc := middleware(innerProc)
+	wrappedFunc := mw(middleware.ProcessFunc[*message.Message, *message.Message](innerFunc))
 
 	// Process the message
 	ctx := context.Background()
-	results, err := wrappedProc.Process(ctx, msg)
+	results, err := wrappedFunc(ctx, msg)
 
 	// Verify no error
 	if err != nil {

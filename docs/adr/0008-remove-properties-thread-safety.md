@@ -1,10 +1,7 @@
-# ADR 0002: Remove Attributes Thread-Safety
+# ADR 0008: Remove Attributes Thread-Safety
 
 **Date:** 2025-11-01
 **Status:** Implemented
-
-> **Historical Note:** This ADR references an intermediate API with `*Props` suffix functions.
-> The current API uses methods on `Attributes` type (e.g., `msg.Attributes.ID()`).
 
 ## Context
 Attributes was a struct with `sync.RWMutex` and methods `Get/Set/Delete/Range`. This added complexity and overhead for most use cases where messages are not shared across goroutines.
@@ -39,3 +36,14 @@ Add simple pass-through functions with `Props` suffix:
 **Drawbacks:**
 - No thread-safety (users must synchronize if sharing messages)
 - More verbose for typed property access
+
+## Links
+
+- Related: ADR 0007 (Public Message Fields)
+- Related: ADR 0009 (Remove Noisy Attributes)
+
+## Updates
+
+**2025-11-15:** API changed from `*Props` suffix functions to methods on `Attributes` type (e.g., `msg.Attributes.ID()`).
+
+**2025-12-22:** Updated Consequences format to match ADR template.

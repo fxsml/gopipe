@@ -3,8 +3,9 @@ package cqrs
 import (
 	"context"
 
-	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/pipe"
+	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 type pipeAdapter[In, Out any] struct {
@@ -14,8 +15,16 @@ type pipeAdapter[In, Out any] struct {
 	match     message.Matcher
 }
 
-func (p *pipeAdapter[In, Out]) Start(ctx context.Context, msgs <-chan *message.Message) <-chan *message.Message {
-	return p.marshal.Start(ctx, p.pipe.Start(ctx, p.unmarshal.Start(ctx, msgs)))
+func (p *pipeAdapter[In, Out]) Start(ctx context.Context, msgs <-chan *message.Message) (<-chan *message.Message, error) {
+	unmarshalOut, err := p.unmarshal.Start(ctx, msgs)
+	if err != nil {
+		return nil, err
+	}
+	pipeOut, err := p.pipe.Start(ctx, unmarshalOut)
+	if err != nil {
+		return nil, err
+	}
+	return p.marshal.Start(ctx, pipeOut)
 }
 
 func (p *pipeAdapter[In, Out]) Match(attrs message.Attributes) bool {
@@ -29,7 +38,7 @@ func NewCommandPipe[In, Out any](
 	match message.Matcher,
 	marshaler CommandMarshaler,
 ) message.Pipe {
-	unmarshal := pipe.NewTransformPipe(func(ctx context.Context, msg *message.Message) (In, error) {
+	unmarshalFn := func(ctx context.Context, msg *message.Message) (In, error) {
 		in := new(In)
 		err := marshaler.Unmarshal(msg.Data, in)
 		if err != nil {
@@ -38,19 +47,43 @@ func NewCommandPipe[In, Out any](
 		}
 		msg.Ack()
 		return *in, nil
-	}, pipe.WithLogConfig[*message.Message, In](pipe.LogConfig{
-		MessageFailure: "Failed to unmarshal message",
-	}))
-	marshal := pipe.NewTransformPipe(func(ctx context.Context, out Out) (*message.Message, error) {
+	}
+
+	marshalFn := func(ctx context.Context, out Out) (*message.Message, error) {
 		data, err := marshaler.Marshal(out)
 		if err != nil {
 			return nil, err
 		}
 		msg := message.New(data, marshaler.Attributes(out))
 		return msg, nil
-	}, pipe.WithLogConfig[Out, *message.Message](pipe.LogConfig{
-		MessageFailure: "Failed to marshal message",
-	}))
+	}
+
+	unmarshal := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]In, error) {
+		in, err := unmarshalFn(ctx, msg)
+		if err != nil {
+			return nil, err
+		}
+		return []In{in}, nil
+	}, pipe.Config{})
+	_ = unmarshal.ApplyMiddleware(
+		middleware.Log[*message.Message, In](middleware.LogConfig{
+			MessageFailure: "Failed to unmarshal message",
+		}),
+	)
+
+	marshal := pipe.NewProcessPipe(func(ctx context.Context, out Out) ([]*message.Message, error) {
+		msg, err := marshalFn(ctx, out)
+		if err != nil {
+			return nil, err
+		}
+		return []*message.Message{msg}, nil
+	}, pipe.Config{})
+	_ = marshal.ApplyMiddleware(
+		middleware.Log[Out, *message.Message](middleware.LogConfig{
+			MessageFailure: "Failed to marshal message",
+		}),
+	)
+
 	return &pipeAdapter[In, Out]{
 		pipe:      p,
 		unmarshal: unmarshal,

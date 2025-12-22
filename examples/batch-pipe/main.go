@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
+	"github.com/fxsml/gopipe/pipe"
 )
 
 // User is a simple user struct for demonstration
@@ -66,13 +66,20 @@ func main() {
 	// Create a pipe
 	pipe := pipe.NewBatchPipe(
 		NewCreateUserHandler(),
-		5,                   // Max batch size
-		10*time.Millisecond, // Max batch duration
-		pipe.WithBuffer[[]string, UserResponse](10), // Buffer up to 10 results
+		pipe.BatchConfig{
+			Config: pipe.Config{
+				BufferSize: 1,
+			},
+			MaxSize:     5,
+			MaxDuration: 2 * time.Second,
+		},
 	)
 
 	// Create new users in batches
-	userResponses := pipe.Start(context.Background(), in)
+	userResponses, err := pipe.Start(context.Background(), in)
+	if err != nil {
+		panic(err)
+	}
 
 	// Consume responses
 	<-channel.Sink(userResponses, func(userResponse UserResponse) {

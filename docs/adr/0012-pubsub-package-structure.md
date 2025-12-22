@@ -1,17 +1,7 @@
-# ADR 0010: Message Package Structure
+# ADR 0012: Message Package Structure
 
 **Date:** 2025-12-08
 **Status:** Implemented
-**Updated:** 2025-12-11
-
-> **Historical Note:** The Subscriber API was simplified from the proposed multi-topic design.
-> Instead of `AddTopic()` + `Subscribe()`, the actual API uses `Subscribe(ctx, topic)` per topic.
-> Multiple topics can be subscribed by calling `Subscribe` multiple times and merging channels.
-
-> **Update 2025-12-11:** The pub/sub functionality has been merged into the `message` package.
-> The separate `pubsub` package no longer exists. Broker implementations, multiplex routing,
-> CloudEvents support, and CQRS handlers are now subpackages of `message/`. Additionally,
-> Router, Handler, and Matcher types have been moved to the `message` package.
 
 ## Context
 
@@ -112,22 +102,29 @@ This design:
 
 ## Consequences
 
-**Positive:**
+**Breaking Changes:**
+- Existing imports need updating (from `pubsub` to `message`)
+
+**Benefits:**
 - Unified package: core `Message`, `Sender`, `Receiver` all in `message`
 - Clear hierarchy: `message/broker`, `message/multiplex`, `message/cloudevents`
 - Descriptive constructors: `broker.NewChannelBroker()`, `broker.NewHTTPSender()`
 - Extensible: easy to add new broker implementations
 - Subscriber supports multi-topic subscription with merged output
 
-**Negative:**
-- Breaking change: existing imports need updating (from `pubsub` to `message`)
+**Drawbacks:**
 - More subpackages to understand
 
 ## Links
 
-- Core types: `github.com/fxsml/gopipe/message`
-- Broker implementations: `github.com/fxsml/gopipe/message/broker`
-- Multiplex routing: `github.com/fxsml/gopipe/message/multiplex`
-- CQRS handlers: `github.com/fxsml/gopipe/message/cqrs`
-- ADR 0006: CQRS Implementation
-- ADR 0012: Multiplex Pub/Sub
+- Related: ADR 0011 (CQRS Implementation)
+- Related: ADR 0013 (Multiplex Publisher/Subscriber)
+- Package: `github.com/fxsml/gopipe/message`
+
+## Updates
+
+**2025-12-10:** Subscriber API simplified from `AddTopic()` + `Subscribe()` to `Subscribe(ctx, topic)` per topic.
+
+**2025-12-11:** Merged pub/sub into `message` package. Removed separate `pubsub` package. Router, Handler, Matcher moved to `message`.
+
+**2025-12-22:** Updated Consequences format to match ADR template.

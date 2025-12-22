@@ -7,7 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+#### Processor API Simplification (ADR 0015-0017)
+- **pipe**: Remove builder pattern, use direct struct configuration
+- **pipe**: `Start()` now returns `(<-chan Out, error)` instead of `<-chan Out`
+- **pipe**: `ApplyMiddleware()` now returns `error` instead of `*Pipe`
+- **pipe**: `Generate()` now returns `(<-chan Out, error)`
+- **pipe**: Remove cancel callback from `ProcessFunc` signature
+- **pipe**: Move middleware to `pipe/middleware` subpackage
+- **message**: `Subscriber.Subscribe()` now returns `(<-chan *Message, error)`
+- **message**: `Publisher.Publish()` now returns `(<-chan struct{}, error)`
+- **message**: `Router.Start()` now returns `(<-chan *Message, error)`
+- **message/broker**: `ChannelBroker.Subscribe()` now returns `(<-chan *Message, error)`
+- See: [docs/adr/0015-remove-cancel-path.md](docs/adr/0015-remove-cancel-path.md)
+- See: [docs/adr/0016-processor-config-struct.md](docs/adr/0016-processor-config-struct.md)
+- See: [docs/adr/0017-middleware-for-processfunc.md](docs/adr/0017-middleware-for-processfunc.md)
+
 ### Added
+
+#### Processor Simplification ADRs
+- ADR 0015: Remove cancel path from ProcessFunc
+- ADR 0016: Processor config struct pattern
+- ADR 0017: Middleware for ProcessFunc
+- ADR template documentation moved to `docs/procedures/adr.md`
+
+#### Error Handling
+- `pipe.ErrAlreadyStarted` - Sentinel error for duplicate Start/Generate calls
+- `message.ErrAlreadyStarted` - Sentinel error for duplicate Router.Start calls
+- `broker.ErrBrokerClosed` - Sentinel error for closed broker operations
 
 #### Go Workspaces Modularization
 - ADR 0014: Decision to split gopipe into channel, pipe, and message modules

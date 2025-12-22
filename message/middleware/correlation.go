@@ -3,12 +3,12 @@ package middleware
 import (
 	"context"
 
-	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 // MessageCorrelation returns middleware that propagates correlation ID from input to output messages.
-func MessageCorrelation() pipe.MiddlewareFunc[*message.Message, *message.Message] {
+func MessageCorrelation() middleware.Middleware[*message.Message, *message.Message] {
 	return NewMessageMiddleware(
 		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
 			results, err := next()

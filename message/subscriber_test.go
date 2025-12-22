@@ -62,7 +62,7 @@ func TestSubscriber_Subscribe(t *testing.T) {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
-		msgs := subscriber.Subscribe(ctx, "test.topic")
+		msgs, _ := subscriber.Subscribe(ctx, "test.topic")
 
 		var received []*Message
 		for msg := range msgs {
@@ -96,8 +96,8 @@ func TestSubscriber_Subscribe(t *testing.T) {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
-		msgs1 := subscriber.Subscribe(ctx, "topic1")
-		msgs2 := subscriber.Subscribe(ctx, "topic2")
+		msgs1, _ := subscriber.Subscribe(ctx, "topic1")
+		msgs2, _ := subscriber.Subscribe(ctx, "topic2")
 
 		// Read from first subscription
 		msg1 := <-msgs1
@@ -139,8 +139,8 @@ func TestSubscriber_Subscribe(t *testing.T) {
 		defer cancel()
 
 		// Subscribe to the same topic twice
-		msgs1 := subscriber.Subscribe(ctx, "test.topic")
-		msgs2 := subscriber.Subscribe(ctx, "test.topic")
+		msgs1, _ := subscriber.Subscribe(ctx, "test.topic")
+		msgs2, _ := subscriber.Subscribe(ctx, "test.topic")
 
 		// Both subscriptions should independently receive messages
 		msg1 := <-msgs1
@@ -176,7 +176,7 @@ func TestSubscriber_Subscribe(t *testing.T) {
 		subscriber := NewSubscriber(mock, SubscriberConfig{})
 
 		ctx, cancel := context.WithCancel(ctx)
-		msgs := subscriber.Subscribe(ctx, "test.topic")
+		msgs, _ := subscriber.Subscribe(ctx, "test.topic")
 
 		// Read one message
 		msg := <-msgs
@@ -229,7 +229,7 @@ func TestSubscriber_Subscribe(t *testing.T) {
 		ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 		defer cancel()
 
-		msgs := subscriber.Subscribe(ctx, "test.topic")
+		msgs, _ := subscriber.Subscribe(ctx, "test.topic")
 
 		var received []*Message
 		for msg := range msgs {
@@ -265,12 +265,11 @@ func TestSubscriber_SubscribeMultipleCalls(t *testing.T) {
 		defer cancel()
 
 		// Call Subscribe multiple times with different topics
-		channels := []<-chan *Message{
-			subscriber.Subscribe(ctx, "topic1"),
-			subscriber.Subscribe(ctx, "topic2"),
-			subscriber.Subscribe(ctx, "topic3"),
-			subscriber.Subscribe(ctx, "topic1"), // Duplicate subscription to topic1
-		}
+		ch1, _ := subscriber.Subscribe(ctx, "topic1")
+		ch2, _ := subscriber.Subscribe(ctx, "topic2")
+		ch3, _ := subscriber.Subscribe(ctx, "topic3")
+		ch4, _ := subscriber.Subscribe(ctx, "topic1") // Duplicate subscription to topic1
+		channels := []<-chan *Message{ch1, ch2, ch3, ch4}
 
 		// Verify all channels are working
 		for i, ch := range channels {
@@ -311,8 +310,8 @@ func TestSubscriber_SubscribeMultipleCalls(t *testing.T) {
 		defer cancel()
 
 		// Create two independent subscriptions to the same topic
-		sub1 := subscriber.Subscribe(ctx, "same.topic")
-		sub2 := subscriber.Subscribe(ctx, "same.topic")
+		sub1, _ := subscriber.Subscribe(ctx, "same.topic")
+		sub2, _ := subscriber.Subscribe(ctx, "same.topic")
 
 		// Each subscription should receive messages independently
 		msg1 := <-sub1
