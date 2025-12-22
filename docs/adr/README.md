@@ -29,6 +29,7 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0015](0015-remove-cancel-path.md) | Remove Cancel Path | Accepted |
 | [0016](0016-processor-config-struct.md) | Processor Config Struct | Accepted |
 | [0017](0017-middleware-for-processfunc.md) | Middleware for ProcessFunc | Accepted |
+| [0018](0018-interface-naming-conventions.md) | Interface Naming Conventions | Implemented |
 
 ## History
 

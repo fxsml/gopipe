@@ -77,10 +77,10 @@ func (r *Router) AddGenerator(generator Generator) bool {
 	return true
 }
 
-// Start processes messages through matched handlers and pipes.
+// Pipe processes messages through matched handlers and pipes.
 // Returns ErrAlreadyStarted if called more than once.
 // Returns (nil, nil) if msgs is nil and no generators are configured.
-func (r *Router) Start(ctx context.Context, msgs <-chan *Message) (<-chan *Message, error) {
+func (r *Router) Pipe(ctx context.Context, msgs <-chan *Message) (<-chan *Message, error) {
 	r.mu.Lock()
 	if r.started {
 		r.mu.Unlock()
@@ -130,7 +130,7 @@ func (r *Router) Start(ctx context.Context, msgs <-chan *Message) (<-chan *Messa
 
 	for i, pe := range pipes {
 		pipeInputs[i] = make(chan *Message)
-		out, err := pe.Start(ctx, pipeInputs[i])
+		out, err := pe.Pipe(ctx, pipeInputs[i])
 		if err != nil {
 			close(pipeInputs[i])
 			continue
@@ -240,6 +240,6 @@ func (r *Router) startWithHandlers(ctx context.Context, msgs <-chan *Message, ha
 
 	pp := pipe.NewProcessPipe(handle, cfg)
 	_ = pp.ApplyMiddleware(mw...) // error only if already started
-	out, _ := pp.Start(ctx, msgs) // error only if already started
+	out, _ := pp.Pipe(ctx, msgs)  // error only if already started
 	return out
 }

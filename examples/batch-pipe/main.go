@@ -64,7 +64,7 @@ func main() {
 	}()
 
 	// Create a pipe
-	pipe := pipe.NewBatchPipe(
+	p := pipe.NewBatchPipe(
 		NewCreateUserHandler(),
 		pipe.BatchConfig{
 			Config: pipe.Config{
@@ -76,7 +76,7 @@ func main() {
 	)
 
 	// Create new users in batches
-	userResponses, err := pipe.Start(context.Background(), in)
+	userResponses, err := p.Pipe(context.Background(), in)
 	if err != nil {
 		panic(err)
 	}

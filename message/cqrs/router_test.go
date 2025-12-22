@@ -52,7 +52,7 @@ func TestRouter_CommandHandler(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out, _ := router.Start(ctx, in)
+	out, _ := router.Pipe(ctx, in)
 
 	var results []*message.Message
 	for msg := range out {
@@ -106,7 +106,7 @@ func TestRouter_CommandHandler_WithCustomAttrs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out, _ := router.Start(ctx, in)
+	out, _ := router.Pipe(ctx, in)
 
 	var results []*message.Message
 	for msg := range out {
@@ -158,7 +158,7 @@ func TestRouter_EventHandler(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out, _ := router.Start(ctx, in)
+	out, _ := router.Pipe(ctx, in)
 
 	for range out {
 	}
@@ -197,7 +197,7 @@ func TestRouter_UnmarshalError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out, _ := router.Start(ctx, in)
+	out, _ := router.Pipe(ctx, in)
 
 	for range out {
 	}
@@ -238,7 +238,7 @@ func TestRouter_HandlerError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out, _ := router.Start(ctx, in)
+	out, _ := router.Pipe(ctx, in)
 
 	for range out {
 	}
@@ -285,7 +285,7 @@ func TestRouter_MultipleCommandHandlers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out, _ := router.Start(ctx, in)
+	out, _ := router.Pipe(ctx, in)
 
 	// WithTypeOf() sets type to reflected type name
 	results := make(map[string]int)
@@ -324,7 +324,7 @@ func TestRouter_WithCommandPipe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out, _ := router.Start(ctx, in)
+	out, _ := router.Pipe(ctx, in)
 
 	var results []*message.Message
 	for msg := range out {
@@ -378,7 +378,7 @@ func TestRouter_PipeWithHandlerFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out, _ := router.Start(ctx, in)
+	out, _ := router.Pipe(ctx, in)
 
 	var orderConfirmed, orderDoubled int
 	for msg := range out {

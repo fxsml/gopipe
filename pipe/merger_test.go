@@ -9,7 +9,7 @@ import (
 )
 
 // assertDoneClosed asserts that the done channel is closed within the timeout.
-// This helper ensures that FanIn properly signals completion of input channel processing.
+// This helper ensures that Merger properly signals completion of input channel processing.
 func assertDoneClosed(t *testing.T, done <-chan struct{}, timeout time.Duration, channelName string) {
 	t.Helper()
 	select {
@@ -20,10 +20,10 @@ func assertDoneClosed(t *testing.T, done <-chan struct{}, timeout time.Duration,
 	}
 }
 
-func TestFanIn_BasicMerge(t *testing.T) {
+func TestMerger_BasicMerge(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	fanin := NewFanIn[int](FanInConfig{
+	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
 		ShutdownTimeout: 0,
 	})
@@ -32,20 +32,23 @@ func TestFanIn_BasicMerge(t *testing.T) {
 	ch2 := make(chan int)
 	ch3 := make(chan int)
 
-	done1, err := fanin.Add(ch1)
+	done1, err := merger.Add(ch1)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch1: %v", err)
 	}
-	done2, err := fanin.Add(ch2)
+	done2, err := merger.Add(ch2)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch2: %v", err)
 	}
-	done3, err := fanin.Add(ch3)
+	done3, err := merger.Add(ch3)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch3: %v", err)
 	}
 
-	out := fanin.Start(ctx)
+	out, err := merger.Merge(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error starting merger: %v", err)
+	}
 	cancel()
 
 	// Send values from different channels
@@ -87,17 +90,20 @@ func TestFanIn_BasicMerge(t *testing.T) {
 	assertDoneClosed(t, done3, 1*time.Second, "ch3")
 }
 
-func TestFanIn_AddAfterClosed(t *testing.T) {
+func TestMerger_AddAfterClosed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	fanin := NewFanIn[int](FanInConfig{
+	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
 		ShutdownTimeout: 1,
 	})
-	out := fanin.Start(ctx)
+	out, err := merger.Merge(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error starting merger: %v", err)
+	}
 
 	ch1 := make(chan int)
-	done1, err := fanin.Add(ch1)
+	done1, err := merger.Add(ch1)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
@@ -113,7 +119,7 @@ func TestFanIn_AddAfterClosed(t *testing.T) {
 	ch2 <- 99
 	close(ch2)
 
-	_, err2 := fanin.Add(ch2)
+	_, err2 := merger.Add(ch2)
 	if err2 == nil {
 		t.Error("expected error when adding channel after close")
 	}
@@ -130,20 +136,23 @@ func TestFanIn_AddAfterClosed(t *testing.T) {
 	assertDoneClosed(t, done1, 1*time.Second, "ch1")
 }
 
-func TestFanIn_ContextCancellation(t *testing.T) {
+func TestMerger_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	fanin := NewFanIn[int](FanInConfig{
+	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
 		ShutdownTimeout: 1,
 	})
 
 	ch := make(chan int, 5)
-	done, err := fanin.Add(ch)
+	done, err := merger.Add(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
-	out := fanin.Start(ctx)
+	out, err := merger.Merge(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error starting merger: %v", err)
+	}
 
 	// Send some values
 	ch <- 1
@@ -171,10 +180,10 @@ func TestFanIn_ContextCancellation(t *testing.T) {
 	assertDoneClosed(t, done, 1*time.Second, "ch")
 }
 
-func TestFanIn_ShutdownDuration(t *testing.T) {
+func TestMerger_ShutdownDuration(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	fanin := NewFanIn[int](FanInConfig{
+	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
 		ShutdownTimeout: 100 * time.Millisecond,
 	})
@@ -185,11 +194,14 @@ func TestFanIn_ShutdownDuration(t *testing.T) {
 		ch <- i
 	}
 
-	done, err := fanin.Add(ch)
+	done, err := merger.Add(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
-	out := fanin.Start(ctx)
+	out, err := merger.Merge(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error starting merger: %v", err)
+	}
 
 	// Read a few values
 	<-out
@@ -220,20 +232,23 @@ func TestFanIn_ShutdownDuration(t *testing.T) {
 	assertDoneClosed(t, done, 500*time.Millisecond, "ch")
 }
 
-func TestFanIn_NoShutdownDuration(t *testing.T) {
+func TestMerger_NoShutdownDuration(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	fanin := NewFanIn[int](FanInConfig{
+	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
 		ShutdownTimeout: 0, // No timeout
 	})
 
 	ch := make(chan int)
-	done, err := fanin.Add(ch)
+	done, err := merger.Add(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
-	out := fanin.Start(ctx)
+	out, err := merger.Merge(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error starting merger: %v", err)
+	}
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -258,15 +273,18 @@ func TestFanIn_NoShutdownDuration(t *testing.T) {
 	assertDoneClosed(t, done, 1*time.Second, "ch")
 }
 
-func TestFanIn_ConcurrentAdds(t *testing.T) {
+func TestMerger_ConcurrentAdds(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	fanin := NewFanIn[int](FanInConfig{
+	merger := NewMerger[int](MergerConfig{
 		Buffer:          100,
 		ShutdownTimeout: 0,
 	})
-	out := fanin.Start(ctx)
+	out, err := merger.Merge(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error starting merger: %v", err)
+	}
 
 	var wg sync.WaitGroup
 	var doneMu sync.Mutex
@@ -279,7 +297,7 @@ func TestFanIn_ConcurrentAdds(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			ch := make(chan int, 5)
-			done, err := fanin.Add(ch)
+			done, err := merger.Add(ch)
 			if err != nil {
 				t.Errorf("unexpected error adding channel: %v", err)
 				return
@@ -325,20 +343,23 @@ func TestFanIn_ConcurrentAdds(t *testing.T) {
 	}
 }
 
-func TestFanIn_EmptyChannel(t *testing.T) {
+func TestMerger_EmptyChannel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	fanin := NewFanIn[int](FanInConfig{
+	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
 		ShutdownTimeout: 0,
 	})
 
 	ch := make(chan int)
-	done, err := fanin.Add(ch)
+	done, err := merger.Add(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
-	out := fanin.Start(ctx)
+	out, err := merger.Merge(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error starting merger: %v", err)
+	}
 
 	// Close empty channel
 	close(ch)
@@ -358,10 +379,10 @@ func TestFanIn_EmptyChannel(t *testing.T) {
 	assertDoneClosed(t, done, 1*time.Second, "ch")
 }
 
-func TestFanIn_MultipleInputsOneCloses(t *testing.T) {
+func TestMerger_MultipleInputsOneCloses(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	fanin := NewFanIn[int](FanInConfig{
+	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
 		ShutdownTimeout: 0,
 	})
@@ -370,20 +391,23 @@ func TestFanIn_MultipleInputsOneCloses(t *testing.T) {
 	ch2 := make(chan int)
 	ch3 := make(chan int)
 
-	done1, err := fanin.Add(ch1)
+	done1, err := merger.Add(ch1)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch1: %v", err)
 	}
-	done2, err := fanin.Add(ch2)
+	done2, err := merger.Add(ch2)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch2: %v", err)
 	}
-	done3, err := fanin.Add(ch3)
+	done3, err := merger.Add(ch3)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch3: %v", err)
 	}
 
-	out := fanin.Start(ctx)
+	out, err := merger.Merge(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error starting merger: %v", err)
+	}
 
 	// ch1 sends and closes immediately
 	go func() {
@@ -433,20 +457,23 @@ func TestFanIn_MultipleInputsOneCloses(t *testing.T) {
 	assertDoneClosed(t, done3, 1*time.Second, "ch3")
 }
 
-func TestFanIn_BufferFull(t *testing.T) {
+func TestMerger_BufferFull(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	fanin := NewFanIn[int](FanInConfig{
+	merger := NewMerger[int](MergerConfig{
 		Buffer:          2, // Small buffer
 		ShutdownTimeout: 100 * time.Millisecond,
 	})
 
 	ch := make(chan int, 5)
-	done, err := fanin.Add(ch)
+	done, err := merger.Add(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
-	out := fanin.Start(ctx)
+	out, err := merger.Merge(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error starting merger: %v", err)
+	}
 
 	// Fill buffer and channel
 	ch <- 1
@@ -478,33 +505,33 @@ func TestFanIn_BufferFull(t *testing.T) {
 	assertDoneClosed(t, done, 1*time.Second, "ch")
 }
 
-func TestFanIn_MultipleStartPanic(t *testing.T) {
+func TestMerger_MultipleMergeReturnsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	fanin := NewFanIn[int](FanInConfig{Buffer: 10})
+	merger := NewMerger[int](MergerConfig{Buffer: 10})
 
-	// First Start() should work
-	_ = fanin.Start(ctx)
+	// First Merge() should work
+	_, err := merger.Merge(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error on first Merge: %v", err)
+	}
 
-	// Second Start() should panic
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic when calling Start() twice")
-		}
-	}()
-
-	_ = fanin.Start(ctx)
+	// Second Merge() should return ErrAlreadyStarted
+	_, err = merger.Merge(ctx)
+	if err != ErrAlreadyStarted {
+		t.Errorf("expected ErrAlreadyStarted, got %v", err)
+	}
 }
 
-func TestFanIn_NoGoroutineLeakWhenStartedAndStopped(t *testing.T) {
+func TestMerger_NoGoroutineLeakWhenMergedAndStopped(t *testing.T) {
 	// Get initial goroutine count
 	initialGoroutines := runtime.NumGoroutine()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	fanin := NewFanIn[int](FanInConfig{
+	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
 		ShutdownTimeout: 100 * time.Millisecond,
 	})
@@ -513,7 +540,7 @@ func TestFanIn_NoGoroutineLeakWhenStartedAndStopped(t *testing.T) {
 	doneChs := []<-chan struct{}{}
 	for range 5 {
 		ch := make(chan int, 10)
-		done, err := fanin.Add(ch)
+		done, err := merger.Add(ch)
 		if err != nil {
 			t.Fatalf("unexpected error adding channel: %v", err)
 		}
@@ -527,7 +554,10 @@ func TestFanIn_NoGoroutineLeakWhenStartedAndStopped(t *testing.T) {
 		}()
 	}
 
-	out := fanin.Start(ctx)
+	out, err := merger.Merge(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error starting merger: %v", err)
+	}
 
 	// Consume some values
 	count := 0
@@ -566,11 +596,11 @@ func TestFanIn_NoGoroutineLeakWhenStartedAndStopped(t *testing.T) {
 	}
 }
 
-func TestFanIn_NoGoroutineLeakWhenNeverStarted(t *testing.T) {
+func TestMerger_NoGoroutineLeakWhenNeverMerged(t *testing.T) {
 	// Get initial goroutine count
 	initialGoroutines := runtime.NumGoroutine()
 
-	fanin := NewFanIn[int](FanInConfig{
+	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
 		ShutdownTimeout: 100 * time.Millisecond,
 	})
@@ -578,7 +608,7 @@ func TestFanIn_NoGoroutineLeakWhenNeverStarted(t *testing.T) {
 	// Add several channels without starting
 	for range 5 {
 		ch := make(chan int, 10)
-		if _, err := fanin.Add(ch); err != nil {
+		if _, err := merger.Add(ch); err != nil {
 			t.Fatalf("unexpected error adding channel: %v", err)
 		}
 	}

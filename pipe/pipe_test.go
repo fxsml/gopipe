@@ -21,7 +21,7 @@ func TestBatch(t *testing.T) {
 				MaxSize:     maxSize,
 				MaxDuration: maxDuration,
 			},
-		).Start(context.Background(), in)
+		).Pipe(context.Background(), in)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -35,7 +35,7 @@ func TestFilter(t *testing.T) {
 		handlePipe := func(_ context.Context, v int) (bool, error) {
 			return handle(v), nil
 		}
-		out, err := NewFilterPipe(handlePipe, Config{}).Start(context.Background(), in)
+		out, err := NewFilterPipe(handlePipe, Config{}).Pipe(context.Background(), in)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -55,7 +55,7 @@ func TestProcess(t *testing.T) {
 		out, err := NewProcessPipe(
 			handlePipe,
 			Config{},
-		).Start(context.Background(), in)
+		).Pipe(context.Background(), in)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -70,7 +70,7 @@ func TestSink(t *testing.T) {
 			handle(in)
 			return nil
 		}
-		out, err := NewSinkPipe(handlePipe, Config{}).Start(context.Background(), in)
+		out, err := NewSinkPipe(handlePipe, Config{}).Pipe(context.Background(), in)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -91,7 +91,7 @@ func TestProcessPipe_ApplyMiddleware(t *testing.T) {
 			return []int{len(s)}, nil
 		}, Config{})
 
-		out, err := p.Start(context.Background(), in)
+		out, err := p.Pipe(context.Background(), in)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -121,7 +121,7 @@ func TestProcessPipe_ApplyMiddleware(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		out, err := p.Start(context.Background(), in)
+		out, err := p.Pipe(context.Background(), in)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -167,7 +167,7 @@ func TestProcessPipe_ApplyMiddleware(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		out, err := p.Start(context.Background(), in)
+		out, err := p.Pipe(context.Background(), in)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -218,7 +218,7 @@ func TestProcessPipe_ApplyMiddleware(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		out, err := p.Start(context.Background(), in)
+		out, err := p.Pipe(context.Background(), in)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -261,7 +261,7 @@ func TestProcessPipe_ApplyMiddleware(t *testing.T) {
 		if err := p1.ApplyMiddleware(mw1, mw2, mw3); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		out1, err := p1.Start(context.Background(), in1)
+		out1, err := p1.Pipe(context.Background(), in1)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -282,7 +282,7 @@ func TestProcessPipe_ApplyMiddleware(t *testing.T) {
 		if err := p2.ApplyMiddleware(mw3); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		out2, err := p2.Start(context.Background(), in2)
+		out2, err := p2.Pipe(context.Background(), in2)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -301,7 +301,7 @@ func TestProcessPipe_ApplyMiddleware(t *testing.T) {
 }
 
 func TestProcessPipe_ErrAlreadyStarted(t *testing.T) {
-	t.Run("Start_ReturnsErrorOnSecondCall", func(t *testing.T) {
+	t.Run("Pipe_ReturnsErrorOnSecondCall", func(t *testing.T) {
 		in := make(chan int)
 		close(in)
 
@@ -310,9 +310,9 @@ func TestProcessPipe_ErrAlreadyStarted(t *testing.T) {
 		}, Config{})
 
 		// First call should succeed
-		out, err := p.Start(context.Background(), in)
+		out, err := p.Pipe(context.Background(), in)
 		if err != nil {
-			t.Fatalf("Expected no error on first Start, got %v", err)
+			t.Fatalf("Expected no error on first Pipe, got %v", err)
 		}
 		if out == nil {
 			t.Fatal("Expected output channel, got nil")
@@ -323,7 +323,7 @@ func TestProcessPipe_ErrAlreadyStarted(t *testing.T) {
 		}
 
 		// Second call should return ErrAlreadyStarted
-		_, err = p.Start(context.Background(), in)
+		_, err = p.Pipe(context.Background(), in)
 		if !errors.Is(err, ErrAlreadyStarted) {
 			t.Errorf("Expected ErrAlreadyStarted, got %v", err)
 		}
@@ -346,7 +346,7 @@ func TestProcessPipe_ErrAlreadyStarted(t *testing.T) {
 		}
 
 		// Start the pipe
-		out, err := p.Start(context.Background(), in)
+		out, err := p.Pipe(context.Background(), in)
 		if err != nil {
 			t.Fatalf("Expected no error on Start, got %v", err)
 		}
@@ -366,7 +366,7 @@ func TestProcessPipe_ErrAlreadyStarted(t *testing.T) {
 }
 
 func TestBatchPipe_ErrAlreadyStarted(t *testing.T) {
-	t.Run("Start_ReturnsErrorOnSecondCall", func(t *testing.T) {
+	t.Run("Pipe_ReturnsErrorOnSecondCall", func(t *testing.T) {
 		in := make(chan int)
 		close(in)
 
@@ -375,9 +375,9 @@ func TestBatchPipe_ErrAlreadyStarted(t *testing.T) {
 		}, BatchConfig{MaxSize: 10})
 
 		// First call should succeed
-		out, err := p.Start(context.Background(), in)
+		out, err := p.Pipe(context.Background(), in)
 		if err != nil {
-			t.Fatalf("Expected no error on first Start, got %v", err)
+			t.Fatalf("Expected no error on first Pipe, got %v", err)
 		}
 		if out == nil {
 			t.Fatal("Expected output channel, got nil")
@@ -388,7 +388,7 @@ func TestBatchPipe_ErrAlreadyStarted(t *testing.T) {
 		}
 
 		// Second call should return ErrAlreadyStarted
-		_, err = p.Start(context.Background(), in)
+		_, err = p.Pipe(context.Background(), in)
 		if !errors.Is(err, ErrAlreadyStarted) {
 			t.Errorf("Expected ErrAlreadyStarted, got %v", err)
 		}
@@ -411,7 +411,7 @@ func TestBatchPipe_ErrAlreadyStarted(t *testing.T) {
 		}
 
 		// Start the pipe
-		out, err := p.Start(context.Background(), in)
+		out, err := p.Pipe(context.Background(), in)
 		if err != nil {
 			t.Fatalf("Expected no error on Start, got %v", err)
 		}
