@@ -1,10 +1,7 @@
-# ADR 0012: Multiplex Publisher/Subscriber
+# ADR 0013: Multiplex Publisher/Subscriber
 
 **Date:** 2025-12-08
 **Status:** Implemented
-**Updated:** 2025-12-11
-
-> **Update 2025-12-11:** Package moved from `pubsub/multiplex` to `message/multiplex`.
 
 ## Context
 
@@ -39,18 +36,24 @@ Pattern matching: "*" matches one segment, "**" matches multiple (dot-separated)
 
 ## Consequences
 
-**Positive:**
+**Benefits:**
 - Centralized routing logic
 - Function-based selectors (flexible, composable)
 - Required fallback prevents routing errors
 - Easy to test (inject mocks via selector)
 
-**Negative:**
+**Drawbacks:**
 - Additional abstraction layer
 - Pattern matching has performance cost
 - Selector must be stateless
 
 ## Links
 
-- ADR 0010: Message Package Structure
+- Related: ADR 0012 (Message Package Structure)
 - Package: `github.com/fxsml/gopipe/message/multiplex`
+
+## Updates
+
+**2025-12-11:** Package moved from `pubsub/multiplex` to `message/multiplex`.
+
+**2025-12-22:** Fixed Links references. Updated Consequences format to match ADR template.

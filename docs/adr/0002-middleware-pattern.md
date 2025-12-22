@@ -1,7 +1,7 @@
-# ADR 0015: Middleware Pattern
+# ADR 0002: Middleware Pattern
 
 **Date:** 2025-10-01
-**Status:** Implemented
+**Status:** Superseded by ADR 0017
 
 ## Context
 
@@ -25,15 +25,19 @@ Middlewares are applied in reverse order (last to first), creating a wrapping pa
 
 ## Consequences
 
-**Positive:**
+**Benefits:**
 - Clean separation of cross-cutting concerns
 - Consistent extension pattern
 - Reusable functionality across processors
 
-**Negative:**
+**Drawbacks:**
 - Complexity in understanding execution flow
 - Slight performance overhead
 
 ## Links
 
-- Related: ADR 0013, ADR 0014
+- Superseded by: ADR 0017 (Middleware for ProcessFunc)
+
+## Updates
+
+**2025-12-22:** Updated Consequences format to match ADR template.

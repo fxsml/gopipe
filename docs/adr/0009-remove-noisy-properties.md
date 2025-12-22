@@ -1,10 +1,7 @@
-# ADR 0003: Remove Noisy Attributes
+# ADR 0009: Remove Noisy Attributes
 
 **Date:** 2025-11-01
 **Status:** Implemented
-
-> **Historical Note:** This ADR uses mixed terminology (`Prop*` and `Attr*`).
-> The current API uses `Attr*` constants consistently (e.g., `AttrTime`, `AttrDeadline`).
 
 ## Context
 Message had many property constants and accessors that added noise without clear use cases:
@@ -42,3 +39,14 @@ Keep only essential attributes:
 **Drawbacks:**
 - Users need slightly more code for removed attributes
 - Migration effort for existing code using these attributes
+
+## Links
+
+- Related: ADR 0007 (Public Message Fields)
+- Related: ADR 0008 (Remove Attributes Thread-Safety)
+
+## Updates
+
+**2025-11-15:** Unified terminology from mixed `Prop*`/`Attr*` to consistent `Attr*` constants.
+
+**2025-12-22:** Updated Consequences format to match ADR template.

@@ -1,7 +1,7 @@
-# ADR 0013: Processor Abstraction
+# ADR 0001: Processor Abstraction
 
 **Date:** 2025-10-01
-**Status:** Implemented
+**Status:** Superseded by ADR 0015
 
 ## Context
 
@@ -20,15 +20,19 @@ type Processor[In, Out any] interface {
 
 ## Consequences
 
-**Positive:**
+**Benefits:**
 - Unified abstraction for processing and error handling
 - Enables middleware pattern for cross-cutting concerns
 - Improves composability and testability
 
-**Negative:**
+**Drawbacks:**
 - Adds abstraction layer overhead
 - Requires refactoring existing code
 
 ## Links
 
-- Related: ADR 0014, ADR 0015
+- Superseded by: ADR 0015 (Remove Cancel Path)
+
+## Updates
+
+**2025-12-22:** Updated Consequences format to match ADR template.

@@ -1,11 +1,7 @@
-# ADR 0006: CQRS Implementation
+# ADR 0011: CQRS Implementation
 
 **Date:** 2025-12-08
 **Status:** Implemented
-**Updated:** 2025-12-11
-
-> **Update 2025-12-11:** The `cqrs` package has been moved to `message/cqrs`. The core Router and
-> Handler types are now in the `message` package, with CQRS-specific handlers in `message/cqrs`.
 
 ## Context
 
@@ -47,19 +43,23 @@ Design principles: Type-safe, simple, flexible marshaling, explicit command/even
 
 ## Consequences
 
-**Positive:**
+**Benefits:**
 - Type-safe CQRS with generics
 - Pluggable serialization (JSON, Protobuf)
 - Decoupled event handlers (side effects only)
 - Saga coordination via interface
 
-**Negative:**
+**Drawbacks:**
 - Additional package to learn
 - Runtime type assertions in handlers
 
 ## Links
 
-- ADR 0007: Saga Coordinator Pattern
-- ADR 0008: Compensating Saga Pattern (proposed)
-- ADR 0009: Transactional Outbox Pattern (proposed)
+- Related: ADR 0012 (Message Package Structure)
 - Package: `github.com/fxsml/gopipe/message/cqrs`
+
+## Updates
+
+**2025-12-11:** Package moved from `cqrs` to `message/cqrs`.
+
+**2025-12-22:** Fixed Links references. Updated Consequences format to match ADR template.

@@ -1,4 +1,4 @@
-# ADR 0001: Public Message Fields
+# ADR 0007: Public Message Fields
 
 **Date:** 2025-11-01
 **Status:** Implemented
@@ -27,3 +27,12 @@ Remove accessor methods `Data()` and `Attributes()`.
 
 **Drawbacks:**
 - No encapsulation (acceptable for data structures)
+
+## Links
+
+- Related: ADR 0008 (Remove Attributes Thread-Safety)
+- Related: ADR 0010 (Dual Message Types)
+
+## Updates
+
+**2025-12-22:** Added Links section. Updated Consequences format to match ADR template.
