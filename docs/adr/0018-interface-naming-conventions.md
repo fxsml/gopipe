@@ -1,17 +1,15 @@
 # ADR 0018: Interface Naming Conventions
 
 **Date:** 2025-12-22
-**Status:** Accepted
+**Status:** Implemented
 
 ## Context
 
-Inconsistent interface naming. Go convention: `<Verb>er` interface with `<Verb>()` method (e.g., `io.Reader.Read()`).
+Inconsistent interface naming across library. Go convention: `<Verb>er` interface with `<Verb>()` method (e.g., `io.Reader.Read()`).
 
 ## Decision
 
 Adopt `<Verb>er.<Verb>()` pattern. Reserve `Start()` for orchestration types only.
-
-### Interfaces
 
 ```go
 // Channel-level operations
@@ -37,17 +35,20 @@ type Engine interface {
 }
 ```
 
-### Breaking Changes
-
-| Before | After |
-|--------|-------|
-| `Pipe.Start()` | `Pipe.Pipe()` |
-| `FanIn` | `Merger` |
-| `FanIn.Start()` | `Merger.Merge()` |
-| `FanInConfig` | `MergerConfig` |
-
 ## Consequences
 
+**Breaking Changes:**
+- `Pipe.Start()` → `Pipe.Pipe()`
+- `FanIn` → `Merger`, `FanInConfig` → `MergerConfig`
+- `FanIn.Start()` → `Merger.Merge()`
+
+**Benefits:**
 - Consistent `<Verb>er.<Verb>()` pattern across library
 - `Start()` clearly indicates orchestration-level component
+
+**Drawbacks:**
 - Breaking change for existing `Pipe` and `FanIn` users
+
+## Links
+
+- Related: ADR 0015-0017 (processor simplification series)

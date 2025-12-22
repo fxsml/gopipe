@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+#### Interface Naming Conventions (ADR 0018)
+- **pipe**: `Pipe.Start()` renamed to `Pipe.Pipe()`
+- **pipe**: `FanIn` renamed to `Merger`, `FanInConfig` to `MergerConfig`
+- **pipe**: `FanIn.Start()` renamed to `Merger.Merge()`
+- **message**: All `Start()` methods renamed to `Pipe()` for pipe implementations
+- See: [docs/adr/0018-interface-naming-conventions.md](docs/adr/0018-interface-naming-conventions.md)
+
 #### Processor API Simplification (ADR 0015-0017)
 - **pipe**: Remove builder pattern, use direct struct configuration
 - **pipe**: `Start()` now returns `(<-chan Out, error)` instead of `<-chan Out`
@@ -30,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ADR 0015: Remove cancel path from ProcessFunc
 - ADR 0016: Processor config struct pattern
 - ADR 0017: Middleware for ProcessFunc
+- ADR 0018: Interface naming conventions (`<Verb>er.<Verb>()` pattern)
 - ADR template documentation moved to `docs/procedures/adr.md`
 
 #### Error Handling
