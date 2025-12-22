@@ -6,8 +6,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
+	"github.com/fxsml/gopipe/pipe"
+	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 func main() {
@@ -19,19 +20,26 @@ func main() {
 		return strconv.Itoa(i)
 	})
 
-	// Create a transform pipe that converts strings to integers
-	pipe := pipe.NewTransformPipe(
+	// Create a transform p that converts strings to integers
+	p := pipe.NewTransformPipe(
 		func(ctx context.Context, val string) (int, error) {
 			time.Sleep(100 * time.Millisecond)
 			return strconv.Atoi(val)
 		},
-		pipe.WithConcurrency[string, int](5), // 5 workers
-		pipe.WithBuffer[string, int](10),     // Buffer up to 10 results
-		pipe.WithRecover[string, int](),      // Recover from panics
+		pipe.Config{
+			Concurrency: 5,
+			BufferSize:  10,
+		},
 	)
+	if err := p.ApplyMiddleware(middleware.Recover[string, int]()); err != nil {
+		panic(err)
+	}
 
 	// Start the pipe
-	processed := pipe.Start(ctx, in)
+	processed, err := p.Start(ctx, in)
+	if err != nil {
+		panic(err)
+	}
 
 	// Consume processed values
 	<-channel.Sink(processed, func(val int) {

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/pipe"
 )
 
 func main() {
@@ -20,14 +20,14 @@ func main() {
 	// Create messages using the new direct construction API
 	in := channel.FromValues(
 		message.NewWithAcking(12, message.Attributes{
-			message.AttrID:     "msg-001",
-			"source":           "orders-queue",
-			message.AttrTime:   time.Now(),
+			message.AttrID:   "msg-001",
+			"source":         "orders-queue",
+			message.AttrTime: time.Now(),
 		}, ack, nack),
 		message.NewWithAcking(42, message.Attributes{
-			message.AttrID:     "msg-002",
-			"source":           "orders-queue",
-			message.AttrTime:   time.Now(),
+			message.AttrID:   "msg-002",
+			"source":         "orders-queue",
+			message.AttrTime: time.Now(),
 		}, ack, nack),
 	)
 
@@ -48,11 +48,14 @@ func main() {
 			res := msg.Data * 2
 			msg.Ack()
 			return message.New(res, msg.Attributes), nil
-		},
+		}, pipe.Config{},
 	)
 
 	// Process message
-	results := pipe.Start(ctx, in)
+	results, err := pipe.Start(ctx, in)
+	if err != nil {
+		panic(err)
+	}
 
 	// Consume results
 	<-channel.Sink(results, func(result *message.TypedMessage[int]) {
