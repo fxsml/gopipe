@@ -22,7 +22,7 @@ func RunBatch_Success(t *testing.T, f BatchFunc[int, int]) {
 		}
 		close(in)
 
-		// Batch processor that doubles each number in the batch
+		// Batch handler that doubles each number in the batch
 		handle := func(batch []int) []int {
 			result := make([]int, len(batch))
 			for i, v := range batch {
