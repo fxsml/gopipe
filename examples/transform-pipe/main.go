@@ -36,7 +36,7 @@ func main() {
 	}
 
 	// Start the pipe
-	processed, err := p.Start(ctx, in)
+	processed, err := p.Pipe(ctx, in)
 	if err != nil {
 		panic(err)
 	}

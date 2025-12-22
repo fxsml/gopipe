@@ -15,16 +15,16 @@ type pipeAdapter[In, Out any] struct {
 	match     message.Matcher
 }
 
-func (p *pipeAdapter[In, Out]) Start(ctx context.Context, msgs <-chan *message.Message) (<-chan *message.Message, error) {
-	unmarshalOut, err := p.unmarshal.Start(ctx, msgs)
+func (p *pipeAdapter[In, Out]) Pipe(ctx context.Context, msgs <-chan *message.Message) (<-chan *message.Message, error) {
+	unmarshalOut, err := p.unmarshal.Pipe(ctx, msgs)
 	if err != nil {
 		return nil, err
 	}
-	pipeOut, err := p.pipe.Start(ctx, unmarshalOut)
+	pipeOut, err := p.pipe.Pipe(ctx, unmarshalOut)
 	if err != nil {
 		return nil, err
 	}
-	return p.marshal.Start(ctx, pipeOut)
+	return p.marshal.Pipe(ctx, pipeOut)
 }
 
 func (p *pipeAdapter[In, Out]) Match(attrs message.Attributes) bool {

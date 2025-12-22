@@ -29,8 +29,8 @@ type messagePipe struct {
 	match func(attrs Attributes) bool
 }
 
-func (p *messagePipe) Start(ctx context.Context, msgs <-chan *Message) (<-chan *Message, error) {
-	return p.pipe.Start(ctx, msgs)
+func (p *messagePipe) Pipe(ctx context.Context, msgs <-chan *Message) (<-chan *Message, error) {
+	return p.pipe.Pipe(ctx, msgs)
 }
 
 func (p *messagePipe) Match(attrs Attributes) bool {

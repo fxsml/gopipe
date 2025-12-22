@@ -65,7 +65,7 @@ func (p *Publisher) Publish(ctx context.Context, msgs <-chan *Message) (<-chan s
 	if err := pp.ApplyMiddleware(mw...); err != nil {
 		return nil, err
 	}
-	return pp.Start(ctx, group)
+	return pp.Pipe(ctx, group)
 }
 
 // PublisherConfig configures the Publisher behavior.

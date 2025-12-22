@@ -18,7 +18,7 @@ func (g *generatorAdapter[Out]) Generate(ctx context.Context) (<-chan *message.M
 	if err != nil {
 		return nil, err
 	}
-	return g.marshal.Start(ctx, genOut)
+	return g.marshal.Pipe(ctx, genOut)
 }
 
 func NewEventGenerator[Out any](

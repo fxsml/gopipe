@@ -32,7 +32,7 @@ func main() {
 	)
 
 	// Create pipe with acknowledgment
-	pipe := pipe.NewTransformPipe(
+	p := pipe.NewTransformPipe(
 		func(ctx context.Context, msg *message.TypedMessage[int]) (*message.TypedMessage[int], error) {
 			// Add processed timestamp
 			msg.Attributes["processed_at"] = time.Now().Format(time.RFC3339)
@@ -52,7 +52,7 @@ func main() {
 	)
 
 	// Process message
-	results, err := pipe.Start(ctx, in)
+	results, err := p.Pipe(ctx, in)
 	if err != nil {
 		panic(err)
 	}
