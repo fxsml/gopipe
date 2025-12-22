@@ -11,11 +11,11 @@ import (
 
 // Pipe represents a complete processing pipeline that transforms input values to output values.
 // It combines preprocessing with a ProcessFunc and configuration.
-type Pipe[Pre, Out any] interface {
-	// Start begins processing items from the input channel and returns a channel for outputs.
+type Pipe[In, Out any] interface {
+	// Pipe begins processing items from the input channel and returns a channel for outputs.
 	// Processing continues until the input channel is closed or the context is canceled.
 	// Returns ErrAlreadyStarted if the pipe has already been started.
-	Start(ctx context.Context, pre <-chan Pre) (<-chan Out, error)
+	Pipe(ctx context.Context, in <-chan In) (<-chan Out, error)
 }
 
 type appliedPipe[In, Inter, Out any] struct {
@@ -23,12 +23,12 @@ type appliedPipe[In, Inter, Out any] struct {
 	pipeB Pipe[Inter, Out]
 }
 
-func (p *appliedPipe[In, Inter, Out]) Start(ctx context.Context, in <-chan In) (<-chan Out, error) {
-	inter, err := p.pipeA.Start(ctx, in)
+func (p *appliedPipe[In, Inter, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out, error) {
+	inter, err := p.pipeA.Pipe(ctx, in)
 	if err != nil {
 		return nil, err
 	}
-	return p.pipeB.Start(ctx, inter)
+	return p.pipeB.Pipe(ctx, inter)
 }
 
 // Apply combines two Pipes into one, connecting the output of the first to the input of the second.
@@ -116,9 +116,9 @@ type ProcessPipe[In, Out any] struct {
 	started bool
 }
 
-// Start begins processing items from the input channel.
+// Pipe begins processing items from the input channel.
 // Returns ErrAlreadyStarted if the pipe has already been started.
-func (p *ProcessPipe[In, Out]) Start(ctx context.Context, in <-chan In) (<-chan Out, error) {
+func (p *ProcessPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.started {
@@ -182,9 +182,9 @@ type BatchPipe[In, Out any] struct {
 	started bool
 }
 
-// Start begins collecting items into batches and processing them.
+// Pipe begins collecting items into batches and processing them.
 // Returns ErrAlreadyStarted if the pipe has already been started.
-func (p *BatchPipe[In, Out]) Start(ctx context.Context, in <-chan In) (<-chan Out, error) {
+func (p *BatchPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.started {
