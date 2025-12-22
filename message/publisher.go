@@ -4,21 +4,20 @@ import (
 	"context"
 	"time"
 
-	"github.com/fxsml/gopipe/pipe"
 	"github.com/fxsml/gopipe/channel"
+	"github.com/fxsml/gopipe/pipe"
+	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 // Publisher provides channel-based message publishing with batching and routing.
 type Publisher struct {
 	sender Sender
 	config PublisherConfig
-	proc   pipe.Processor[channel.Group[string, *Message], struct{}]
-	opts   []pipe.Option[channel.Group[string, *Message], struct{}]
 }
 
 // Publish consumes messages from the input channel, batches them by topic,
 // and sends them via the Sender. Returns a channel that closes when publishing completes.
-func (p *Publisher) Publish(ctx context.Context, msgs <-chan *Message) <-chan struct{} {
+func (p *Publisher) Publish(ctx context.Context, msgs <-chan *Message) (<-chan struct{}, error) {
 	// Extract topic from message properties, defaulting to empty string
 	groupBy := func(msg *Message) string {
 		topic, _ := msg.Attributes.Topic()
@@ -28,7 +27,45 @@ func (p *Publisher) Publish(ctx context.Context, msgs <-chan *Message) <-chan st
 		MaxBatchSize: p.config.MaxBatchSize,
 		MaxDuration:  p.config.MaxDuration,
 	})
-	return pipe.StartProcessor(ctx, group, p.proc, p.opts...)
+
+	handle := func(ctx context.Context, group channel.Group[string, *Message]) ([]struct{}, error) {
+		return nil, p.sender.Send(ctx, group.Key, group.Items)
+	}
+
+	// Build middleware chain
+	var mw []middleware.Middleware[channel.Group[string, *Message], struct{}]
+
+	mw = append(mw, middleware.Log[channel.Group[string, *Message], struct{}](middleware.LogConfig{
+		MessageSuccess: "Published messages",
+		MessageFailure: "Failed to publish messages",
+		MessageCancel:  "Canceled publishing messages",
+	}))
+
+	if p.config.Retry != nil {
+		mw = append(mw, middleware.Retry[channel.Group[string, *Message], struct{}](*p.config.Retry))
+	}
+	if p.config.Timeout > 0 {
+		mw = append(mw, middleware.Context[channel.Group[string, *Message], struct{}](middleware.ContextConfig{
+			Timeout:    p.config.Timeout,
+			Background: true,
+		}))
+	}
+	if p.config.Recover {
+		mw = append(mw, middleware.Recover[channel.Group[string, *Message], struct{}]())
+	}
+
+	cfg := pipe.Config{
+		Concurrency: p.config.Concurrency,
+	}
+	if cfg.Concurrency <= 0 {
+		cfg.Concurrency = 1
+	}
+
+	pp := pipe.NewProcessPipe(handle, cfg)
+	if err := pp.ApplyMiddleware(mw...); err != nil {
+		return nil, err
+	}
+	return pp.Start(ctx, group)
 }
 
 // PublisherConfig configures the Publisher behavior.
@@ -42,7 +79,7 @@ type PublisherConfig struct {
 	// Timeout is the maximum duration for each send operation.
 	Timeout time.Duration
 	// Retry configures automatic retry on failures.
-	Retry *pipe.RetryConfig
+	Retry *middleware.RetryConfig
 	// Recover enables panic recovery in send operations.
 	Recover bool
 }
@@ -63,34 +100,9 @@ func NewPublisher(
 	if sender == nil {
 		panic("message: sender cannot be nil")
 	}
-	proc := pipe.NewProcessor(func(ctx context.Context, group channel.Group[string, *Message]) ([]struct{}, error) {
-		return nil, sender.Send(ctx, group.Key, group.Items)
-	}, nil)
-
-	opts := []pipe.Option[channel.Group[string, *Message], struct{}]{
-		pipe.WithLogConfig[channel.Group[string, *Message], struct{}](pipe.LogConfig{
-			MessageSuccess: "Published messages",
-			MessageFailure: "Failed to publish messages",
-			MessageCancel:  "Canceled publishing messages",
-		}),
-	}
-	if config.Recover {
-		opts = append(opts, pipe.WithRecover[channel.Group[string, *Message], struct{}]())
-	}
-	if config.Concurrency > 0 {
-		opts = append(opts, pipe.WithConcurrency[channel.Group[string, *Message], struct{}](config.Concurrency))
-	}
-	if config.Timeout > 0 {
-		opts = append(opts, pipe.WithTimeout[channel.Group[string, *Message], struct{}](config.Timeout))
-	}
-	if config.Retry != nil {
-		opts = append(opts, pipe.WithRetryConfig[channel.Group[string, *Message], struct{}](*config.Retry))
-	}
 
 	return &Publisher{
 		sender: sender,
 		config: config,
-		proc:   proc,
-		opts:   opts,
 	}
 }

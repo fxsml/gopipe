@@ -441,7 +441,7 @@ func TestIntegration_WithPublisher(t *testing.T) {
 	msgs := make(chan *message.Message, 10)
 
 	// Start publisher
-	done := publisher.Publish(ctx, msgs)
+	done, _ := publisher.Publish(ctx, msgs)
 
 	// Send messages with different topics
 	msgs <- message.New([]byte("internal-1"), message.Attributes{
@@ -466,8 +466,14 @@ func TestIntegration_WithSubscriber(t *testing.T) {
 	defer cancel()
 
 	// Subscribe first (messages only delivered to active subscriptions)
-	internalCh := memoryBroker.Subscribe(ctx, "internal/events")
-	externalCh := externalBroker.Subscribe(ctx, "external/api")
+	internalCh, err := memoryBroker.Subscribe(ctx, "internal/events")
+	if err != nil {
+		t.Fatalf("Failed to subscribe to memory broker: %v", err)
+	}
+	externalCh, err := externalBroker.Subscribe(ctx, "external/api")
+	if err != nil {
+		t.Fatalf("Failed to subscribe to external broker: %v", err)
+	}
 
 	// Send messages to brokers
 	if err := memoryBroker.Send(ctx, "internal/events", []*message.Message{

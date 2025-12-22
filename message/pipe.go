@@ -29,7 +29,7 @@ type messagePipe struct {
 	match func(attrs Attributes) bool
 }
 
-func (p *messagePipe) Start(ctx context.Context, msgs <-chan *Message) <-chan *Message {
+func (p *messagePipe) Start(ctx context.Context, msgs <-chan *Message) (<-chan *Message, error) {
 	return p.pipe.Start(ctx, msgs)
 }
 

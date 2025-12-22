@@ -32,7 +32,7 @@ func TestRouter_BasicRouting(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var results []*message.Message
 	for msg := range out {
@@ -84,7 +84,7 @@ func TestRouter_MultipleHandlers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	results := make(map[string]int)
 	for msg := range out {
@@ -128,7 +128,7 @@ func TestRouter_NoMatchingHandler(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var count int
 	for range out {
@@ -173,7 +173,7 @@ func TestRouter_HandlerError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var count int
 	for range out {
@@ -212,7 +212,7 @@ func TestRouter_AckOnSuccess(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	for range out {
 	}
@@ -251,7 +251,7 @@ func TestRouter_Concurrency(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var count int
 	for range out {
@@ -287,7 +287,7 @@ func TestRouter_WithRecover(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	// Should not panic due to Recover option
 	for range out {
@@ -313,7 +313,7 @@ func TestRouter_MultipleOutputMessages(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var count int
 	for range out {
@@ -330,7 +330,7 @@ func TestRouter_AddPipe_Basic(t *testing.T) {
 		out := message.Copy(msg, append(msg.Data, []byte("-piped")...))
 		out.Attributes[message.AttrSubject] = "piped"
 		return []*message.Message{out}, nil
-	})
+	}, pipe.Config{})
 
 	router := message.NewRouter(message.RouterConfig{})
 	router.AddPipe(message.NewPipe(pipe, message.MatchSubject("pipe-input")))
@@ -342,7 +342,7 @@ func TestRouter_AddPipe_Basic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var results []*message.Message
 	for msg := range out {
@@ -368,7 +368,7 @@ func TestRouter_AddPipe_WithHandlers(t *testing.T) {
 		out := message.Copy(msg, []byte("from-pipe"))
 		out.Attributes[message.AttrSubject] = "pipe-out"
 		return []*message.Message{out}, nil
-	})
+	}, pipe.Config{})
 
 	handler := message.NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
@@ -391,7 +391,7 @@ func TestRouter_AddPipe_WithHandlers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	results := make(map[string]int)
 	for msg := range out {
@@ -412,13 +412,13 @@ func TestRouter_AddPipe_MultiplePipes(t *testing.T) {
 		out := message.Copy(msg, []byte("pipe1"))
 		out.Attributes[message.AttrSubject] = "out1"
 		return []*message.Message{out}, nil
-	})
+	}, pipe.Config{})
 
 	pipe2 := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		out := message.Copy(msg, []byte("pipe2"))
 		out.Attributes[message.AttrSubject] = "out2"
 		return []*message.Message{out}, nil
-	})
+	}, pipe.Config{})
 
 	router := message.NewRouter(message.RouterConfig{})
 	router.AddPipe(message.NewPipe(pipe1, message.MatchSubject("in1")))
@@ -432,7 +432,7 @@ func TestRouter_AddPipe_MultiplePipes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	results := make(map[string]string)
 	for msg := range out {
@@ -452,7 +452,7 @@ func TestRouter_AddPipe_NoMatch(t *testing.T) {
 	pipe := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		t.Error("Pipe should not be called for non-matching message")
 		return []*message.Message{msg}, nil
-	})
+	}, pipe.Config{})
 
 	handler := message.NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
@@ -474,7 +474,7 @@ func TestRouter_AddPipe_NoMatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var count int
 	for msg := range out {
@@ -495,7 +495,7 @@ func TestRouter_AddPipe_MultipleOutputs(t *testing.T) {
 		out1 := message.Copy(msg, []byte("out1"))
 		out2 := message.Copy(msg, []byte("out2"))
 		return []*message.Message{out1, out2}, nil
-	})
+	}, pipe.Config{})
 
 	router := message.NewRouter(message.RouterConfig{})
 	router.AddPipe(message.NewPipe(pipe, message.MatchSubject("input")))
@@ -507,7 +507,7 @@ func TestRouter_AddPipe_MultipleOutputs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var results []*message.Message
 	for msg := range out {
@@ -538,7 +538,7 @@ func TestRouter_AddHandlerAfterStart(t *testing.T) {
 	// Start the router
 	in := make(chan *message.Message)
 	close(in)
-	router.Start(context.Background(), in)
+	_, _ = router.Start(context.Background(), in)
 
 	// AddHandler after Start should fail
 	ok = router.AddHandler(handler)
@@ -550,7 +550,7 @@ func TestRouter_AddHandlerAfterStart(t *testing.T) {
 func TestRouter_AddPipeAfterStart(t *testing.T) {
 	pipe := pipe.NewTransformPipe(func(ctx context.Context, msg *message.Message) (*message.Message, error) {
 		return msg, nil
-	})
+	}, pipe.Config{})
 
 	router := message.NewRouter(message.RouterConfig{})
 
@@ -563,7 +563,7 @@ func TestRouter_AddPipeAfterStart(t *testing.T) {
 	// Start the router
 	in := make(chan *message.Message)
 	close(in)
-	router.Start(context.Background(), in)
+	_, _ = router.Start(context.Background(), in)
 
 	// AddPipe after Start should fail
 	ok = router.AddPipe(message.NewPipe(pipe, func(attrs message.Attributes) bool { return false }))
@@ -586,17 +586,23 @@ func TestRouter_StartTwice(t *testing.T) {
 	// First Start should succeed
 	in1 := make(chan *message.Message)
 	close(in1)
-	out1 := router.Start(context.Background(), in1)
+	out1, err1 := router.Start(context.Background(), in1)
+	if err1 != nil {
+		t.Errorf("first Start should not return error: %v", err1)
+	}
 	if out1 == nil {
 		t.Error("first Start should return non-nil channel")
 	}
 
-	// Second Start should return nil
+	// Second Start should return ErrAlreadyStarted
 	in2 := make(chan *message.Message)
 	close(in2)
-	out2 := router.Start(context.Background(), in2)
+	out2, err2 := router.Start(context.Background(), in2)
+	if err2 != message.ErrAlreadyStarted {
+		t.Errorf("second Start should return ErrAlreadyStarted, got %v", err2)
+	}
 	if out2 != nil {
-		t.Error("second Start should return nil")
+		t.Error("second Start should return nil channel")
 	}
 }
 
@@ -664,7 +670,7 @@ func TestRouter_MatchCombination(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var count int
 	for range out {
@@ -698,7 +704,7 @@ func TestRouter_NoHandlers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var count int
 	for range out {
@@ -731,7 +737,7 @@ func TestRouter_EmptyInput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var count int
 	for range out {
@@ -747,7 +753,7 @@ func TestRouter_OnlyPipes_NoHandlers(t *testing.T) {
 	pipe := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		out := message.Copy(msg, []byte("piped"))
 		return []*message.Message{out}, nil
-	})
+	}, pipe.Config{})
 
 	router := message.NewRouter(message.RouterConfig{})
 	router.AddPipe(message.NewPipe(pipe, message.MatchSubject("pipe-input")))
@@ -760,7 +766,7 @@ func TestRouter_OnlyPipes_NoHandlers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var results []*message.Message
 	for msg := range out {
@@ -780,7 +786,7 @@ func TestRouter_OnlyPipes_MessageNotMatchingPipe(t *testing.T) {
 	pipe := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		out := message.Copy(msg, []byte("piped"))
 		return []*message.Message{out}, nil
-	})
+	}, pipe.Config{})
 
 	router := message.NewRouter(message.RouterConfig{})
 	router.AddPipe(message.NewPipe(pipe, message.MatchSubject("pipe-input")))
@@ -797,7 +803,7 @@ func TestRouter_OnlyPipes_MessageNotMatchingPipe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var count int
 	for range out {
@@ -827,7 +833,7 @@ func TestRouter_NilInput(t *testing.T) {
 	defer cancel()
 
 	// Nil input channel
-	out := router.Start(ctx, nil)
+	out, _ := router.Start(ctx, nil)
 
 	// Should return nil with no generators
 	if out != nil {
@@ -840,7 +846,7 @@ type simpleGenerator struct {
 	msgs []*message.Message
 }
 
-func (g *simpleGenerator) Generate(ctx context.Context) <-chan *message.Message {
+func (g *simpleGenerator) Generate(ctx context.Context) (<-chan *message.Message, error) {
 	out := make(chan *message.Message)
 	go func() {
 		defer close(out)
@@ -852,7 +858,7 @@ func (g *simpleGenerator) Generate(ctx context.Context) <-chan *message.Message 
 			}
 		}
 	}()
-	return out
+	return out, nil
 }
 
 func TestRouter_AddGenerator_Basic(t *testing.T) {
@@ -879,7 +885,7 @@ func TestRouter_AddGenerator_Basic(t *testing.T) {
 	defer cancel()
 
 	// Start with nil input - generator should still work
-	out := router.Start(ctx, nil)
+	out, _ := router.Start(ctx, nil)
 
 	var results []*message.Message
 	for msg := range out {
@@ -925,7 +931,7 @@ func TestRouter_AddGenerator_WithInput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, in)
+	out, _ := router.Start(ctx, in)
 
 	var results []string
 	for msg := range out {
@@ -982,7 +988,7 @@ func TestRouter_AddGenerator_Multiple(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, nil)
+	out, _ := router.Start(ctx, nil)
 
 	var results []string
 	for msg := range out {
@@ -1013,7 +1019,7 @@ func TestRouter_AddGenerator_WithPipe(t *testing.T) {
 	pipe := pipe.NewProcessPipe(func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		out := message.Copy(msg, append(msg.Data, []byte("-piped")...))
 		return []*message.Message{out}, nil
-	})
+	}, pipe.Config{})
 
 	handler := message.NewHandler(
 		func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
@@ -1038,7 +1044,7 @@ func TestRouter_AddGenerator_WithPipe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	out := router.Start(ctx, nil)
+	out, _ := router.Start(ctx, nil)
 
 	results := make(map[string]bool)
 	for msg := range out {
@@ -1071,7 +1077,7 @@ func TestRouter_AddGeneratorAfterStart(t *testing.T) {
 	// Start the router
 	in := make(chan *message.Message)
 	close(in)
-	router.Start(context.Background(), in)
+	_, _ = router.Start(context.Background(), in)
 
 	// AddGenerator after Start should fail
 	ok = router.AddGenerator(gen)
@@ -1102,7 +1108,7 @@ func TestRouter_NilInputWithGenerator(t *testing.T) {
 	defer cancel()
 
 	// With a generator, nil input should still work
-	out := router.Start(ctx, nil)
+	out, _ := router.Start(ctx, nil)
 
 	if out == nil {
 		t.Fatal("Expected non-nil output when generator is present")
