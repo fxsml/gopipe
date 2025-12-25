@@ -1,28 +1,25 @@
 # Planning Procedures
 
-## Plan Folder Structure
+## Plan File Structure
 
-Implementation plans live in `docs/plans/` as numbered folders:
+Implementation plans live in `docs/plans/` as numbered files (matching ADR convention):
 
 ```
 docs/plans/
-├── README.md                          # Plan index
-├── architecture-roadmap.md            # Master plan overview
-├── PRO-0001-cancel-path-refactoring/
-│   ├── README.md                      # Main plan document
-│   └── main.go                        # Optional example code
-├── PRO-0002-middleware-refactoring/
+├── README.md                    # Plan index
+├── 0001-message-engine.md       # Plan document
+├── 0002-marshaler.md
 └── ...
 ```
 
 ## Plan Document Structure
 
 ```markdown
-# PRO-{NUMBER}: Title
+# Plan NNNN: Title
 
 **Status:** Proposed | In Progress | Complete
-**Priority:** High | Medium | Low
-**Related ADRs:** PRO-NNNN
+**Related ADRs:** [NNNN](../adr/NNNN-name.md)
+**Depends On:** [Plan NNNN](NNNN-name.md) (optional)
 
 ## Overview
 
@@ -64,25 +61,11 @@ Diagram or list showing task dependencies.
 
 ## Creating a New Plan
 
-1. Determine next number in `docs/plans/`
-2. Create folder: `docs/plans/PRO-NNNN-short-title/`
-3. Create `README.md` using template above
-4. Add example code if helpful
-5. Update `docs/plans/README.md` index
-
-## Hierarchical Planning
-
-Large initiatives should be divided into phases:
-
-```
-architecture-roadmap.md (Master Overview)
-├── PRO-0001-* (Foundation tasks)
-├── PRO-0002-* (Depends on 0001)
-├── PRO-0003-* (Depends on 0002)
-└── ...
-```
-
-Each plan should be independently implementable after its dependencies.
+1. Determine next number from `docs/plans/README.md` index
+2. Create file: `docs/plans/NNNN-short-title.md`
+3. Use template above
+4. Update `docs/plans/README.md` index
+5. Link related ADRs (update ADR Links section too)
 
 ## Plan States
 
@@ -91,6 +74,19 @@ Each plan should be independently implementable after its dependencies.
 | Proposed | Documented, not started |
 | In Progress | Work underway |
 | Complete | Fully implemented |
+
+## Hierarchical Planning
+
+Large initiatives should be divided into phases using dependencies:
+
+```
+0001-foundation.md
+0002-feature-a.md (Depends On: 0001)
+0003-feature-b.md (Depends On: 0001)
+0004-integration.md (Depends On: 0002, 0003)
+```
+
+Each plan should be independently implementable after its dependencies.
 
 ## Related Documentation
 

@@ -1,7 +1,8 @@
-# Plan 0020: Message Engine Implementation
+# Plan 0001: Message Engine Implementation
 
-**ADR:** [0020-message-engine-architecture.md](../adr/0020-message-engine-architecture.md)
-**Status:** Draft
+**Status:** Proposed
+**Related ADRs:** [0019](../adr/0019-remove-sender-receiver.md), [0020](../adr/0020-message-engine-architecture.md), [0021](../adr/0021-codec-marshaling-pattern.md)
+**Depends On:** [Plan 0002](0002-marshaler.md) (Marshaler)
 
 ## Overview
 

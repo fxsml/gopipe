@@ -60,4 +60,4 @@ Subscribers → Unmarshal → FanIn → Router → Handler ─┐
 - Related: ADR 0018 (Interface Naming Conventions)
 - Related: ADR 0019 (Remove Sender/Receiver)
 - Related: ADR 0021 (Marshaler Pattern)
-- Plan: [0020-message-engine.md](../plans/0020-message-engine.md)
+- Plan: [0001-message-engine.md](../plans/0001-message-engine.md)

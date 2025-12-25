@@ -50,4 +50,4 @@ For unregistered types, derive CE type from Go type name:
 - Related: ADR 0018 (Interface Naming Conventions)
 - Related: ADR 0019 (Remove Sender/Receiver)
 - Related: ADR 0020 (Message Engine Architecture)
-- Plan: [0021-marshaler.md](../plans/0021-marshaler.md)
+- Plan: [0002-marshaler.md](../plans/0002-marshaler.md)

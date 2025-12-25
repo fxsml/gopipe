@@ -1,7 +1,8 @@
-# Plan 0021: Marshaler Implementation
+# Plan 0002: Marshaler Implementation
 
-**ADR:** [0021-codec-marshaling-pattern.md](../adr/0021-codec-marshaling-pattern.md)
-**Status:** Draft
+**Status:** Proposed
+**Related ADRs:** [0021](../adr/0021-codec-marshaling-pattern.md)
+**Required By:** [Plan 0001](0001-message-engine.md) (Message Engine)
 
 ## Overview
 
