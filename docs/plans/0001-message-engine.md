@@ -68,7 +68,8 @@ type Engine struct {
 }
 
 type EngineConfig struct {
-    Marshaler Marshaler
+    Marshaler    Marshaler
+    ErrorHandler func(msg *Message, err error)  // default: log via slog.Error
 }
 
 func NewEngine(cfg EngineConfig) *Engine
@@ -122,7 +123,7 @@ func (e *Engine) route(ctx context.Context, msg *Message) ([]*Message, error) {
     // Lookup Go type via marshaler
     goType, ok := e.marshaler.TypeFor(ceType)
     if !ok {
-        return nil, fmt.Errorf("unknown type: %s", ceType)
+        return nil, fmt.Errorf("%w: %s", ErrTypeNotFound, ceType)
     }
 
     // Unmarshal to typed value
@@ -134,7 +135,7 @@ func (e *Engine) route(ctx context.Context, msg *Message) ([]*Message, error) {
     // Get handlers for this type
     handlers := e.handlers[goType]
     if len(handlers) == 0 {
-        return nil, fmt.Errorf("no handler for type: %s", goType)
+        return nil, fmt.Errorf("%w: %s", ErrNoHandler, goType)
     }
 
     // Execute handlers
@@ -226,19 +227,67 @@ func (e *Engine) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message,
 }
 ```
 
+## Error Handling
+
+Consistent with `pipe.Config.ErrorHandler`:
+
+```go
+// Errors
+var (
+    ErrAlreadyStarted       = errors.New("already started")
+    ErrDestinationNotFound  = errors.New("destination not found")
+    ErrTypeNotFound         = errors.New("type not found")
+    ErrNoHandler            = errors.New("no handler for type")
+)
+
+// ErrorHandler signature (matches pipe.Config.ErrorHandler pattern)
+ErrorHandler func(msg *Message, err error)
+
+// Usage
+engine := message.NewEngine(message.EngineConfig{
+    Marshaler: marshaler,
+    ErrorHandler: func(msg *Message, err error) {
+        if errors.Is(err, message.ErrDestinationNotFound) {
+            // Handle missing destination (e.g., dead letter, log)
+            slog.Warn("no publisher for destination",
+                "destination", msg.Destination(),
+                "type", msg.Type())
+            return
+        }
+        // Default: log error
+        slog.Error("processing failed", "err", err)
+    },
+})
+```
+
+**Default behavior:** Log via `slog.Error` (same as pipe package).
+
+## Destination Constant
+
+```go
+const (
+    DestInternal = "internal"  // route back through engine
+)
+
+// No destination or unknown destination → ErrDestinationNotFound → ErrorHandler
+```
+
 ## Files to Create/Modify
 
 - `message/engine.go` - Engine implementation
-- `message/handler.go` - Keep Handler interface, add NewHandler[T]
-- `message/errors.go` - Add ErrAlreadyStarted
+- `message/handler.go` - Handler interface, NewHandler[T]
+- `message/errors.go` - Error definitions
 
 ## Test Plan
 
 1. Single handler receives typed data
 2. Multiple handlers for same type all execute
-3. Unknown type returns error
-4. Type registry auto-built from handlers
-5. Pipe() returns ErrAlreadyStarted on second call
+3. Unknown type returns ErrTypeNotFound
+4. No handler returns ErrNoHandler
+5. Unknown destination returns ErrDestinationNotFound
+6. ErrorHandler receives errors
+7. Type registry auto-built from handlers
+8. Pipe() returns ErrAlreadyStarted on second call
 
 ## Acceptance Criteria
 
