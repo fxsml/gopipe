@@ -5,30 +5,36 @@
 | Concept | Description | Example |
 |---------|-------------|---------|
 | **Topic** | Logical channel within a messaging system | `"orders"`, `"payments.received"` |
-| **Destination** | Logical routing name (matches publisher name) | `"shipments"`, `"notifications"` |
+| **Source** | Subscriber name (set by engine on ingress) | `"order-events"`, `"payment-stream"` |
+| **Destination** | Publisher name (set by handler for egress) | `"shipments"`, `"notifications"` |
 | **Subject** | CloudEvents attribute for topic/category | `"order.created"`, `"user.123"` |
 
 ## Design
 
-### Subscriber: Topic at Subscribe Time
+### Subscriber: Name and Topic
 
-Subscribers need topics at runtime for dynamic subscription patterns:
+Subscribers are registered by **name** and subscribe to a **topic**:
 
 ```go
+// Subscriber interface
 type Subscriber interface {
     Subscribe(ctx context.Context, topic string) (<-chan *Message, error)
 }
+
+// Engine registration with name
+engine.AddSubscriber("order-events", subscriber)
 ```
 
-**Why runtime topic?**
-- Leader election: subscribe only when leader
-- Dynamic scaling: subscribe to partition-specific topics
-- Multi-tenant: subscribe to tenant-specific topics
+When messages arrive through a subscriber, the engine sets the `Source` attribute to the subscriber name. This provides traceability for where messages originated.
+
+**Why separate name and topic?**
+- **Name**: Identity for logging, metrics, tracing
+- **Topic**: What to subscribe to (can be dynamic)
 
 ```go
 // Dynamic subscription based on leadership
 election.OnBecomeLeader(func() {
-    subscriber.Subscribe(ctx, "orders")
+    subscriber.Subscribe(ctx, "orders")  // topic
 })
 
 election.OnLoseLeadership(func() {
@@ -101,20 +107,38 @@ The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 - Topic mapping: destination `"shipments"` → topic `"prod.shipments.v1"`
 - Authentication, TLS, etc.
 
+### Source = Subscriber Name
+
+The engine sets `Source` on incoming messages to the subscriber name:
+
+```go
+// Subscriber registered by name
+engine.AddSubscriber("order-events", orderSubscriber)
+engine.AddSubscriber("payment-stream", paymentSubscriber)
+
+// Messages from orderSubscriber have Source: "order-events"
+// Messages from paymentSubscriber have Source: "payment-stream"
+```
+
+This provides symmetry with Destination:
+- **Source**: Set by engine on ingress (subscriber name)
+- **Destination**: Set by handler on egress (publisher name)
+
 ## CloudEvents Mapping
 
 | gopipe | CloudEvents | Notes |
 |--------|-------------|-------|
+| `Source` | `source` | Subscriber name (set by engine) |
+| `Destination` | N/A | gopipe extension for publisher routing |
 | `Subject` | `subject` | Optional, describes topic/category |
-| `Destination` | N/A | gopipe extension for routing (logical name) |
-| `Source` | `source` | Required, origin URI |
 | `Type` | `type` | Required, event type |
 
 ## Summary
 
 | Component | Concept | When | Example |
 |-----------|---------|------|---------|
-| Subscriber | `topic` parameter | Subscribe time | `"orders"` |
-| Message | `Destination` attribute | Message creation | `"shipments"` |
+| Subscriber | name + topic | Registration + Subscribe | `"order-events"` + `"orders"` |
+| Message (ingress) | `Source` attribute | Set by engine | `"order-events"` |
+| Message (egress) | `Destination` attribute | Set by handler | `"shipments"` |
 | Publisher | name (matches Destination) | Registration | `"shipments"` |
 | Adapter | broker config | Construction | URL, topic mapping |

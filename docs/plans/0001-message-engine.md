@@ -174,12 +174,13 @@ func (e *Engine) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message,
 
 ## Phase 2: Multiple Subscribers
 
-Add `pipe.Merger` for dynamic fan-in:
+Add `pipe.Merger` for dynamic fan-in. Subscribers are registered by **name**, and the engine sets `Source` on incoming messages:
 
 ```go
 type Engine struct {
     // ... existing fields
-    merger *pipe.Merger[*Message]
+    merger      *pipe.Merger[*Message]
+    subscribers map[string]Subscriber  // name -> subscriber
 }
 
 func (e *Engine) AddSubscriber(name string, sub Subscriber) error {
@@ -187,10 +188,32 @@ func (e *Engine) AddSubscriber(name string, sub Subscriber) error {
     if err != nil {
         return err
     }
-    e.merger.Add(ch)
+
+    // Wrap channel to set Source attribute on each message
+    tagged := tagSource(ch, name)
+
+    e.subscribers[name] = sub
+    e.merger.Add(tagged)
     return nil
 }
+
+// tagSource wraps a channel to set Source attribute on each message
+func tagSource(in <-chan *Message, source string) <-chan *Message {
+    out := make(chan *Message)
+    go func() {
+        defer close(out)
+        for msg := range in {
+            msg.Attributes[AttrSource] = source
+            out <- msg
+        }
+    }()
+    return out
+}
 ```
+
+This provides symmetry with publishers:
+- **Source**: Subscriber name (set by engine on ingress)
+- **Destination**: Publisher name (set by handler for egress)
 
 ## Phase 3: Multiple Publishers
 
@@ -288,6 +311,7 @@ const (
 6. ErrorHandler receives errors
 7. Type registry auto-built from handlers
 8. Pipe() returns ErrAlreadyStarted on second call
+9. AddSubscriber sets Source attribute on incoming messages
 
 ## Acceptance Criteria
 
