@@ -5,9 +5,9 @@ A composable channel processing and CloudEvents messaging framework for Go.
 ## Quick Links
 
 - [Getting Started](#getting-started)
+- [Topics and Destinations](topics.md)
 - [Current State](#current-state)
 - [Upcoming Changes](#upcoming-changes)
-- [Architecture Roadmap](../plans/architecture-roadmap.md)
 
 ---
 
