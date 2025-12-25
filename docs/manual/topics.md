@@ -1,12 +1,12 @@
-# Topics and Destinations
+# Topics and Routing
 
 ## Concepts
 
 | Concept | Description | Example |
 |---------|-------------|---------|
 | **Topic** | Logical channel within a messaging system | `"orders"`, `"payments.received"` |
-| **Source** | Subscriber name (set by engine on ingress) | `"order-events"`, `"payment-stream"` |
-| **Destination** | Publisher name (set by handler for egress) | `"shipments"`, `"notifications"` |
+| **Subscriber** | Subscriber name (set by engine on ingress) | `"order-events"`, `"payment-stream"` |
+| **Publisher** | Publisher name (set by handler for egress) | `"shipments"`, `"notifications"` |
 | **Subject** | CloudEvents attribute for topic/category | `"order.created"`, `"user.123"` |
 
 ## Design
@@ -25,7 +25,7 @@ type Subscriber interface {
 engine.AddSubscriber("order-events", subscriber)
 ```
 
-When messages arrive through a subscriber, the engine sets the `Source` attribute to the subscriber name. This provides traceability for where messages originated.
+When messages arrive through a subscriber, the engine sets the `Subscriber` attribute to the subscriber name. This provides traceability for where messages entered the engine.
 
 **Why separate name and topic?**
 - **Name**: Identity for logging, metrics, tracing
@@ -42,9 +42,9 @@ election.OnLoseLeadership(func() {
 })
 ```
 
-### Publisher: Destination in Message
+### Publisher: Publisher Attribute in Message
 
-Publishers read destination from message attributes:
+Handlers set the `Publisher` attribute to route messages:
 
 ```go
 type Publisher interface {
@@ -52,37 +52,46 @@ type Publisher interface {
 }
 ```
 
-**Why destination in message?**
+**Why publisher in message?**
 - Handlers decide routing, not infrastructure
 - Single engine can route to multiple publishers
-- Destination is a handler concern, not a wiring concern
+- Publisher is a handler concern, not a wiring concern
 
 ```go
-// Handler determines destination (logical name, not URL)
+// Handler determines publisher (logical name, not URL)
 func handleOrder(ctx context.Context, order OrderCreated) ([]*Message, error) {
     return []*Message{
         message.New(OrderShipped{...}, message.Attributes{
-            Subject:     "order.shipped",
-            Destination: "shipments",  // logical name, matches publisher
+            Subject:   "order.shipped",
+            Publisher: "shipments",  // logical name, matches registered publisher
         }),
     }, nil
 }
 ```
 
-### Destination = Publisher Name
+### Publisher Attribute = Registered Publisher Name
 
-The destination attribute is a **logical routing name** that matches the publisher registration:
+The `Publisher` attribute is a **logical routing name** that matches the publisher registration:
 
 ```go
-// Publisher registered by logical name
+// Publishers registered by logical name
 engine.AddPublisher("shipments", kafkaPublisher)
 engine.AddPublisher("notifications", natsPublisher)
 
-// Handler sets destination to route to specific publisher
-message.New(event, Attributes{Destination: "shipments"})
+// Handler sets Publisher attribute to route to specific publisher
+message.New(event, Attributes{Publisher: "shipments"})
 ```
 
 The publisher/adapter knows the actual broker details (host, port, topic). The message only carries logical routing intent.
+
+### Loopback
+
+Use the `Loopback` constant to route messages back through the engine:
+
+```go
+// Route message back through engine for further processing
+message.New(event, Attributes{Publisher: message.Loopback})
+```
 
 ### Adapter Responsibility
 
@@ -94,9 +103,9 @@ The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 │                                                                  │
 │  Subscriber.Subscribe(ctx, "orders")                             │
 │       ↓                                                          │
-│  [messages with Destination attribute]                           │
+│  [messages with Subscriber attribute set]                        │
 │       ↓                                                          │
-│  Engine routes by Destination → Publisher                        │
+│  Engine routes by Publisher → registered Publisher               │
 │       ↓                                                          │
 │  Publisher/Adapter sends to actual broker                        │
 └─────────────────────────────────────────────────────────────────┘
@@ -104,33 +113,17 @@ The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 
 **Adapter configuration (not in message):**
 - Broker URL: `kafka://broker:9092`
-- Topic mapping: destination `"shipments"` → topic `"prod.shipments.v1"`
+- Topic mapping: publisher `"shipments"` → topic `"prod.shipments.v1"`
 - Authentication, TLS, etc.
-
-### Source = Subscriber Name
-
-The engine sets `Source` on incoming messages to the subscriber name:
-
-```go
-// Subscriber registered by name
-engine.AddSubscriber("order-events", orderSubscriber)
-engine.AddSubscriber("payment-stream", paymentSubscriber)
-
-// Messages from orderSubscriber have Source: "order-events"
-// Messages from paymentSubscriber have Source: "payment-stream"
-```
-
-This provides symmetry with Destination:
-- **Source**: Set by engine on ingress (subscriber name)
-- **Destination**: Set by handler on egress (publisher name)
 
 ## CloudEvents Mapping
 
 | gopipe | CloudEvents | Notes |
 |--------|-------------|-------|
-| `Source` | `source` | Subscriber name (set by engine) |
-| `Destination` | N/A | gopipe extension for publisher routing |
+| `Subscriber` | N/A | gopipe extension for ingress tracing |
+| `Publisher` | N/A | gopipe extension for egress routing |
 | `Subject` | `subject` | Optional, describes topic/category |
+| `Source` | `source` | Required, origin URI (CloudEvents) |
 | `Type` | `type` | Required, event type |
 
 ## Summary
@@ -138,7 +131,7 @@ This provides symmetry with Destination:
 | Component | Concept | When | Example |
 |-----------|---------|------|---------|
 | Subscriber | name + topic | Registration + Subscribe | `"order-events"` + `"orders"` |
-| Message (ingress) | `Source` attribute | Set by engine | `"order-events"` |
-| Message (egress) | `Destination` attribute | Set by handler | `"shipments"` |
-| Publisher | name (matches Destination) | Registration | `"shipments"` |
+| Message (ingress) | `Subscriber` attribute | Set by engine | `"order-events"` |
+| Message (egress) | `Publisher` attribute | Set by handler | `"shipments"` |
+| Publisher | name (matches Publisher attr) | Registration | `"shipments"` |
 | Adapter | broker config | Construction | URL, topic mapping |

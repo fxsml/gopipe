@@ -84,16 +84,16 @@ client, _ := cloudevents.NewClientHTTP()
 engine := message.NewEngine(config)
 engine.AddHandler(handler)
 
-// Subscriber/Publisher use logical names
-subscriber := ce.NewSubscriber(client)
-publisher := ce.NewPublisher(client)
+// Subscriber/Publisher registered by name
+engine.AddSubscriber("order-events", ce.NewSubscriber(client))
+engine.AddPublisher("shipments", ce.NewPublisher(client))
 
-msgs, _ := subscriber.Subscribe(ctx, "orders")
-out, _ := engine.Pipe(ctx, msgs)
-publisher.Publish(ctx, out)
+// Start engine (orchestration per ADR 0018)
+done, _ := engine.Start(ctx)
+<-done
 
-// Handlers set destination (logical name, matches publisher)
-// message.New(event, Attributes{Destination: "shipments"})
+// Handlers set Publisher attribute (logical name, matches registered publisher)
+// message.New(event, Attributes{Publisher: "shipments"})
 ```
 
 ## Implementation

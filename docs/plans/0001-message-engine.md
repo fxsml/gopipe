@@ -11,7 +11,7 @@ Implement a Message Engine that orchestrates message flow with marshaling at bou
 ## Design Principles
 
 1. **Reuse `pipe` and `channel` packages** - Build on existing foundation
-2. **Engine implements `Pipe()` signature** - Consistent with pipe package
+2. **Engine implements `Start()` signature** - Orchestration type per ADR 0018
 3. **Router is internal** - Not exposed as public type
 4. **Minimal Phase 1** - Single path, then iterate
 
@@ -76,9 +76,9 @@ func NewEngine(cfg EngineConfig) *Engine
 
 func (e *Engine) AddHandler(name string, h Handler) error
 
-// Pipe processes messages: unmarshal → route → handle → marshal
-// Implements the pipe.Pipe pattern
-func (e *Engine) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message, error)
+// Start begins message processing: unmarshal → route → handle → marshal
+// Orchestration method per ADR 0018
+func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error)
 ```
 
 ### Usage
@@ -94,22 +94,19 @@ engine.AddHandler("process-order", message.NewHandler(
     func(ctx context.Context, order OrderCreated) ([]*Message, error) {
         return []*Message{
             message.New(OrderShipped{OrderID: order.ID}, message.Attributes{
-                Destination: "shipments",  // logical name, matches publisher
+                Publisher: "shipments",  // logical name, matches registered publisher
             }),
         }, nil
     },
 ))
 
-// Wire with subscriber
-subscriber := ce.NewSubscriber(cloudEventsClient)  // from message/cloudevents
-msgs, _ := subscriber.Subscribe(ctx)
+// Add subscriber and publisher
+engine.AddSubscriber("order-events", ce.NewSubscriber(cloudEventsClient))
+engine.AddPublisher("shipments", ce.NewPublisher(cloudEventsClient))
 
-// Process through engine
-out, _ := engine.Pipe(ctx, msgs)
-
-// Publish results
-publisher := ce.NewPublisher(cloudEventsClient)
-publisher.Publish(ctx, out)
+// Start engine (blocks until context cancelled or error)
+done, _ := engine.Start(ctx)
+<-done
 ```
 
 ### Implementation Details
@@ -152,9 +149,9 @@ func (e *Engine) route(ctx context.Context, msg *Message) ([]*Message, error) {
 }
 ```
 
-**Pipe() implementation:**
+**Start() implementation:**
 ```go
-func (e *Engine) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message, error) {
+func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
     e.mu.Lock()
     if e.started {
         e.mu.Unlock()
@@ -166,15 +163,27 @@ func (e *Engine) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message,
     // Auto-build type registry from handlers
     e.buildTypeRegistry()
 
+    // Merge all subscriber channels
+    merged, _ := e.merger.Merge(ctx)
+
     // Use pipe.ProcessPipe for processing with middleware support
     pp := pipe.NewProcessPipe(e.route, pipe.Config{})
-    return pp.Pipe(ctx, in)
+    processed, _ := pp.Pipe(ctx, merged)
+
+    // Route to publishers by destination
+    done := make(chan struct{})
+    go func() {
+        defer close(done)
+        e.routeToPublishers(ctx, processed)
+    }()
+
+    return done, nil
 }
 ```
 
 ## Phase 2: Multiple Subscribers
 
-Add `pipe.Merger` for dynamic fan-in. Subscribers are registered by **name**, and the engine sets `Source` on incoming messages:
+Add `pipe.Merger` for dynamic fan-in. Subscribers are registered by **name**, and the engine sets `Subscriber` attribute on incoming messages:
 
 ```go
 type Engine struct {
@@ -189,21 +198,21 @@ func (e *Engine) AddSubscriber(name string, sub Subscriber) error {
         return err
     }
 
-    // Wrap channel to set Source attribute on each message
-    tagged := tagSource(ch, name)
+    // Wrap channel to set Subscriber attribute on each message
+    tagged := tagSubscriber(ch, name)
 
     e.subscribers[name] = sub
     e.merger.Add(tagged)
     return nil
 }
 
-// tagSource wraps a channel to set Source attribute on each message
-func tagSource(in <-chan *Message, source string) <-chan *Message {
+// tagSubscriber wraps a channel to set Subscriber attribute on each message
+func tagSubscriber(in <-chan *Message, name string) <-chan *Message {
     out := make(chan *Message)
     go func() {
         defer close(out)
         for msg := range in {
-            msg.Attributes[AttrSource] = source
+            msg.Attributes[AttrSubscriber] = name
             out <- msg
         }
     }()
@@ -211,42 +220,43 @@ func tagSource(in <-chan *Message, source string) <-chan *Message {
 }
 ```
 
-This provides symmetry with publishers:
-- **Source**: Subscriber name (set by engine on ingress)
-- **Destination**: Publisher name (set by handler for egress)
+This provides symmetry:
+- **Subscriber**: Subscriber name (set by engine on ingress)
+- **Publisher**: Publisher name (set by handler for egress)
 
 ## Phase 3: Multiple Publishers
 
-Route to publishers by destination (logical name):
+Route to publishers by `Publisher` attribute (logical name):
 
 ```go
 // Register publishers by logical name
 engine.AddPublisher("shipments", kafkaPublisher)
 engine.AddPublisher("notifications", natsPublisher)
 
-// Engine routes messages by Destination attribute
-// Message with Destination: "shipments" → kafkaPublisher
-// Message with Destination: "notifications" → natsPublisher
+// Engine routes messages by Publisher attribute
+// Message with Publisher: "shipments" → kafkaPublisher
+// Message with Publisher: "notifications" → natsPublisher
 ```
 
 ## Phase 4: Internal Loopback
 
-Route handler outputs back to input when destination is `"internal"`:
+Route handler outputs back to input when publisher is `Loopback`:
 
 ```go
-func (e *Engine) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message, error) {
+func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
     // ... setup
 
-    // Split output: internal goes back to merger, external goes to publishers
-    internal, external := channel.Route(processed, func(msg *Message) int {
-        if msg.Destination() == "internal" { return 0 }
+    // Split output: loopback goes back to merger, external goes to publishers
+    loopback, external := channel.Route(processed, func(msg *Message) int {
+        if msg.Publisher() == Loopback { return 0 }
         return 1
     }, 2)
 
-    // Feed internal back to merger
-    e.merger.Add(internal)
+    // Feed loopback back to merger
+    e.merger.Add(loopback)
 
-    return external, nil
+    // Route external to publishers
+    // ...
 }
 ```
 
@@ -257,10 +267,10 @@ Consistent with `pipe.Config.ErrorHandler`:
 ```go
 // Errors
 var (
-    ErrAlreadyStarted       = errors.New("already started")
-    ErrDestinationNotFound  = errors.New("destination not found")
-    ErrTypeNotFound         = errors.New("type not found")
-    ErrNoHandler            = errors.New("no handler for type")
+    ErrAlreadyStarted      = errors.New("already started")
+    ErrPublisherNotFound   = errors.New("publisher not found")
+    ErrTypeNotFound        = errors.New("type not found")
+    ErrNoHandler           = errors.New("no handler for type")
 )
 
 // ErrorHandler signature (matches pipe.Config.ErrorHandler pattern)
@@ -270,10 +280,10 @@ ErrorHandler func(msg *Message, err error)
 engine := message.NewEngine(message.EngineConfig{
     Marshaler: marshaler,
     ErrorHandler: func(msg *Message, err error) {
-        if errors.Is(err, message.ErrDestinationNotFound) {
-            // Handle missing destination (e.g., dead letter, log)
-            slog.Warn("no publisher for destination",
-                "destination", msg.Destination(),
+        if errors.Is(err, message.ErrPublisherNotFound) {
+            // Handle missing publisher (e.g., dead letter, log)
+            slog.Warn("no publisher registered",
+                "publisher", msg.Publisher(),
                 "type", msg.Type())
             return
         }
@@ -285,14 +295,14 @@ engine := message.NewEngine(message.EngineConfig{
 
 **Default behavior:** Log via `slog.Error` (same as pipe package).
 
-## Destination Constant
+## Publisher Constants
 
 ```go
 const (
-    DestInternal = "internal"  // route back through engine
+    Loopback = "loopback"  // route back through engine
 )
 
-// No destination or unknown destination → ErrDestinationNotFound → ErrorHandler
+// No publisher or unknown publisher → ErrPublisherNotFound → ErrorHandler
 ```
 
 ## Files to Create/Modify
@@ -307,17 +317,19 @@ const (
 2. Multiple handlers for same type all execute
 3. Unknown type returns ErrTypeNotFound
 4. No handler returns ErrNoHandler
-5. Unknown destination returns ErrDestinationNotFound
+5. Unknown publisher returns ErrPublisherNotFound
 6. ErrorHandler receives errors
 7. Type registry auto-built from handlers
-8. Pipe() returns ErrAlreadyStarted on second call
-9. AddSubscriber sets Source attribute on incoming messages
+8. Start() returns ErrAlreadyStarted on second call
+9. AddSubscriber sets Subscriber attribute on incoming messages
+10. Loopback publisher routes messages back to engine
 
 ## Acceptance Criteria
 
-- [ ] Engine.Pipe() works with single subscriber
+- [ ] Engine.Start() works with subscribers and publishers
 - [ ] Handlers receive typed data (not []byte)
 - [ ] Type registry auto-generated from handlers
 - [ ] Uses pipe.ProcessPipe for processing
+- [ ] Subscriber/Publisher attributes set correctly
 - [ ] Tests pass (`make test`)
 - [ ] Build passes (`make build && make vet`)
