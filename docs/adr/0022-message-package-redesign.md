@@ -84,9 +84,16 @@ client, _ := cloudevents.NewClientHTTP()
 engine := message.NewEngine(config)
 engine.AddHandler(handler)
 
-// Bridge converts SDK events to messages
+// Subscriber/Publisher use logical names
 subscriber := ce.NewSubscriber(client)
-engine.AddSubscriber("http", subscriber)
+publisher := ce.NewPublisher(client)
+
+msgs, _ := subscriber.Subscribe(ctx, "orders")
+out, _ := engine.Pipe(ctx, msgs)
+publisher.Publish(ctx, out)
+
+// Handlers set destination (logical name, matches publisher)
+// message.New(event, Attributes{Destination: "shipments"})
 ```
 
 ## Implementation

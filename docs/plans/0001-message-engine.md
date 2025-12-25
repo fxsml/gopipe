@@ -92,7 +92,9 @@ engine := message.NewEngine(message.EngineConfig{
 engine.AddHandler("process-order", message.NewHandler(
     func(ctx context.Context, order OrderCreated) ([]*Message, error) {
         return []*Message{
-            message.New(OrderShipped{OrderID: order.ID}, nil),
+            message.New(OrderShipped{OrderID: order.ID}, message.Attributes{
+                Destination: "shipments",  // logical name, matches publisher
+            }),
         }, nil
     },
 ))
@@ -189,17 +191,31 @@ func (e *Engine) AddSubscriber(name string, sub Subscriber) error {
 }
 ```
 
-## Phase 3: Internal Loopback
+## Phase 3: Multiple Publishers
 
-Route handler outputs back to input when destination is `gopipe://`:
+Route to publishers by destination (logical name):
+
+```go
+// Register publishers by logical name
+engine.AddPublisher("shipments", kafkaPublisher)
+engine.AddPublisher("notifications", natsPublisher)
+
+// Engine routes messages by Destination attribute
+// Message with Destination: "shipments" → kafkaPublisher
+// Message with Destination: "notifications" → natsPublisher
+```
+
+## Phase 4: Internal Loopback
+
+Route handler outputs back to input when destination is `"internal"`:
 
 ```go
 func (e *Engine) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message, error) {
     // ... setup
 
-    // Split output: internal goes back to merger, external goes to out
+    // Split output: internal goes back to merger, external goes to publishers
     internal, external := channel.Route(processed, func(msg *Message) int {
-        if isInternal(msg) { return 0 }
+        if msg.Destination() == "internal" { return 0 }
         return 1
     }, 2)
 

@@ -5,7 +5,7 @@
 | Concept | Description | Example |
 |---------|-------------|---------|
 | **Topic** | Logical channel within a messaging system | `"orders"`, `"payments.received"` |
-| **Destination** | Where to route a message (URI scheme) | `"kafka://shipments"`, `"nats://events"` |
+| **Destination** | Logical routing name (matches publisher name) | `"shipments"`, `"notifications"` |
 | **Subject** | CloudEvents attribute for topic/category | `"order.created"`, `"user.123"` |
 
 ## Design
@@ -48,73 +48,73 @@ type Publisher interface {
 
 **Why destination in message?**
 - Handlers decide routing, not infrastructure
-- Single publisher can route to multiple topics
+- Single engine can route to multiple publishers
 - Destination is a handler concern, not a wiring concern
 
 ```go
-// Handler determines destination
+// Handler determines destination (logical name, not URL)
 func handleOrder(ctx context.Context, order OrderCreated) ([]*Message, error) {
     return []*Message{
         message.New(OrderShipped{...}, message.Attributes{
             Subject:     "order.shipped",
-            Destination: "kafka://shipments",
+            Destination: "shipments",  // logical name, matches publisher
         }),
     }, nil
 }
 ```
 
+### Destination = Publisher Name
+
+The destination attribute is a **logical routing name** that matches the publisher registration:
+
+```go
+// Publisher registered by logical name
+engine.AddPublisher("shipments", kafkaPublisher)
+engine.AddPublisher("notifications", natsPublisher)
+
+// Handler sets destination to route to specific publisher
+message.New(event, Attributes{Destination: "shipments"})
+```
+
+The publisher/adapter knows the actual broker details (host, port, topic). The message only carries logical routing intent.
+
 ### Adapter Responsibility
 
-The adapter (e.g., `message/cloudevents`) maps between gopipe concepts and broker specifics:
+The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                        Engine                            │
-│                                                          │
-│  Subscriber.Subscribe(ctx, "orders")                     │
-│       ↓                                                  │
-│  [messages with Destination attribute]                   │
-│       ↓                                                  │
-│  Publisher.Publish(ctx, msgs)                            │
-│       ↓                                                  │
-│  Adapter extracts topic from Destination or Subject      │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        Engine                                    │
+│                                                                  │
+│  Subscriber.Subscribe(ctx, "orders")                             │
+│       ↓                                                          │
+│  [messages with Destination attribute]                           │
+│       ↓                                                          │
+│  Engine routes by Destination → Publisher                        │
+│       ↓                                                          │
+│  Publisher/Adapter sends to actual broker                        │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**Adapter extracts topic from:**
-1. `Destination` attribute: `"kafka://shipments"` → topic `"shipments"`
-2. `Subject` attribute: `"order.shipped"` → topic `"order.shipped"`
-3. Default configured topic (fallback)
+**Adapter configuration (not in message):**
+- Broker URL: `kafka://broker:9092`
+- Topic mapping: destination `"shipments"` → topic `"prod.shipments.v1"`
+- Authentication, TLS, etc.
 
 ## CloudEvents Mapping
 
 | gopipe | CloudEvents | Notes |
 |--------|-------------|-------|
 | `Subject` | `subject` | Optional, describes topic/category |
-| `Destination` | N/A | gopipe extension for routing |
+| `Destination` | N/A | gopipe extension for routing (logical name) |
 | `Source` | `source` | Required, origin URI |
 | `Type` | `type` | Required, event type |
 
-## Engine Routing (Future)
-
-Engine routes to publishers by destination prefix:
-
-```go
-engine.AddPublisher("kafka://", kafkaPublisher)
-engine.AddPublisher("nats://", natsPublisher)
-engine.AddPublisher("http://", httpPublisher)
-
-// Handler output routed by destination
-return []*Message{
-    message.New(event, message.Attributes{Destination: "kafka://orders"}),
-    message.New(event, message.Attributes{Destination: "http://webhook"}),
-}
-```
-
 ## Summary
 
-| Component | Topic/Destination | When | Why |
-|-----------|-------------------|------|-----|
-| Subscriber | `topic` parameter | Subscribe time | Dynamic subscriptions |
-| Publisher | `Destination` attribute | Message creation | Handler decides routing |
-| Adapter | Extracts from message | Publish time | Maps to broker topic |
+| Component | Concept | When | Example |
+|-----------|---------|------|---------|
+| Subscriber | `topic` parameter | Subscribe time | `"orders"` |
+| Message | `Destination` attribute | Message creation | `"shipments"` |
+| Publisher | name (matches Destination) | Registration | `"shipments"` |
+| Adapter | broker config | Construction | URL, topic mapping |
