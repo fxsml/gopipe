@@ -1,7 +1,7 @@
 # ADR 0019: Remove Sender and Receiver Interfaces
 
 **Date:** 2025-12-22
-**Status:** Proposed
+**Status:** Proposed (see [ADR 0022](0022-message-package-redesign.md))
 
 ## Context
 

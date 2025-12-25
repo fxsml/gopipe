@@ -1,7 +1,7 @@
 # ADR 0020: Message Engine Architecture
 
 **Date:** 2025-12-22
-**Status:** Proposed
+**Status:** Proposed (see [ADR 0022](0022-message-package-redesign.md))
 
 ## Context
 

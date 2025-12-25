@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - Upcoming
+
+### Breaking Changes
+
+#### Message Package Redesign (ADR 0022)
+
+Complete redesign of the `message` package for simplicity and native CloudEvents support.
+
+**Removed:**
+- `Sender`, `Receiver` interfaces
+- `Subscriber`, `Publisher` structs
+- `Router`, `Handler`, `Pipe`, `Generator` types
+- `Middleware` type
+- `broker/` subpackage (ChannelBroker, HTTPBroker, IOBroker)
+- `cqrs/` subpackage
+- `multiplex/` subpackage
+- `cloudevents/` subpackage
+
+**Kept:**
+- `Message` (alias for `TypedMessage[[]byte]`)
+- `TypedMessage[T]` with `Data`, `Attributes`, `Ack()`, `Nack()`
+- `Attributes` map and accessor methods
+- `Acking` for acknowledgment coordination
+
+**Added:**
+- `message.Engine` - type-based routing and orchestration (no external deps)
+- `message.Marshaler` - bidirectional type registry for CloudEvents type mapping
+- `message/cloudevents/` - bridge to CloudEvents SDK (`cloudevents/sdk-go/v2`)
+
+See: [docs/adr/0022-message-package-redesign.md](docs/adr/0022-message-package-redesign.md)
+
+---
+
+## [0.10.0] - Current
+
 ### Breaking Changes
 
 #### Interface Naming Conventions (ADR 0018)

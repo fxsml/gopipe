@@ -33,6 +33,7 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0019](0019-remove-sender-receiver.md) | Remove Sender and Receiver | Proposed |
 | [0020](0020-message-engine-architecture.md) | Message Engine Architecture | Proposed |
 | [0021](0021-codec-marshaling-pattern.md) | Codec/Marshaling Pattern | Proposed |
+| [0022](0022-message-package-redesign.md) | Message Package Redesign | Proposed |
 
 ## History
 
