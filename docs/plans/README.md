@@ -12,8 +12,9 @@ See [Planning Procedures](../procedures/planning.md) for details.
 
 | Plan | Title | Status | Related ADRs |
 |------|-------|--------|--------------|
-| [0001](0001-message-engine.md) | Message Engine | Proposed | 0019, 0020, 0021 |
+| [0001](0001-message-engine.md) | Message Engine | Proposed | 0019, 0020, 0021, 0022 |
 | [0002](0002-marshaler.md) | Marshaler | Proposed | 0021 |
+| [0003](0003-cloudevents-sdk-integration.md) | CloudEvents SDK Integration | Proposed | 0022 |
 
 ## Dependency Graph
 
@@ -22,4 +23,7 @@ See [Planning Procedures](../procedures/planning.md) for details.
   |
   v
 0001 (Message Engine)
+  |
+  v
+0003 (CE-SDK Integration)
 ```
