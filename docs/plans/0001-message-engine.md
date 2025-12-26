@@ -359,9 +359,23 @@ priorityOut := engine.AddOutput(message.OutputConfig{
 
 ## Middleware
 
+Middleware wraps handler execution with pre/post-handler logic:
+
 ```go
+type Middleware func(next HandlerFunc) HandlerFunc
+
+type HandlerFunc func(ctx context.Context, msg *Message) ([]*Message, error)
+
+// Usage
 engine.Use(message.ValidateCE())         // validate required CE attributes
 engine.Use(message.WithCorrelationID())  // propagate or generate correlation ID
+```
+
+**Execution order** (middleware applied in registration order):
+```
+Use(A) → Use(B) → handler
+Request:  A.pre → B.pre → handler
+Response: handler → B.post → A.post
 ```
 
 ## Error Handling

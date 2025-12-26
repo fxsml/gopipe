@@ -274,10 +274,23 @@ AddInput → Unmarshal → Handler (typed) → Marshal (sets DataContentType) �
 
 ### Middleware
 
-Correlation ID middleware for first draft (optional):
+Middleware wraps handler execution with pre/post-handler logic. Similar to `pipe` module but with concrete `*Message` type.
 
 ```go
+type Middleware func(next HandlerFunc) HandlerFunc
+
+type HandlerFunc func(ctx context.Context, msg *Message) ([]*Message, error)
+
+// Usage
 engine.Use(message.WithCorrelationID())  // propagates or generates correlation ID
+engine.Use(message.ValidateCE())         // validates required CE attributes
+```
+
+**Execution order** (middleware applied in registration order):
+```
+Use(A) → Use(B) → handler
+Request:  A.pre → B.pre → handler
+Response: handler → B.post → A.post
 ```
 
 | Attribute | Owner |
