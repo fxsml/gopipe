@@ -13,7 +13,7 @@
 | **Marshaler** | Serialization + type registry |
 | **Handler** | Business logic, creates output messages |
 | **NamingStrategy** | Convention for deriving CE types/names |
-| **Subscriber/Publisher** | I/O adapters (external lifecycle) |
+| **Input/Output** | Named channels (external lifecycle) |
 
 ### Engine - Orchestration Only
 
@@ -21,17 +21,17 @@ Engine accepts channels, doesn't own I/O lifecycle.
 
 ```go
 // Input: Engine accepts named channels
-engine.AddInput("order-events", ch)
+engine.AddInput("orders", ch)
 
 // Output: Engine provides named output channels
 out := engine.Output("shipments")
 
-// External code manages subscription
+// External code manages subscription lifecycle
 subscriber := ce.NewSubscriber(client)
 ch, _ := subscriber.Subscribe(ctx, "orders")
-engine.AddInput("order-events", ch)
+engine.AddInput("orders", ch)
 
-// External code manages publishing
+// External code manages publishing lifecycle
 publisher := ce.NewPublisher(client)
 publisher.Publish(ctx, engine.Output("shipments"))
 ```
@@ -94,7 +94,7 @@ Engine only adds auto-fields:
 - `ID` (if not set) - auto-generate UUID
 - `SpecVersion` - "1.0"
 - `Time` - now()
-- `Subscriber` - input channel name
+- `Input` - input channel name (for tracing)
 
 ### Routing - Two Explicit Methods
 
@@ -138,7 +138,7 @@ engine.Use(message.ValidateCE())  // validates required CE attributes
 
 ### Attributes
 
-- `Subscriber`: Set by engine on ingress (input channel name)
+- `Input`: Set by engine on ingress (input channel name, for tracing)
 - No per-message routing attribute by default (convention-based)
 
 ## Rejected Ideas
@@ -159,7 +159,7 @@ func NewCommandHandler[C, E any](fn ..., cfg ...Config) Handler  // ❌
 
 ### Per-message routing attribute
 ```go
-message.New(event, Attributes{Publisher: "shipments"})  // ❌ as default
+message.New(event, Attributes{Output: "shipments"})  // ❌ as default
 ```
 **Why rejected:** Routing should be by type/convention. Attribute only as escape hatch.
 
