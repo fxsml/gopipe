@@ -12,7 +12,7 @@
 | **Engine** | Orchestrates flow, routing, lifecycle |
 | **Marshaler** | Serialization + type registry |
 | **Handler** | Business logic, creates output messages |
-| **NamingStrategy** | Convention for deriving CE types/names |
+| **NamingStrategy** | Convention for CommandHandler output CE types |
 | **Input/Output** | Named channels (external lifecycle) |
 
 ### Engine - Orchestration Only
@@ -254,50 +254,54 @@ engine.Use(message.WithCorrelationID())  // propagates or generates correlation 
 
 **Ingress (CE type → handler):**
 ```go
-engine.RouteType("order.created", "process-orders")   // explicit
-// Or convention: Handler's EventType() derives CE type via NamingStrategy
+engine.RouteType("order.created", "process-orders")  // explicit only
 ```
 
 **Egress (handler output → output channel):**
 ```go
-// Pattern matching in OutputConfig - no explicit routing needed
-ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
-// Handler returns OrderCreated → matches "Order*" → goes to ordersOut
+// Pattern matching in OutputConfig - first matching output wins
+ordersOut := engine.AddOutput(message.OutputConfig{Matcher: match.Types("order.%")})
+defaultOut := engine.AddOutput(message.OutputConfig{})  // catch-all (nil = match all)
 ```
 
 **Loopback:**
 ```go
-// Output that feeds back to engine input
-loopback := engine.AddOutput(message.OutputConfig{Match: "Validate*"})
-engine.AddInput(loopback, message.InputConfig{Name: "loopback"})
+// Dedicated function for internal re-processing
+engine.AddLoopback(message.LoopbackConfig{
+    Name:    "validation-loop",
+    Matcher: match.Types("validate.%"),
+})
 ```
 
-### Routing Strategies
+### Error Handling for Routing
 
 ```go
-type RoutingStrategy int
-
-const (
-    ConventionRouting RoutingStrategy = iota  // default: auto-route by naming
-    ExplicitRouting                           // manual RouteType calls required
+var (
+    ErrInputFiltered    = errors.New("message filtered by input matcher")
+    ErrNoMatchingOutput = errors.New("no output matches message type")
+    ErrNoHandler        = errors.New("no handler for CE type")
 )
 ```
 
-**Convention rules:**
-- Ingress: Handler's `EventType()` derives CE type via NamingStrategy
-- Egress: Output's `Match` pattern matches message CE type
+**Routing errors:**
+- Input filtered by Matcher → `ErrInputFiltered` to ErrorHandler
+- No handler for CE type → `ErrNoHandler` to ErrorHandler
+- No output matches → try next output, finally `ErrNoMatchingOutput` to ErrorHandler
 
-### NamingStrategy - Separate Concern
+### NamingStrategy - CommandHandler Only
+
+NamingStrategy is used only in CommandHandler for output CE type derivation:
 
 ```go
 type NamingStrategy interface {
-    TypeName(t reflect.Type) string    // Go type → CE type
-    OutputName(t reflect.Type) string  // Go type → output name
+    TypeName(t reflect.Type) string  // Go type → CE type
 }
 
-// CQRS convention
-var CQRSNaming NamingStrategy  // CreateOrder→"create.order", OrderCreated→"orders"
+var KebabNaming NamingStrategy   // OrderCreated → "order.created"
+var SnakeNaming NamingStrategy   // OrderCreated → "order_created"
 ```
+
+**Note:** NamingStrategy is NOT used for engine ingress routing. All ingress routing is explicit via `RouteType()`.
 
 ### Attributes
 
@@ -356,6 +360,23 @@ engine.Route("order.created", "process-orders")  // ❌
 ```
 **Why rejected:** Two methods are more explicit.
 
+### Convention-based ingress routing
+```go
+type RoutingStrategy int
+const (
+    ConventionRouting RoutingStrategy = iota  // ❌
+    ExplicitRouting
+)
+```
+**Why rejected:** Convention routing adds complexity without clear benefit. Explicit `RouteType()` is clearer. NamingStrategy is only needed for CommandHandler output CE types.
+
+### Manual loopback via AddOutput/AddInput
+```go
+loopback := engine.AddOutput(OutputConfig{Matcher: ...})
+engine.AddInput(loopback, InputConfig{Name: "loopback"})  // ❌
+```
+**Why rejected:** Dedicated `AddLoopback()` is cleaner and avoids marshal/unmarshal overhead.
+
 ## Idiomaticity Review
 
 | Aspect | Pattern | Idiomatic? |
@@ -383,16 +404,18 @@ Core components are well-defined:
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| NamingStrategy | ✅ Ready | Interface + KebabNaming, SnakeNaming |
-| Marshaler | ✅ Ready | Lightweight, uses NamingStrategy |
+| NamingStrategy | ✅ Ready | Interface + KebabNaming, SnakeNaming (CommandHandler only) |
+| Marshaler | ✅ Ready | Lightweight, uses NamingStrategy for registry |
 | Matcher | ✅ Ready | Interface in message/, implementations in match/ |
 | match.All/Any | ✅ Ready | Combinators for AND/OR |
 | match.Sources | ✅ Ready | CE source pattern matching |
 | match.Types | ✅ Ready | CE type pattern matching |
 | Handler | ✅ Ready | NewHandler (explicit), NewCommandHandler (convention) |
 | InputConfig | ✅ Ready | Optional name + Matcher for filtering |
-| OutputConfig | ✅ Ready | Match pattern (SQL LIKE syntax) |
-| Engine | ✅ Ready | AddInput, AddOutput, RouteType, Start() |
+| OutputConfig | ✅ Ready | Matcher for routing (SQL LIKE syntax) |
+| LoopbackConfig | ✅ Ready | Name + Matcher for internal re-processing |
+| Engine | ✅ Ready | AddInput, AddOutput, AddLoopback, AddHandler, RouteType, Start() |
+| Errors | ✅ Ready | ErrInputFiltered, ErrNoMatchingOutput, ErrNoHandler |
 | Middleware | ✅ Ready | ValidateCE, WithCorrelationID |
 
 ## Implementation Order
@@ -405,9 +428,9 @@ Core components are well-defined:
 6. `message/match/match.go` - All, Any combinators
 7. `message/match/sources.go` - Sources matcher
 8. `message/match/types.go` - Types matcher
-9. `message/config.go` - InputConfig, OutputConfig
+9. `message/config.go` - InputConfig, OutputConfig, LoopbackConfig
 10. `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
 11. `message/middleware.go` - ValidateCE, WithCorrelationID
-12. `message/errors.go` - Error definitions
-13. `message/engine.go` - Engine implementation
+12. `message/errors.go` - ErrInputFiltered, ErrNoMatchingOutput, ErrNoHandler, etc.
+13. `message/engine.go` - Engine with AddInput, AddOutput, AddLoopback, AddHandler, RouteType
 14. `message/cloudevents/` - CE adapter package

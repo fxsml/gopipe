@@ -43,39 +43,33 @@ done, _ := engine.Start(ctx)
 **Ingress (CE type → handler):**
 
 ```go
-// Explicit
+// Explicit routing required
 engine.RouteType("order.created", "process-orders")
-
-// Or convention: Handler's EventType() derives CE type via NamingStrategy
 ```
 
 **Egress (handler output → output channel):**
 
 ```go
-// Pattern matching in OutputConfig - no explicit routing needed
-ordersOut := engine.AddOutput(message.OutputConfig{Match: "order.%"})
+// Pattern matching in OutputConfig - first matching output wins
+ordersOut := engine.AddOutput(message.OutputConfig{Matcher: match.Types("order.%")})
+defaultOut := engine.AddOutput(message.OutputConfig{})  // nil = catch-all
 // Handler returns order.created → matches "order.%" → goes to ordersOut
 ```
 
-**Routing strategies (for ingress only):**
-
-| Strategy | Description |
-|----------|-------------|
-| `ConventionRouting` (default) | Auto-route ingress by NamingStrategy |
-| `ExplicitRouting` | Manual RouteType calls required |
-
 ### NamingStrategy
 
-Convention-based ingress routing uses NamingStrategy:
+NamingStrategy is used by CommandHandler to derive output CE types:
 
 ```go
 type NamingStrategy interface {
-    TypeName(t reflect.Type) string    // Go type → CE type
+    TypeName(t reflect.Type) string  // Go type → CE type
 }
 
 // KebabNaming (default):
 // OrderCreated → CE type "order.created"
 ```
+
+**Note:** NamingStrategy is NOT used for ingress routing. All ingress routing is explicit via `RouteType()`.
 
 ### Matcher Interface
 
@@ -190,14 +184,13 @@ handler := message.NewCommandHandler(
 
 ## Loopback
 
-Route output back to input for re-processing:
+Route output back for internal re-processing (bypasses marshal/unmarshal):
 
 ```go
-// Create output for validation results
-loopback := engine.AddOutput(message.OutputConfig{Match: "validate.%"})
-
-// Feed it back to engine as input
-engine.AddInput(loopback, message.InputConfig{Name: "loopback"})
+engine.AddLoopback(message.LoopbackConfig{
+    Name:    "validation-loop",
+    Matcher: match.Types("validate.%"),
+})
 ```
 
 ## Adapter Responsibility
@@ -209,16 +202,16 @@ The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 │                         Engine                                   │
 │                                                                  │
 │  AddInput(ch, cfg) ──> unmarshal ──┐                             │
-│     + Matcher          ↑           ├──> route ──> handler ──┐   │
-│                  loopback ─────────┘                        │   │
-│                     ↑                                       ↓   │
-│                     │                                   marshal │
-│                     │                                       │   │
-│                     │          ┌─── Match: "order.%" ───────┤   │
-│  AddOutput(cfg) ────┼──────────┼─── Match: "payment.%" ─────┤   │
-│    returns          │          └─── Match: "%" ─────────────┘   │
-│                     │                                           │
-│              (no marshal for loopback - already typed)          │
+│     + Matcher                      ├──> route ──> handler ──┐   │
+│             AddLoopback ───────────┘  (RouteType)           │   │
+│                  ↑                                          ↓   │
+│                  │                                      marshal │
+│                  │                                          │   │
+│                  │          ┌─── Matcher: "order.%" ────────┤   │
+│  AddOutput(cfg) ─┼──────────┼─── Matcher: "payment.%" ──────┤   │
+│    returns       │          └─── Matcher: nil (catch-all) ──┘   │
+│                  │                                              │
+│            (no marshal for loopback - already typed)            │
 └─────────────────────────────────────────────────────────────────┘
          ↑                                       ↓
    Subscriber                              Publisher
@@ -236,7 +229,9 @@ The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 |-----------|---------|------|---------|
 | Subscriber | topic | Subscribe time | `"orders"` |
 | Engine | input | AddInput(ch, cfg) | `InputConfig{Name: "...", Matcher: ...}` |
+| Engine | routing | RouteType(ceType, handler) | `"order.created"` → `"process-order"` |
 | Handler | CE type | EventType() | `"order.created"` |
-| Engine | output | AddOutput(cfg) | `OutputConfig{Match: "order.%"}` |
+| Engine | output | AddOutput(cfg) | `OutputConfig{Matcher: match.Types("order.%")}` |
+| Engine | loopback | AddLoopback(cfg) | `LoopbackConfig{Matcher: match.Types("validate.%")}` |
 | Output routing | Match pattern | SQL LIKE on CE type | `"order.%"` matches `order.created` |
 | Publisher | topic | Publish config | `"prod.shipments.v1"` |

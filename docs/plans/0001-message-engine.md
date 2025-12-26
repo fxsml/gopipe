@@ -26,15 +26,15 @@ Implement a Message Engine that orchestrates message flow with marshaling at bou
 │                                                                  │
 │  AddInput(ch, cfg) ──> unmarshal ──┐                             │
 │                                    ├──> Merger ──> route ──> handlers
-│                   loopback ────────┘                         │   │
-│                      ↑                                       ↓   │
-│                      │                                   marshal │
-│                      │                                       │   │
-│                      │       ┌─── Match: "Order*" ───────────┤   │
-│  AddOutput(cfg) ─────┼───────┼─── Match: "Payment*" ─────────┤   │
-│    returns           │       └─── Match: "*" ────────────────┘   │
-│                      │                                           │
-│               (loopback bypasses marshal - already typed)        │
+│             AddLoopback ───────────┘     (RouteType)         │   │
+│                  ↑                                           ↓   │
+│                  │                                       marshal │
+│                  │                                           │   │
+│                  │       ┌─── Matcher: "order.%" ────────────┤   │
+│  AddOutput(cfg) ─┼───────┼─── Matcher: "payment.%" ──────────┤   │
+│    returns       │       └─── Matcher: nil (catch-all) ──────┘   │
+│                  │                                               │
+│           (loopback bypasses marshal - already typed)            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -82,6 +82,11 @@ type InputConfig struct {
 type OutputConfig struct {
     Name    string   // optional, for logging/metrics
     Matcher Matcher  // optional, nil = match all (catch-all)
+}
+
+type LoopbackConfig struct {
+    Name    string   // optional, for tracing/metrics
+    Matcher Matcher  // required, matches output to loop back
 }
 ```
 
@@ -146,11 +151,12 @@ defaultOut := engine.AddOutput(message.OutputConfig{})  // catch-all
 
 ```go
 type Engine struct {
-    marshaler Marshaler
-    naming    NamingStrategy
-    handlers  map[reflect.Type][]Handler
-    inputs    []inputEntry
-    outputs   []outputEntry
+    marshaler    Marshaler
+    handlers     map[string]Handler
+    typeRoutes   map[string]string  // CE type → handler name
+    inputs       []inputEntry
+    outputs      []outputEntry
+    loopbacks    []loopbackEntry
 
     mu      sync.Mutex
     started bool
@@ -158,8 +164,6 @@ type Engine struct {
 
 type EngineConfig struct {
     Marshaler    Marshaler
-    Naming       NamingStrategy    // default: KebabNaming
-    Routing      RoutingStrategy   // default: ConventionRouting
     ErrorHandler func(msg *Message, err error)
 }
 
@@ -168,8 +172,9 @@ func NewEngine(cfg EngineConfig) *Engine
 func (e *Engine) AddHandler(name string, h Handler) error
 func (e *Engine) AddInput(ch <-chan *Message, cfg InputConfig) error
 func (e *Engine) AddOutput(cfg OutputConfig) <-chan *Message
+func (e *Engine) AddLoopback(cfg LoopbackConfig) error
 
-// Explicit ingress routing (required if RoutingStrategy is ExplicitRouting)
+// Explicit ingress routing
 func (e *Engine) RouteType(ceType string, handlerName string) error
 
 func (e *Engine) Use(middleware Middleware)
@@ -177,22 +182,13 @@ func (e *Engine) Use(middleware Middleware)
 func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error)
 ```
 
-### Routing Strategies
-
-```go
-type RoutingStrategy int
-
-const (
-    ConventionRouting RoutingStrategy = iota  // auto-route ingress by NamingStrategy
-    ExplicitRouting                           // manual RouteType calls required
-)
-```
-
 ### NamingStrategy
+
+NamingStrategy is used only in CommandHandler for output CE type derivation:
 
 ```go
 type NamingStrategy interface {
-    TypeName(t reflect.Type) string    // Go type → CE type
+    TypeName(t reflect.Type) string  // Go type → CE type
 }
 
 var KebabNaming NamingStrategy   // OrderCreated → "order.created"
@@ -222,6 +218,7 @@ handler := message.NewHandler(func(ctx context.Context, msg *TypedMessage[OrderC
 })
 
 engine.AddHandler("process-order", handler)
+engine.RouteType("order.created", "process-order")  // explicit routing
 
 // Input: external subscription management
 subscriber := ce.NewSubscriber(client)
@@ -229,8 +226,8 @@ ch, _ := subscriber.Subscribe(ctx, "orders")
 engine.AddInput(ch, message.InputConfig{Name: "order-events"})
 
 // Output: pattern-based routing, returns channel directly
-ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
-defaultOut := engine.AddOutput(message.OutputConfig{Match: "*"})
+ordersOut := engine.AddOutput(message.OutputConfig{Matcher: match.Types("order.%")})
+defaultOut := engine.AddOutput(message.OutputConfig{})  // catch-all
 
 // External publishing (Publish runs in goroutine internally)
 publisher := ce.NewPublisher(client)
@@ -249,11 +246,12 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{
         Source: "/orders-service",
-        // Naming: message.KebabNaming (default)
+        // Naming: message.KebabNaming (default) - derives output CE type
     },
 )
 
 engine.AddHandler("create-order", handler)
+engine.RouteType("create.order", "create-order")  // explicit routing required
 ```
 
 ## Output Routing
@@ -318,10 +316,11 @@ engine.Use(message.WithCorrelationID())  // propagate or generate correlation ID
 
 ```go
 var (
-    ErrAlreadyStarted = errors.New("already started")
-    ErrNoMatch        = errors.New("no output matches message type")
-    ErrTypeNotFound   = errors.New("type not found")
-    ErrNoHandler      = errors.New("no handler for type")
+    ErrAlreadyStarted    = errors.New("engine already started")
+    ErrInputFiltered     = errors.New("message filtered by input matcher")
+    ErrNoMatchingOutput  = errors.New("no output matches message type")
+    ErrNoHandler         = errors.New("no handler for CE type")
+    ErrHandlerNotFound   = errors.New("handler not found")
 )
 
 // ErrorHandler signature
@@ -330,31 +329,35 @@ type ErrorHandler func(msg *Message, err error)
 // Default: log via slog.Error
 ```
 
+**Error flow:**
+- Input filtered by Matcher → `ErrInputFiltered` to ErrorHandler
+- No handler for CE type → `ErrNoHandler` to ErrorHandler
+- No output matches → try next output, finally `ErrNoMatchingOutput` to ErrorHandler
+
 ## Loopback
 
-Route output back to input for re-processing:
+Dedicated function for internal re-processing (bypasses marshal/unmarshal):
 
 ```go
-// Create output for validation results
-loopback := engine.AddOutput(message.OutputConfig{Match: "Validate*"})
-
-// Feed it back to engine as input
-engine.AddInput(loopback, message.InputConfig{Name: "loopback"})
+engine.AddLoopback(message.LoopbackConfig{
+    Name:    "validation-loop",
+    Matcher: match.Types("validate.%"),
+})
 ```
 
 ## Files to Create/Modify
 
-- `message/config.go` - InputConfig, OutputConfig
+- `message/config.go` - InputConfig, OutputConfig, LoopbackConfig
 - `message/matcher.go` - Matcher interface
 - `message/match/match.go` - All, Any combinators
 - `message/match/like.go` - SQL LIKE pattern matching
 - `message/match/sources.go` - Sources matcher
 - `message/match/types.go` - Types matcher
-- `message/engine.go` - Engine implementation
+- `message/engine.go` - Engine with AddInput, AddOutput, AddLoopback, AddHandler, RouteType
 - `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
-- `message/naming.go` - NamingStrategy interface, KebabNaming, SnakeNaming
+- `message/naming.go` - NamingStrategy interface, KebabNaming, SnakeNaming (CommandHandler only)
 - `message/middleware.go` - ValidateCE, WithCorrelationID
-- `message/errors.go` - Error definitions
+- `message/errors.go` - ErrInputFiltered, ErrNoMatchingOutput, ErrNoHandler, etc.
 
 ## Test Plan
 
@@ -365,11 +368,11 @@ engine.AddInput(loopback, message.InputConfig{Name: "loopback"})
 5. Nil Matcher catches all (default)
 6. match.Types("order.%") matches order.created, order.shipped
 7. match.Types("%.created") matches order.created, user.created
-8. Loopback: output channel fed to input
+8. AddLoopback routes matching output back to handlers
 9. Engine sets DataContentType from marshaler
 10. ValidateCE middleware rejects invalid messages
 11. WithCorrelationID propagates correlation ID
-12. ErrorHandler receives errors
+12. ErrorHandler receives ErrInputFiltered, ErrNoHandler, ErrNoMatchingOutput
 13. Start() returns ErrAlreadyStarted on second call
 14. match.All combines matchers with AND
 15. match.Any combines matchers with OR
@@ -377,16 +380,20 @@ engine.AddInput(loopback, message.InputConfig{Name: "loopback"})
 17. match.Types filters by type pattern
 18. InputConfig.Matcher filters incoming messages
 19. OutputConfig.Matcher routes to correct output
+20. Loopback bypasses marshal/unmarshal
 
 ## Acceptance Criteria
 
 - [ ] Engine.Start() orchestrates flow
 - [ ] AddInput(ch, cfg) with optional Matcher for filtering
 - [ ] AddOutput(cfg) returns channel, routes by Matcher
+- [ ] AddLoopback(cfg) creates internal loop
+- [ ] RouteType(ceType, handlerName) maps CE type to handler
 - [ ] Nil Matcher = match all (catch-all)
 - [ ] NewHandler and NewCommandHandler constructors work
 - [ ] SQL LIKE pattern matching works (%, _)
 - [ ] match.All, match.Any, match.Sources, match.Types work
+- [ ] Error handling: ErrInputFiltered, ErrNoHandler, ErrNoMatchingOutput
 - [ ] Middleware support (ValidateCE, WithCorrelationID)
 - [ ] Tests pass (`make test`)
 - [ ] Build passes (`make build && make vet`)
