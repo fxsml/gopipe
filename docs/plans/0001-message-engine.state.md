@@ -40,15 +40,17 @@ publisher.Publish(ctx, ordersOut)
 
 ### InputConfig / OutputConfig
 
+Both use Matcher interface. Nil Matcher = match all (returns true).
+
 ```go
 type InputConfig struct {
     Name    string   // optional, for tracing/metrics
-    Matcher Matcher  // optional, defense in depth filtering
+    Matcher Matcher  // optional, nil = match all
 }
 
 type OutputConfig struct {
-    Name  string  // optional, for logging/metrics
-    Match string  // required: "%", "order.%", uses SQL LIKE syntax
+    Name    string   // optional, for logging/metrics
+    Matcher Matcher  // optional, nil = match all (catch-all)
 }
 ```
 
@@ -71,9 +73,18 @@ func Sources(patterns ...string) message.Matcher        // CE source filter
 func Types(patterns ...string) message.Matcher          // CE type filter
 ```
 
-**Usage:**
+**Default behavior (nil Matcher = match all):**
 
 ```go
+// Nil Matcher returns true for all messages - no expression evaluation
+engine.AddInput(ch, message.InputConfig{})  // accepts all
+engine.AddOutput(message.OutputConfig{})    // catch-all output
+```
+
+**Usage with matchers:**
+
+```go
+// Input filtering
 engine.AddInput(ch, message.InputConfig{
     Name: "order-events",
     Matcher: match.All(
@@ -81,6 +92,12 @@ engine.AddInput(ch, message.InputConfig{
         match.Types("order.%"),
     ),
 })
+
+// Output routing
+ordersOut := engine.AddOutput(message.OutputConfig{
+    Matcher: match.Types("order.%"),
+})
+defaultOut := engine.AddOutput(message.OutputConfig{})  // catch-all
 ```
 
 **Why separate package?**
@@ -90,20 +107,18 @@ engine.AddInput(ch, message.InputConfig{
 
 ### SQL LIKE Pattern Syntax
 
-Uses SQL LIKE for consistency with CESQL:
+Used by match.Types() and match.Sources():
 - `%` matches any sequence of characters
 - `_` matches a single character
 
-**Match patterns:**
-- `"%"` - catch-all (default output)
+**Patterns:**
 - `"order.%"` - prefix match (order.created, order.shipped)
 - `"%.created"` - suffix match (order.created, user.created)
 - `"order.created"` - exact match
 
-**Matching priority:**
-1. Exact match
-2. Prefix/suffix match
-3. Catch-all `"%"`
+**Output routing priority:**
+1. First output with matching Matcher wins
+2. Nil Matcher (catch-all) should be registered last
 
 ### Marshaler - Lightweight with Registry
 

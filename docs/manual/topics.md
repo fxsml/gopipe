@@ -77,36 +77,56 @@ type NamingStrategy interface {
 // OrderCreated → CE type "order.created"
 ```
 
-### Output Pattern Matching
+### Matcher Interface
 
-Egress routing uses SQL LIKE pattern matching on CE type:
-
-```go
-type OutputConfig struct {
-    Name  string  // optional, for logging/metrics
-    Match string  // required, uses SQL LIKE syntax (% = any, _ = single char)
-}
-
-// Match patterns:
-// "%"             - catch-all (default output)
-// "order.%"       - prefix match (order.created, order.shipped)
-// "%.created"     - suffix match (order.created, user.created)
-// "order.created" - exact match
-```
-
-### Input Filtering
-
-Defense-in-depth filtering on inputs using `message/match` package:
+Both InputConfig and OutputConfig use the same Matcher interface:
 
 ```go
 import "github.com/fxsml/gopipe/message/match"
 
 type InputConfig struct {
     Name    string   // optional, for tracing/metrics
-    Matcher Matcher  // optional, filter incoming messages
+    Matcher Matcher  // optional, nil = match all
 }
 
-// Filter by source and type
+type OutputConfig struct {
+    Name    string   // optional, for logging/metrics
+    Matcher Matcher  // optional, nil = match all (catch-all)
+}
+```
+
+**Default behavior:** Nil Matcher returns true for all messages (no expression evaluation).
+
+### Match Package
+
+```go
+// Combinators
+match.All(matchers...)   // AND - all must match
+match.Any(matchers...)   // OR - at least one must match
+
+// Attribute matchers (SQL LIKE syntax: % = any, _ = single char)
+match.Sources(patterns...)  // match CE source
+match.Types(patterns...)    // match CE type
+```
+
+### Output Routing
+
+```go
+// Register outputs - first matching wins
+ordersOut := engine.AddOutput(message.OutputConfig{
+    Matcher: match.Types("order.%"),
+})
+paymentsOut := engine.AddOutput(message.OutputConfig{
+    Matcher: match.Types("payment.%"),
+})
+defaultOut := engine.AddOutput(message.OutputConfig{})  // nil = catch-all (register last)
+```
+
+### Input Filtering
+
+Defense-in-depth filtering on inputs:
+
+```go
 engine.AddInput(ch, message.InputConfig{
     Name: "order-events",
     Matcher: match.All(
@@ -115,11 +135,8 @@ engine.AddInput(ch, message.InputConfig{
     ),
 })
 
-// Available matchers:
-// match.All(...)      - AND combinator
-// match.Any(...)      - OR combinator
-// match.Sources(...)  - CE source patterns
-// match.Types(...)    - CE type patterns
+// Accept all (default)
+engine.AddInput(ch, message.InputConfig{})
 ```
 
 **Note:** Source filtering is defense-in-depth. The `source` attribute is self-declared by senders. True authentication requires transport-level security (mTLS, API keys).
