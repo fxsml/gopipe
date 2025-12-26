@@ -1,4 +1,4 @@
-# Plan 0002: Codec, TypeRegistry, and NamingStrategy
+# Plan 0002: Codec and NamingStrategy
 
 **Status:** Proposed
 **Related ADRs:** [0021](../adr/0021-codec-marshaling-pattern.md), [0022](../adr/0022-message-package-redesign.md)
@@ -6,13 +6,14 @@
 
 ## Overview
 
-Implement three separate components with clear responsibilities:
+Implement two separate components with clear responsibilities:
 
 | Component | Responsibility |
 |-----------|----------------|
 | **Codec** | Pure serialization (Marshal/Unmarshal/ContentType) |
-| **TypeRegistry** | Maps CE type ↔ Go type for unmarshaling |
 | **NamingStrategy** | Derives CE type from Go type names |
+
+Note: TypeRegistry is no longer a public API. Handler.NewInput() provides instance creation for unmarshaling.
 
 ## Codec Interface
 
@@ -36,38 +37,6 @@ func NewJSONCodec() *JSONCodec
 func (c *JSONCodec) Marshal(v any) ([]byte, error)      // json.Marshal
 func (c *JSONCodec) Unmarshal(data []byte, v any) error // json.Unmarshal
 func (c *JSONCodec) ContentType() string                 // "application/json"
-```
-
-## TypeRegistry Interface
-
-Maps CE types to Go types for instantiation during unmarshaling:
-
-```go
-type TypeRegistry interface {
-    Register(ceType string, goType reflect.Type)
-    Lookup(ceType string) (reflect.Type, bool)
-}
-```
-
-### Implementation
-
-```go
-type typeRegistry struct {
-    mu    sync.RWMutex
-    types map[string]reflect.Type  // "order.created" → OrderCreated
-}
-
-func NewTypeRegistry() TypeRegistry
-
-func (r *typeRegistry) Register(ceType string, goType reflect.Type)
-func (r *typeRegistry) Lookup(ceType string) (reflect.Type, bool)
-```
-
-**Usage by Engine:**
-```go
-// Engine registers handler types automatically
-engine.AddHandler(handler, HandlerConfig{Name: "process-order"})
-// Engine calls: registry.Register(handler.EventType(), handler.GoType())
 ```
 
 ## NamingStrategy Interface
@@ -113,8 +82,7 @@ handler := message.NewHandler(processOrder, message.KebabNaming)
 
 ```go
 engine := message.NewEngine(message.EngineConfig{
-    Codec:    message.NewJSONCodec(),
-    Registry: message.NewTypeRegistry(),
+    Codec: message.NewJSONCodec(),
 })
 ```
 
@@ -129,7 +97,7 @@ handler := message.NewHandler(
     message.KebabNaming,  // derives EventType from OrderCreated
 )
 // handler.EventType() returns "order.created"
-// handler.GoType() returns reflect.Type of OrderCreated
+// handler.NewInput() returns *OrderCreated for unmarshaling
 ```
 
 ### Unmarshaling Flow
@@ -139,11 +107,11 @@ handler := message.NewHandler(
 data := []byte(`{"order_id": "123"}`)
 ceType := "order.created"
 
-// 2. Lookup Go type in registry
-goType, ok := registry.Lookup(ceType)  // OrderCreated
+// 2. Get handler for CE type, create instance via handler.NewInput()
+handler := engine.handlers[ceType]
+instance := handler.NewInput()  // returns *OrderCreated
 
-// 3. Instantiate and unmarshal
-instance := reflect.New(goType).Interface()
+// 3. Unmarshal into instance
 codec.Unmarshal(data, instance)
 ```
 
@@ -153,7 +121,6 @@ codec.Unmarshal(data, instance)
 |------|-----------|-------|
 | `message/codec.go` | Codec | Interface definition |
 | `message/json_codec.go` | JSONCodec | JSON implementation |
-| `message/registry.go` | TypeRegistry | Interface and implementation |
 | `message/naming.go` | NamingStrategy | Interface, KebabNaming, SnakeNaming |
 
 ## Test Plan
@@ -164,26 +131,18 @@ codec.Unmarshal(data, instance)
 3. JSONCodec.ContentType returns "application/json"
 4. Round-trip: Marshal then Unmarshal preserves data
 
-### TypeRegistry Tests
-5. Register and Lookup returns correct type
-6. Lookup for unregistered type returns false
-7. Thread-safe concurrent registration and lookup
-8. Multiple registrations for same CE type (last wins or error?)
-
 ### NamingStrategy Tests
-9. KebabNaming: OrderCreated → "order.created"
-10. KebabNaming: CreateOrderCommand → "create.order.command"
-11. SnakeNaming: OrderCreated → "order_created"
-12. SnakeNaming: CreateOrderCommand → "create_order_command"
-13. Handles edge cases: ID, URL, HTTPRequest
+5. KebabNaming: OrderCreated → "order.created"
+6. KebabNaming: CreateOrderCommand → "create.order.command"
+7. SnakeNaming: OrderCreated → "order_created"
+8. SnakeNaming: CreateOrderCommand → "create_order_command"
+9. Handles edge cases: ID, URL, HTTPRequest
 
 ## Acceptance Criteria
 
 ### MVP (Required)
 - [ ] Codec interface with Marshal, Unmarshal, ContentType
 - [ ] JSONCodec implements Codec
-- [ ] TypeRegistry interface with Register, Lookup
-- [ ] TypeRegistry implementation (thread-safe)
 - [ ] NamingStrategy interface with TypeName
 - [ ] KebabNaming implementation
 - [ ] SnakeNaming implementation
@@ -192,5 +151,5 @@ codec.Unmarshal(data, instance)
 
 ### Design Validation
 - [ ] Codec has no type registry - pure serialization
-- [ ] TypeRegistry has no NamingStrategy - explicit registration
 - [ ] NamingStrategy is standalone utility used by handler constructors
+- [ ] Handler.NewInput() provides instance creation (no public TypeRegistry)

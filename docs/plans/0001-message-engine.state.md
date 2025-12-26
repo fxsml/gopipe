@@ -11,8 +11,7 @@
 |-----------|----------------|
 | **Engine** | Orchestrates flow, routing, lifecycle |
 | **Codec** | Pure serialization (Marshal/Unmarshal/ContentType) |
-| **TypeRegistry** | Maps CE type ↔ Go type for unmarshaling |
-| **Handler** | Self-describing (GoType, EventType), business logic |
+| **Handler** | Self-describing (EventType, NewInput), business logic |
 | **NamingStrategy** | Standalone utility, used by handler constructors |
 | **Input/Output** | Named channels (external lifecycle) |
 
@@ -131,9 +130,9 @@ Used by match.Types() and match.Sources():
 1. First output with matching Matcher wins
 2. Nil Matcher (catch-all) should be registered last
 
-### Codec and TypeRegistry - Separate Concerns
+### Codec - Pure Serialization
 
-Codec handles pure serialization. TypeRegistry maps CE types to Go types.
+Codec handles pure serialization. No TypeRegistry needed - Handler.NewInput() provides instance creation.
 
 ```go
 // Codec - pure serialization, no type awareness
@@ -141,12 +140,6 @@ type Codec interface {
     Marshal(v any) ([]byte, error)
     Unmarshal(data []byte, v any) error
     ContentType() string  // e.g., "application/json"
-}
-
-// TypeRegistry - maps CE type ↔ Go type
-type TypeRegistry interface {
-    Register(ceType string, goType reflect.Type)
-    Lookup(ceType string) (reflect.Type, bool)
 }
 
 // NamingStrategy - standalone utility
@@ -158,27 +151,26 @@ var KebabNaming NamingStrategy   // OrderCreated → "order.created"
 var SnakeNaming NamingStrategy   // OrderCreated → "order_created"
 ```
 
-**Registration flow (via handler):**
+**Handler registration flow:**
 ```go
 handler := message.NewHandler(processOrder, message.KebabNaming)
 // handler.EventType() returns "order.created"
-// handler.GoType() returns reflect.Type of OrderCreated
+// handler.NewInput() returns *OrderCreated for unmarshaling
 
 engine.AddHandler(handler, HandlerConfig{Name: "process-order"})
 // 1. Engine reads handler.EventType() → "order.created"
-// 2. Engine reads handler.GoType() → OrderCreated
-// 3. Engine registers in TypeRegistry: "order.created" → OrderCreated
-// 4. Engine registers route: typeRoutes["order.created"] = "process-order"
+// 2. Engine registers route: typeRoutes["order.created"] = handler
+// 3. When message arrives, engine calls handler.NewInput() to get instance for unmarshaling
 ```
 
 ### Handler - Self-Describing with NamingStrategy
 
-Handler is self-describing - knows its CE type and Go type at construction time.
+Handler is self-describing - knows its CE type and can create instances for unmarshaling.
 
 ```go
 type Handler interface {
-    GoType() reflect.Type    // Go type - for TypeRegistry
     EventType() string       // CE type - for routing
+    NewInput() any           // creates new instance for unmarshaling (e.g., *OrderCreated)
     Handle(ctx context.Context, msg *Message) ([]*Message, error)
 }
 
@@ -188,9 +180,10 @@ func NewHandler[T any](
     naming NamingStrategy,
 ) Handler
 
-// CQRS constructor - NamingStrategy derives EventType from C, output types from E
+// CQRS constructor - receives command directly, attributes via context
+// NamingStrategy derives EventType from C, output types from E
 func NewCommandHandler[C, E any](
-    fn func(ctx context.Context, msg *TypedMessage[C]) ([]E, error),
+    fn func(ctx context.Context, cmd C) ([]E, error),
     cfg CommandHandlerConfig,
 ) Handler
 
@@ -206,9 +199,11 @@ type CommandHandlerConfig struct {
     Naming NamingStrategy  // derives CE types for input (C) and output (E)
 }
 
-// Usage
+// Usage - receives command directly, not TypedMessage
 handler := message.NewCommandHandler(
-    func(ctx context.Context, msg *TypedMessage[CreateOrder]) ([]OrderCreated, error) {
+    func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
+        // Access message attributes via context if needed:
+        // attrs := message.AttributesFromContext(ctx)
         return []OrderCreated{{OrderID: "123"}}, nil
     },
     message.CommandHandlerConfig{
@@ -217,6 +212,7 @@ handler := message.NewCommandHandler(
     },
 )
 // handler.EventType() returns "create.order" (from CreateOrder)
+// handler.NewInput() returns *CreateOrder for unmarshaling
 // Output messages get Type "order.created" (from OrderCreated)
 ```
 
@@ -248,7 +244,7 @@ handler := message.NewHandler(
     message.KebabNaming,  // derives handler.EventType() from OrderCreated
 )
 // handler.EventType() returns "order.created"
-// handler.GoType() returns reflect.Type of OrderCreated
+// handler.NewInput() returns *OrderCreated for unmarshaling
 ```
 
 Use optional validation middleware to ensure CE compliance:
@@ -257,8 +253,8 @@ engine.Use(message.ValidateCE())  // validates required CE attributes
 ```
 
 **Summary:**
-- `NewHandler`: Takes NamingStrategy, handler creates complete output messages
-- `NewCommandHandler`: Takes config with Source + Naming, auto-generates output message attributes
+- `NewHandler`: Takes NamingStrategy, handler creates complete output messages, receives TypedMessage
+- `NewCommandHandler`: Takes config with Source + Naming, auto-generates output message attributes, receives cmd directly
 
 ### DataContentType
 
@@ -299,9 +295,10 @@ engine.Use(message.WithCorrelationID())  // propagates or generates correlation 
 ```go
 handler := message.NewHandler(processOrder, message.KebabNaming)
 // handler.EventType() returns "order.created"
+// handler.NewInput() returns *OrderCreated for unmarshaling
 
 engine.AddHandler(handler, message.HandlerConfig{Name: "process-orders"})
-// Engine routes by handler.EventType()
+// Engine routes by handler.EventType(), uses handler.NewInput() for unmarshaling
 ```
 
 **Egress (handler output → output channel):**
@@ -353,9 +350,8 @@ var SnakeNaming NamingStrategy   // OrderCreated → "order_created"
 - `NewCommandHandler(fn, cfg)` - derives EventType from C, output types from E
 
 **Not used by:**
-- Engine (reads handler.EventType() directly)
+- Engine (reads handler.EventType() and handler.NewInput() directly)
 - Codec (pure serialization)
-- TypeRegistry (explicit registration)
 
 ### Attributes
 
@@ -410,8 +406,8 @@ type Marshaler interface {
 ```
 **Why rejected:** Marshaler was doing too much. Split into:
 - Codec (pure serialization)
-- TypeRegistry (CE type ↔ Go type mapping)
 - NamingStrategy (utility for handler constructors)
+- Handler.NewInput() (provides instances for unmarshaling)
 
 ### Single ambiguous Route() method
 ```go
@@ -436,10 +432,10 @@ engine.AddInput(loopback, InputConfig{Name: "loopback"})  // ❌
 
 | Aspect | Pattern | Idiomatic? |
 |--------|---------|------------|
-| Handler interface | `GoType()`, `EventType()`, `Handle()` - self-describing | ✅ Interface tells you what it is |
+| Handler interface | `EventType()`, `NewInput()`, `Handle()` - self-describing | ✅ Interface tells you what it is |
 | Handler constructors | `NewHandler[T](fn, naming)`, `NewCommandHandler[C,E](fn, cfg)` | ✅ Go generic pattern |
 | Config pattern | Required config for AddInput/AddOutput/CommandHandler | ✅ Explicit over magic |
-| Interface segregation | Codec, TypeRegistry, NamingStrategy, Handler separate | ✅ Single responsibility |
+| Interface segregation | Codec, NamingStrategy, Handler separate | ✅ Single responsibility |
 | Engine lifecycle | Accepts channels, doesn't own I/O | ✅ Composition over inheritance |
 | Input/Output | Config-based, names optional | ✅ Primary data first |
 | Output routing | Pattern matching on CE type | ✅ Declarative |
@@ -462,14 +458,13 @@ Core components are well-defined:
 | NamingStrategy | ✅ Ready | Standalone utility, KebabNaming, SnakeNaming |
 | Codec | ✅ Ready | Pure serialization interface |
 | JSONCodec | ✅ Ready | JSON implementation |
-| TypeRegistry | ✅ Ready | CE type ↔ Go type mapping |
 | Matcher | ✅ Ready | Interface in message/, implementations in match/ |
 | match.All/Any | ✅ Ready | Combinators for AND/OR |
 | match.Sources | ✅ Ready | CE source pattern matching |
 | match.Types | ✅ Ready | CE type pattern matching |
-| Handler | ✅ Ready | Self-describing with GoType(), EventType() |
+| Handler | ✅ Ready | Self-describing with EventType(), NewInput() |
 | NewHandler | ✅ Ready | Takes NamingStrategy, explicit output messages |
-| NewCommandHandler | ✅ Ready | Takes config with Source + Naming |
+| NewCommandHandler | ✅ Ready | Takes config, receives cmd directly, attrs via context |
 | HandlerConfig | ✅ Ready | Name only (CE type from handler.EventType()) |
 | InputConfig | ✅ Ready | Optional name + Matcher for filtering |
 | OutputConfig | ✅ Ready | Matcher for routing (SQL LIKE syntax) |
@@ -483,14 +478,14 @@ Core components are well-defined:
 1. `message/naming.go` - NamingStrategy interface, KebabNaming, SnakeNaming
 2. `message/codec.go` - Codec interface
 3. `message/json_codec.go` - JSONCodec implementation
-4. `message/registry.go` - TypeRegistry interface and implementation
-5. `message/matcher.go` - Matcher interface
-6. `message/match/like.go` - SQL LIKE pattern matching
-7. `message/match/types.go` - Types matcher
-8. `message/match/sources.go` - Sources matcher
-9. `message/match/match.go` - All, Any combinators
-10. `message/config.go` - InputConfig, OutputConfig, LoopbackConfig, HandlerConfig
-11. `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
+4. `message/matcher.go` - Matcher interface
+5. `message/match/like.go` - SQL LIKE pattern matching
+6. `message/match/types.go` - Types matcher
+7. `message/match/sources.go` - Sources matcher
+8. `message/match/match.go` - All, Any combinators
+9. `message/config.go` - InputConfig, OutputConfig, LoopbackConfig, HandlerConfig
+10. `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
+11. `message/context.go` - AttributesFromContext
 12. `message/errors.go` - ErrInputRejected, ErrNoMatchingOutput, ErrNoHandler
 13. `message/engine.go` - Engine with AddInput, AddOutput, AddLoopback, AddHandler
 14. `message/middleware.go` - ValidateCE, WithCorrelationID (optional)

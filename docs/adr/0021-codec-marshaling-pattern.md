@@ -1,19 +1,18 @@
-# ADR 0021: Codec, TypeRegistry, and NamingStrategy
+# ADR 0021: Codec and NamingStrategy
 
 **Date:** 2025-12-22
-**Updated:** 2025-12-26
+**Updated:** 2025-12-27
 **Status:** Proposed (see [ADR 0022](0022-message-package-redesign.md))
 
 ## Context
 
 Messages cross system boundaries as `[]byte`, but handlers work with typed Go data. We need:
 1. Serialization/deserialization
-2. Mapping between CloudEvents `type` attribute and Go types
-3. Convention for deriving CE type from Go type names
+2. Convention for deriving CE type from Go type names
 
 ## Decision
 
-Split into three separate components with clear responsibilities:
+Split into two separate components with clear responsibilities:
 
 ### Codec - Pure Serialization
 
@@ -26,17 +25,6 @@ type Codec interface {
 ```
 
 Codec does one thing: convert between Go values and bytes. No type registry, no naming.
-
-### TypeRegistry - CE Type ↔ Go Type Mapping
-
-```go
-type TypeRegistry interface {
-    Register(ceType string, goType reflect.Type)
-    Lookup(ceType string) (reflect.Type, bool)
-}
-```
-
-TypeRegistry maps CE types to Go types for unmarshaling. Registration is explicit.
 
 ### NamingStrategy - Standalone Utility
 
@@ -51,6 +39,18 @@ var SnakeNaming NamingStrategy   // OrderCreated → "order_created"
 
 NamingStrategy is a utility used by handler constructors to derive CE type from Go type.
 
+### Handler.NewInput() - Instance Creation
+
+No public TypeRegistry is needed. Handler provides `NewInput()` to create instances for unmarshaling:
+
+```go
+type Handler interface {
+    EventType() string  // CE type - for routing
+    NewInput() any      // creates new instance for unmarshaling
+    Handle(ctx context.Context, msg *Message) ([]*Message, error)
+}
+```
+
 ## Usage
 
 ### Handler Construction
@@ -58,18 +58,17 @@ NamingStrategy is a utility used by handler constructors to derive CE type from 
 ```go
 handler := message.NewHandler(processOrder, message.KebabNaming)
 // handler.EventType() returns "order.created"
-// handler.GoType() returns reflect.Type of OrderCreated
+// handler.NewInput() returns *OrderCreated for unmarshaling
 ```
 
 ### Engine Setup
 
 ```go
 engine := message.NewEngine(message.EngineConfig{
-    Codec:    message.NewJSONCodec(),
-    Registry: message.NewTypeRegistry(),
+    Codec: message.NewJSONCodec(),
 })
 
-// Handler self-registers via EventType() and GoType()
+// Engine routes by handler.EventType(), uses handler.NewInput() for unmarshaling
 engine.AddHandler(handler, message.HandlerConfig{Name: "process-order"})
 ```
 
@@ -77,11 +76,11 @@ engine.AddHandler(handler, message.HandlerConfig{Name: "process-order"})
 
 ```go
 // Engine receives []byte + CE type from input
-// 1. Lookup Go type in registry
-goType, _ := registry.Lookup(ceType)
+// 1. Get handler for CE type, create instance
+handler := engine.handlers[ceType]
+instance := handler.NewInput()  // returns *OrderCreated
 
-// 2. Instantiate and unmarshal
-instance := reflect.New(goType).Interface()
+// 2. Unmarshal into instance
 codec.Unmarshal(data, instance)
 ```
 
@@ -90,13 +89,13 @@ codec.Unmarshal(data, instance)
 **Benefits:**
 - Clean separation of concerns
 - Codec is simple and testable
-- TypeRegistry has explicit registration (no magic)
+- No public TypeRegistry - Handler.NewInput() handles instance creation
 - NamingStrategy encapsulated in handler constructors
-- Handler is self-describing (knows its own CE type)
+- Handler is self-describing (knows its own CE type and how to create instances)
 
 **Drawbacks:**
-- Must register types in TypeRegistry (via AddHandler)
-- Reflection overhead for instantiation
+- Handler interface has 3 methods instead of 1
+- Each handler must implement NewInput()
 
 ## Rejected: Combined Marshaler
 

@@ -52,12 +52,12 @@ The message package grew too complex too early. Current state includes:
    - Pattern-based output routing via Matcher (SQL LIKE syntax)
    - Handler creates complete messages, engine only sets DataContentType
 
-4. **Codec, TypeRegistry, NamingStrategy (separate concerns):**
+4. **Codec, NamingStrategy, Handler (separate concerns):**
    - `Codec`: Pure serialization - `Marshal(v) []byte`, `Unmarshal(data, v)`, `ContentType()`
-   - `TypeRegistry`: Maps CE type ↔ Go type - `Register(ceType, goType)`, `Lookup(ceType)`
    - `NamingStrategy`: Standalone utility - `TypeName(goType) string`
-   - Handler is self-describing: `GoType()`, `EventType()`, `Handle()`
+   - Handler is self-describing: `EventType()`, `NewInput()`, `Handle()`
    - Handler constructors take NamingStrategy to derive EventType at construction
+   - No public TypeRegistry - Handler.NewInput() provides instance creation
 
 5. **CloudEvents bridge in `message/cloudevents/`:**
    - Adapter package imports both `message` and `cloudevents/sdk-go/v2`
@@ -89,15 +89,16 @@ import (
     ce "github.com/fxsml/gopipe/message/cloudevents"
 )
 
-// Create engine with Codec and TypeRegistry
+// Create engine with Codec
 engine := message.NewEngine(message.EngineConfig{
-    Codec:    message.NewJSONCodec(),
-    Registry: message.NewTypeRegistry(),
+    Codec: message.NewJSONCodec(),
 })
 
-// Add handler (convention-based) - NamingStrategy in config
+// Add handler (convention-based) - receives command directly
 handler := message.NewCommandHandler(
-    func(ctx context.Context, msg *TypedMessage[CreateOrder]) ([]OrderCreated, error) {
+    func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
+        // Access message attributes via context if needed:
+        // attrs := message.AttributesFromContext(ctx)
         return []OrderCreated{{OrderID: "123"}}, nil
     },
     message.CommandHandlerConfig{
@@ -106,7 +107,7 @@ handler := message.NewCommandHandler(
     },
 )
 // handler.EventType() returns "create.order"
-// handler.GoType() returns reflect.Type of CreateOrder
+// handler.NewInput() returns *CreateOrder for unmarshaling
 
 engine.AddHandler(handler, message.HandlerConfig{Name: "create-order"})
 
