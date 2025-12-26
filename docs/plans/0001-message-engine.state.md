@@ -58,18 +58,18 @@ Handlers created via constructors, registered by name on engine.
 ```go
 type Handler interface {
     EventType() reflect.Type
-    Handle(ctx context.Context, event any) ([]*Message, error)
+    Handle(ctx context.Context, msg *Message) ([]*Message, error)
 }
 
-// Generic constructor
-func NewHandler[T any](fn func(ctx context.Context, event T) ([]*Message, error)) Handler
+// Generic constructor - typed access to message data
+func NewHandler[T any](fn func(ctx context.Context, msg *TypedMessage[T]) ([]*Message, error)) Handler
 
 // CQRS constructor - always returns slice of events
-func NewCommandHandler[C, E any](fn func(ctx context.Context, cmd C) ([]E, error)) Handler
+func NewCommandHandler[C, E any](fn func(ctx context.Context, msg *TypedMessage[C]) ([]E, error)) Handler
 
 // With config (not variadic - single optional config)
 func NewCommandHandlerWithConfig[C, E any](
-    fn func(ctx context.Context, cmd C) ([]E, error),
+    fn func(ctx context.Context, msg *TypedMessage[C]) ([]E, error),
     cfg CommandHandlerConfig,
 ) Handler
 
@@ -82,7 +82,8 @@ engine.AddHandler("process-order", handler)
 Handler is responsible for all message attributes (except auto-fields).
 
 ```go
-handler := message.NewHandler(func(ctx context.Context, order OrderCreated) ([]*Message, error) {
+handler := message.NewHandler(func(ctx context.Context, msg *TypedMessage[OrderCreated]) ([]*Message, error) {
+    order := msg.Data  // typed access
     return []*Message{
         message.New(OrderShipped{OrderID: order.ID}, message.Attributes{
             Type:   "order.shipped",
