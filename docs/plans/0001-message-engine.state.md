@@ -441,13 +441,13 @@ engine.AddInput(loopback, InputConfig{Name: "loopback"})  // ❌
 | Output routing | Pattern matching on CE type | ✅ Declarative |
 | Optional features | Middleware (`Use()`) | ✅ Standard pattern |
 
-## Open Questions
+## Design Decisions (Resolved)
 
-1. **Loopback detection**: How to detect/prevent infinite loops when output feeds back to input?
-2. **No match**: What happens to messages matching no output pattern? Error? Drop? (catch-all recommended)
-3. **Middleware order**: Pre-handler vs post-handler middleware? Or single chain?
-4. **Handler error handling**: Per-handler error handler or engine-level only?
-5. **CESQL support**: Full CESQL or subset? Dependency on cloudevents/sdk-go? (see Plan 0003)
+1. **Loopback detection**: Handler responsibility. Handlers must not output messages that loop back to themselves indefinitely. Optional middleware can add hop count/TTL if needed.
+2. **No match**: `ErrNoMatchingOutput` sent to engine's ErrorHandler.
+3. **Middleware order**: Pre-handler and post-handler, similar to `pipe` module but with concrete `*Message` type. Applied to all handlers.
+4. **Handler error handling**: Engine-level only. Handlers return errors, engine's ErrorHandler processes them.
+5. **CESQL support**: Full CESQL support planned (future - see Plan 0003).
 
 ## Ready to Implement
 
