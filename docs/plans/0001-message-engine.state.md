@@ -1,13 +1,23 @@
 # Plan 0001: Message Engine - Design State
 
 **Status:** In Progress
-**Last Updated:** 2025-12-25
+**Last Updated:** 2025-12-26
 
 ## Current Design Decisions
 
-### Engine Orchestrates, Doesn't Own I/O Lifecycle
+### Separation of Concerns
 
-Engine processes channels, doesn't manage subscription/publishing lifecycle.
+| Component | Responsibility |
+|-----------|----------------|
+| **Engine** | Orchestrates flow, routing, lifecycle |
+| **Marshaler** | Serialization + type registry |
+| **Handler** | Business logic, creates output messages |
+| **NamingStrategy** | Convention for deriving CE types/names |
+| **Subscriber/Publisher** | I/O adapters (external lifecycle) |
+
+### Engine - Orchestration Only
+
+Engine accepts channels, doesn't own I/O lifecycle.
 
 ```go
 // Input: Engine accepts named channels
@@ -26,23 +36,24 @@ publisher := ce.NewPublisher(client)
 publisher.Publish(ctx, engine.Output("shipments"))
 ```
 
-### Routing
+### Marshaler - Lightweight with Registry
 
-**Two explicit methods:**
+Marshaler handles serialization and type registry (needed for unmarshal).
+
 ```go
-engine.RouteType("order.created", "process-orders")   // CE type → handler
-engine.RouteOutput("process-orders", "shipments")     // handler → output (or handler for loopback)
+type Marshaler interface {
+    Register(v any)                                // register type, derive CE type name
+    Marshal(v any) ([]byte, string, error)         // returns data, CE type, error
+    Unmarshal(data []byte, ceType string) (any, error)
+    ContentType() string
+}
 ```
 
-**Two strategies:**
-- `ConventionRouting` (default): Auto-route by naming conventions
-- `ExplicitRouting`: Manual Route* calls required
+Registry is required because `Unmarshal` receives CE type string, needs to know which Go type to instantiate.
 
-**Convention rules:**
-- Ingress: `EventType()` always explicit (Handler interface)
-- Egress: `OrderCreated` → `orders` output (domain prefix, pluralized)
+### Handler - Constructors, Not Engine Methods
 
-### Handler Interface
+Handlers created via constructors, registered by name on engine.
 
 ```go
 type Handler interface {
@@ -50,82 +61,152 @@ type Handler interface {
     Handle(ctx context.Context, event any) ([]*Message, error)
 }
 
-// Name is registration concern, not handler property
-engine.AddHandler("process-orders", handler)
+// Generic constructor
+func NewHandler[T any](fn func(ctx context.Context, event T) ([]*Message, error)) Handler
+
+// CQRS constructor - always returns slice of events
+func NewCommandHandler[C, E any](fn func(ctx context.Context, cmd C) ([]E, error)) Handler
+
+// With config (not variadic - single optional config)
+func NewCommandHandlerWithConfig[C, E any](
+    fn func(ctx context.Context, cmd C) ([]E, error),
+    cfg CommandHandlerConfig,
+) Handler
+
+// Registration
+engine.AddHandler("process-order", handler)
+```
+
+### Handler Creates Complete Messages
+
+Handler is responsible for all message attributes (except auto-fields).
+
+```go
+handler := message.NewHandler(func(ctx context.Context, order OrderCreated) ([]*Message, error) {
+    return []*Message{
+        message.New(OrderShipped{OrderID: order.ID}, message.Attributes{
+            Type:   "order.shipped",
+            Source: "/orders-service",
+        }),
+    }, nil
+})
+```
+
+Engine only adds auto-fields:
+- `ID` (if not set) - auto-generate UUID
+- `SpecVersion` - "1.0"
+- `Time` - now()
+- `Subscriber` - input channel name
+
+### Routing - Two Explicit Methods
+
+```go
+engine.RouteType("order.created", "process-orders")   // CE type → handler
+engine.RouteOutput("process-orders", "shipments")     // handler → output (or handler for loopback)
+```
+
+### Routing Strategies
+
+```go
+type RoutingStrategy int
+
+const (
+    ConventionRouting RoutingStrategy = iota  // default: auto-route by naming
+    ExplicitRouting                           // manual Route* calls required
+)
+```
+
+**Convention rules:**
+- Ingress: Handler's `EventType()` derives CE type name
+- Egress: `OrderCreated` → `orders` output (domain prefix, pluralized)
+
+### NamingStrategy - Separate Concern
+
+```go
+type NamingStrategy interface {
+    TypeName(t reflect.Type) string    // Go type → CE type
+    OutputName(t reflect.Type) string  // Go type → output name
+}
+
+// CQRS convention
+var CQRSNaming NamingStrategy  // CreateOrder→"create.order", OrderCreated→"orders"
+```
+
+### Validation - Optional Middleware
+
+```go
+engine.Use(message.ValidateCE())  // validates required CE attributes
 ```
 
 ### Attributes
 
 - `Subscriber`: Set by engine on ingress (input channel name)
-- `Publisher`: Optional per-message override for output routing
-
-### Publisher/Topic Separation
-
-- Engine routes to **outputs by name** (domain-level: `orders`, `payments`)
-- Publisher adapter handles **topic mapping** (broker-level concern)
-
-```go
-publisher := kafka.NewPublisher(client, kafka.Config{
-    Topic: "orders",  // or TopicFunc for dynamic
-})
-```
+- No per-message routing attribute by default (convention-based)
 
 ## Rejected Ideas
 
 ### Handler owns its name
 ```go
-// Rejected: Name() in Handler interface
 type Handler interface {
-    Name() string  // ❌ Name is wiring concern, not handler logic
-    EventType() reflect.Type
-    Handle(...)
+    Name() string  // ❌
 }
 ```
-**Why rejected:** Name is a registration/wiring concern, not intrinsic to handler logic.
+**Why rejected:** Name is wiring concern, not handler logic.
 
-### Destination/Publisher attribute for routing
+### Variadic config for handlers
 ```go
-// Rejected: Handler sets destination in message
-message.New(event, Attributes{Destination: "shipments"})  // ❌
+func NewCommandHandler[C, E any](fn ..., cfg ...Config) Handler  // ❌
 ```
-**Why rejected:** Routing should be by type/convention, not per-message attribute. Attribute kept only as escape hatch.
+**Why rejected:** Not idiomatic Go. Use separate `NewCommandHandlerWithConfig` function.
 
-### Source attribute for subscriber name
+### Per-message routing attribute
 ```go
-// Rejected: Reuse CloudEvents Source
-msg.Attributes[AttrSource] = subscriberName  // ❌
+message.New(event, Attributes{Publisher: "shipments"})  // ❌ as default
 ```
-**Why rejected:** `Source` is a required CloudEvents attribute (origin URI). Can't repurpose.
+**Why rejected:** Routing should be by type/convention. Attribute only as escape hatch.
 
-### Engine owns Subscriber/Publisher lifecycle
+### Engine owns I/O lifecycle
 ```go
-// Rejected: Engine manages subscription
 engine.AddSubscriber("orders", subscriber)  // ❌ Engine subscribes internally
 ```
-**Why rejected:** Doesn't handle leader election, dynamic scaling, multi-tenant patterns. Subscription lifecycle is external concern.
+**Why rejected:** Doesn't handle leader election, dynamic scaling. External concern.
 
-### Type-based publisher routing
+### Heavy Marshaler with naming
 ```go
-// Rejected: Route by output event type
-engine.Route(OrderShipped{}, "shipments")  // ❌
+type Marshaler interface {
+    TypeName(v any) string     // ❌ separate concern
+    IsCommand(v any) bool      // ❌ separate concern
+}
 ```
-**Why rejected:** Handler name is already explicit. Type-based adds complexity. Convention handles common case.
+**Why rejected:** Marshaler should be lightweight. Naming is separate strategy.
 
-### Single Route() method for both directions
+### Single ambiguous Route() method
 ```go
-// Rejected: Ambiguous what from/to are
-engine.Route("order.created", "process-orders")  // ❌ Is this type→handler or handler→output?
+engine.Route("order.created", "process-orders")  // ❌
 ```
-**Why rejected:** Two methods (`RouteType`, `RouteOutput`) are more explicit.
+**Why rejected:** Two methods are more explicit.
+
+## Idiomaticity Review
+
+| Aspect | Pattern | Idiomatic? |
+|--------|---------|------------|
+| Handler constructors | `NewHandler[T]()`, `NewHandlerWithConfig[T]()` | ✅ Go generic pattern |
+| Config pattern | Separate function, not variadic | ✅ Explicit over magic |
+| Interface segregation | Marshaler, NamingStrategy, Handler separate | ✅ Single responsibility |
+| Engine lifecycle | Accepts channels, doesn't own I/O | ✅ Composition over inheritance |
+| Routing methods | `RouteType`, `RouteOutput` | ✅ Explicit naming |
+| Optional features | Middleware (`Use()`) | ✅ Standard pattern |
+| Default + override | ConventionRouting default, explicit override | ✅ Progressive disclosure |
 
 ## Open Questions
 
 1. Should `Output()` return a channel or require registration first?
-2. Loopback: Is `RouteOutput("handler-a", "handler-b")` enough or need explicit `RouteLoop()`?
+2. Loopback: Is `RouteOutput("handler-a", "handler-b")` enough?
 3. Default output for unrouted handler output?
+4. Should `NewCommandHandler` auto-register types with marshaler?
 
 ## Next Steps
 
-1. Update Plan 0001 with this design
-2. Update topics.md manual
-3. Consider if ADR 0022 needs updates
+1. Update Plan 0001 with refined design
+2. Update ADR 0022 with marshaler/handler separation
+3. Create NamingStrategy interface specification
