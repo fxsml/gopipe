@@ -40,11 +40,12 @@ done, _ := engine.Start(ctx)
 
 ### Routing
 
-**Ingress (CE type → handler):**
+**Ingress (CE type → handler) - automatic via NamingStrategy:**
 
 ```go
-// Explicit routing required
-engine.RouteType("order.created", "process-orders")
+engine.AddHandler("process-orders", handler)
+// Auto-derives: handler.EventType() → OrderCreated → "order.created"
+// Registers: typeRoutes["order.created"] = "process-orders"
 ```
 
 **Egress (handler output → output channel):**
@@ -58,7 +59,10 @@ defaultOut := engine.AddOutput(message.OutputConfig{})  // nil = catch-all
 
 ### NamingStrategy
 
-NamingStrategy is used by CommandHandler to derive output CE types:
+NamingStrategy derives CE type from Go types. Used in two places:
+
+1. **Engine**: Auto-derive ingress routing from `handler.EventType()`
+2. **CommandHandler**: Auto-derive output CE type from event type `E`
 
 ```go
 type NamingStrategy interface {
@@ -68,8 +72,6 @@ type NamingStrategy interface {
 // KebabNaming (default):
 // OrderCreated → CE type "order.created"
 ```
-
-**Note:** NamingStrategy is NOT used for ingress routing. All ingress routing is explicit via `RouteType()`.
 
 ### Matcher Interface
 
@@ -203,7 +205,7 @@ The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 │                                                                  │
 │  AddInput(ch, cfg) ──> unmarshal ──┐                             │
 │     + Matcher                      ├──> route ──> handler ──┐   │
-│             AddLoopback ───────────┘  (RouteType)           │   │
+│             AddLoopback ───────────┘  (auto via Naming)     │   │
 │                  ↑                                          ↓   │
 │                  │                                      marshal │
 │                  │                                          │   │
@@ -229,7 +231,7 @@ The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 |-----------|---------|------|---------|
 | Subscriber | topic | Subscribe time | `"orders"` |
 | Engine | input | AddInput(ch, cfg) | `InputConfig{Name: "...", Matcher: ...}` |
-| Engine | routing | RouteType(ceType, handler) | `"order.created"` → `"process-order"` |
+| Engine | routing | AddHandler (auto via NamingStrategy) | `OrderCreated` → `"order.created"` → handler |
 | Handler | CE type | EventType() | `"order.created"` |
 | Engine | output | AddOutput(cfg) | `OutputConfig{Matcher: match.Types("order.%")}` |
 | Engine | loopback | AddLoopback(cfg) | `LoopbackConfig{Matcher: match.Types("validate.%")}` |
