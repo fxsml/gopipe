@@ -21,12 +21,11 @@ Subscribers → Unmarshal → FanIn → Router → Handler ─┐
 
 1. Marshals only at external boundaries (`[]byte` ↔ Go types)
 2. FanIn merges subscriber channels (after unmarshal)
-3. Routes by Go type using `reflect.Type`
-4. FanOut routes outputs: internal (typed) or external (marshaled)
-5. Generators feed directly into FanOut (already typed)
-6. Internal loopback via `gopipe://` skips marshal/unmarshal
-7. Auto-generates type registry on `Start()` from handlers
-8. Sources can be added/removed at runtime with individual contexts
+3. Routes by CE type to handlers (via Marshaler's type registry)
+4. FanOut routes outputs via Matcher patterns
+5. Loopback via `AddLoopback()` skips marshal/unmarshal
+6. Type registry in Marshaler with auto-registration via NamingStrategy
+7. Sources can be added/removed at runtime with individual contexts
 
 ## Requirements
 

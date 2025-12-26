@@ -9,40 +9,60 @@ Messages cross system boundaries as `[]byte`, but handlers work with typed Go da
 
 ## Decision
 
-Introduce a Marshaler with type registry:
+Introduce a Marshaler with type registry and NamingStrategy:
 
 ```go
 type Marshaler interface {
-    Register(ceType string, prototype any)
-    Name(v any) string
-    TypeFor(ceType string) (reflect.Type, bool)
+    Register(goType reflect.Type)              // register Go type, derive CE type via NamingStrategy
+    TypeName(goType reflect.Type) string       // Go type → CE type (lookup or derive)
     Marshal(v any) ([]byte, error)
     Unmarshal(data []byte, ceType string) (any, error)
+    ContentType() string
 }
 ```
 
-### Type Mapping
+### Type Registry
 
-| Direction | Example |
-|-----------|---------|
-| Go → CE | `OrderCreated{}` → `"order.created"` |
-| CE → Go | `"order.created"` → `OrderCreated{}` |
+Bidirectional mapping stored internally:
 
-### Naming Strategy
+```
+CE Type → Go Type    │    Go Type → CE Type
+─────────────────    │    ─────────────────
+"order.created" → OrderCreated
+"order.shipped" → OrderShipped
+```
 
-For unregistered types, derive CE type from Go type name:
-- `NamingKebab`: `OrderCreated` → `order.created`
-- `NamingSimple`: `OrderCreated` → `OrderCreated`
+- **Unmarshal**: CE type string → Go type → instantiate
+- **TypeName**: Go type → CE type string
+
+### NamingStrategy
+
+NamingStrategy lives in Marshaler and derives CE type from Go type:
+
+```go
+type NamingStrategy interface {
+    TypeName(t reflect.Type) string  // Go type → CE type
+}
+```
+
+Implementations:
+- `KebabNaming`: `OrderCreated` → `"order.created"`
+- `SnakeNaming`: `OrderCreated` → `"order_created"`
+
+### Auto-Registration
+
+Types are auto-registered when `TypeName` is called for unregistered types. This enables the Engine to auto-register handler types without explicit registration.
 
 ## Consequences
 
 **Benefits:**
 - Handlers receive typed data, not `[]byte`
-- Centralized type registry
-- Auto-derive CE type from Go type
+- Centralized type registry with bidirectional lookup
+- Auto-derive CE type from Go type via NamingStrategy
+- Auto-registration on TypeName simplifies usage
 
 **Drawbacks:**
-- Must register types for unmarshaling
+- Must have types registered for Unmarshal (explicit or auto)
 - Reflection overhead
 
 ## Links

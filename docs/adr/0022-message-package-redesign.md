@@ -44,17 +44,21 @@ The message package grew too complex too early. Current state includes:
 
 3. **Engine in `message/` package:**
    - Orchestrates flow, doesn't own I/O lifecycle
-   - `AddInput(ch, InputConfig)` - channel with optional name for tracing
-   - `AddOutput(OutputConfig)` - returns channel, routes by Match pattern
+   - `AddInput(ch, InputConfig)` - channel with optional Matcher for filtering
+   - `AddOutput(OutputConfig)` - returns channel, routes by Matcher
+   - `AddLoopback(LoopbackConfig)` - internal re-processing (bypasses marshal)
+   - `AddHandler(h, HandlerConfig)` - config-based registration
    - Two handler types: explicit (`NewHandler`) and convention (`NewCommandHandler`)
-   - NamingStrategy for CE type name derivation
-   - Pattern-based output routing (wildcards, CESQL)
+   - Pattern-based output routing via Matcher (SQL LIKE syntax)
    - Handler creates complete messages, engine only sets DataContentType
 
-4. **Lightweight Marshaler:**
-   - `Register`, `Marshal`, `Unmarshal`, `ContentType`
-   - Type registry for CE type ↔ Go type mapping
-   - Uses NamingStrategy for name derivation
+4. **Marshaler with Type Registry:**
+   - `Register(goType reflect.Type)` - register Go type, CE type derived via NamingStrategy
+   - `TypeName(goType reflect.Type) string` - Go type → CE type (with auto-registration)
+   - `Marshal(v any) ([]byte, error)` - serialize Go value
+   - `Unmarshal(data []byte, ceType string) (any, error)` - CE type → Go type → instance
+   - `ContentType() string` - MIME type for DataContentType
+   - NamingStrategy lives in Marshaler, derives CE type from Go type names
 
 5. **CloudEvents bridge in `message/cloudevents/`:**
    - Adapter package imports both `message` and `cloudevents/sdk-go/v2`
@@ -82,12 +86,15 @@ All removed types are breaking changes. Since we're pre-v1 with single user, thi
 ```go
 import (
     "github.com/fxsml/gopipe/message"
+    "github.com/fxsml/gopipe/message/match"
     ce "github.com/fxsml/gopipe/message/cloudevents"
 )
 
-// Create engine
+// Create engine with marshaler (NamingStrategy lives in marshaler)
 engine := message.NewEngine(message.EngineConfig{
-    Marshaler: message.NewJSONMarshaler(message.JSONMarshalerConfig{}),
+    Marshaler: message.NewJSONMarshaler(message.JSONMarshalerConfig{
+        Naming: message.KebabNaming,
+    }),
 })
 
 // Add handler (convention-based)
@@ -99,17 +106,20 @@ handler := message.NewCommandHandler(
         Source: "/orders-service",
     },
 )
-engine.AddHandler("create-order", handler)
+engine.AddHandler(handler, message.HandlerConfig{
+    Name: "create-order",
+    // Type: derived via marshaler.TypeName(handler.EventType())
+})
 
-// Input: external subscription, config has optional name
+// Input: external subscription with optional Matcher for filtering
 client, _ := cloudevents.NewClientHTTP()
 subscriber := ce.NewSubscriber(client)
 ch, _ := subscriber.Subscribe(ctx, "orders")
 engine.AddInput(ch, message.InputConfig{Name: "order-events"})
 
-// Output: pattern-based routing, returns channel directly
-ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
-defaultOut := engine.AddOutput(message.OutputConfig{Match: "*"})
+// Output: pattern-based routing via Matcher
+ordersOut := engine.AddOutput(message.OutputConfig{Matcher: match.Types("order.%")})
+defaultOut := engine.AddOutput(message.OutputConfig{})  // nil = catch-all
 
 // External publishing (Publish runs in goroutine internally)
 publisher := ce.NewPublisher(client)

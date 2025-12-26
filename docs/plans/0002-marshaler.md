@@ -6,19 +6,43 @@
 
 ## Overview
 
-Implement a lightweight Marshaler with type registry for CloudEvents type ↔ Go type mapping.
+Implement a Marshaler with type registry and NamingStrategy for automatic CE type ↔ Go type mapping.
+
+## Type Registry
+
+The Marshaler maintains a bidirectional mapping:
+
+```
+┌─────────────────────────────────────────────┐
+│              Marshaler Registry              │
+│                                              │
+│  CE Type → Go Type    │    Go Type → CE Type │
+│  ─────────────────    │    ─────────────────  │
+│  "order.created" → OrderCreated              │
+│  "order.shipped" → OrderShipped              │
+│  "create.order"  → CreateOrder               │
+└─────────────────────────────────────────────┘
+```
+
+- **Unmarshal direction**: CE type string → Go type → instantiate
+- **TypeName direction**: Go type → CE type string
 
 ## Interface
 
 ```go
 type Marshaler interface {
-    // Register adds a type to the registry, deriving CE type name via NamingStrategy
-    Register(v any)
+    // Register adds a Go type to the registry
+    // CE type is derived via NamingStrategy: OrderCreated → "order.created"
+    Register(goType reflect.Type)
 
-    // Marshal converts a Go value to []byte, returns data and CE type
-    Marshal(v any) (data []byte, ceType string, err error)
+    // TypeName returns the CE type for a Go type (lookup or derive via NamingStrategy)
+    TypeName(goType reflect.Type) string
+
+    // Marshal converts a Go value to []byte
+    Marshal(v any) ([]byte, error)
 
     // Unmarshal converts []byte to a Go value based on CloudEvents type
+    // Looks up CE type in registry to find Go type, then instantiates and unmarshals
     Unmarshal(data []byte, ceType string) (any, error)
 
     // ContentType returns the MIME type (e.g., "application/json")
@@ -37,31 +61,31 @@ type JSONMarshaler struct {
 }
 
 type JSONMarshalerConfig struct {
-    Naming NamingStrategy  // default: KebabNaming
+    Naming NamingStrategy  // required (no default - explicit configuration)
 }
 
 func NewJSONMarshaler(cfg JSONMarshalerConfig) *JSONMarshaler
 
-func (m *JSONMarshaler) Register(v any)
-func (m *JSONMarshaler) Marshal(v any) ([]byte, string, error)
+func (m *JSONMarshaler) Register(goType reflect.Type)
+func (m *JSONMarshaler) TypeName(goType reflect.Type) string
+func (m *JSONMarshaler) Marshal(v any) ([]byte, error)
 func (m *JSONMarshaler) Unmarshal(data []byte, ceType string) (any, error)
 func (m *JSONMarshaler) ContentType() string  // "application/json"
 ```
 
 ## NamingStrategy
 
-NamingStrategy is shared between Marshaler and Engine for consistency.
+NamingStrategy lives in Marshaler. It derives CE type from Go type names.
 
 ```go
 type NamingStrategy interface {
-    TypeName(t reflect.Type) string    // Go type → CE type
-    OutputName(t reflect.Type) string  // Go type → output name
+    TypeName(t reflect.Type) string  // Go type → CE type
 }
 
-// KebabNaming: OrderCreated → "order.created", output: "orders"
+// KebabNaming: OrderCreated → "order.created"
 var KebabNaming NamingStrategy
 
-// SnakeNaming: OrderCreated → "order_created", output: "orders"
+// SnakeNaming: OrderCreated → "order_created"
 var SnakeNaming NamingStrategy
 ```
 
@@ -69,17 +93,20 @@ var SnakeNaming NamingStrategy
 
 ```go
 marshaler := message.NewJSONMarshaler(message.JSONMarshalerConfig{
-    // Naming: message.KebabNaming (default)
+    Naming: message.KebabNaming,
 })
 
-// Register type (CE type derived from NamingStrategy)
-marshaler.Register(OrderCreated{})  // "order.created"
+// Register type (CE type derived via NamingStrategy)
+marshaler.Register(reflect.TypeOf(OrderCreated{}))  // → "order.created"
 
-// Marshal returns data + CE type
-data, ceType, _ := marshaler.Marshal(OrderCreated{ID: "123"})
-// data: {"id":"123"}, ceType: "order.created"
+// TypeName returns CE type for Go type
+ceType := marshaler.TypeName(reflect.TypeOf(OrderCreated{}))  // "order.created"
 
-// Unmarshal uses CE type to find Go type
+// Marshal converts Go value to bytes
+data, _ := marshaler.Marshal(OrderCreated{ID: "123"})
+// data: {"id":"123"}
+
+// Unmarshal uses CE type to find Go type, instantiate, and unmarshal
 event, _ := marshaler.Unmarshal(data, "order.created")
 order := event.(OrderCreated)
 
@@ -89,12 +116,20 @@ contentType := marshaler.ContentType()  // "application/json"
 
 ## Auto-Registration
 
-Types can be auto-registered when first marshaled:
+Types are auto-registered when TypeName is called for unregistered types:
 
 ```go
-// First marshal of unregistered type auto-registers it
-data, ceType, _ := marshaler.Marshal(OrderCreated{ID: "123"})
-// Now "order.created" is registered
+// TypeName for unregistered type auto-registers it
+ceType := marshaler.TypeName(reflect.TypeOf(OrderCreated{}))
+// Now "order.created" ↔ OrderCreated is registered
+```
+
+This enables the Engine to auto-register handler types:
+
+```go
+engine.AddHandler(handler, HandlerConfig{Name: "process-order"})
+// Engine calls: marshaler.TypeName(handler.EventType())
+// → auto-registers the type if not already registered
 ```
 
 ## Files to Create
@@ -106,22 +141,23 @@ data, ceType, _ := marshaler.Marshal(OrderCreated{ID: "123"})
 ## Test Plan
 
 1. Register type, Unmarshal returns typed value
-2. Unregistered CE type returns error
-3. Marshal returns data and CE type
-4. Auto-registration on first Marshal
+2. Unregistered CE type returns error on Unmarshal
+3. TypeName returns CE type for registered Go type
+4. TypeName auto-registers unregistered types
 5. Round-trip: Marshal then Unmarshal preserves data
 6. KebabNaming converts correctly (OrderCreated → "order.created")
 7. SnakeNaming converts correctly (OrderCreated → "order_created")
-8. OutputName extracts domain (OrderCreated → "orders")
-9. ContentType returns "application/json"
-10. Thread-safe concurrent registration and access
+8. ContentType returns "application/json"
+9. Thread-safe concurrent registration and access
+10. Bidirectional registry: CE type ↔ Go type both work
 
 ## Acceptance Criteria
 
-- [ ] Marshaler interface defined
+- [ ] Marshaler interface defined with Register, TypeName, Marshal, Unmarshal, ContentType
 - [ ] JSONMarshaler implements interface
 - [ ] NamingStrategy interface with KebabNaming, SnakeNaming
-- [ ] Auto-registration on Marshal
+- [ ] Bidirectional type registry (CE type ↔ Go type)
+- [ ] Auto-registration on TypeName for unregistered types
 - [ ] Thread-safe
 - [ ] Tests pass (`make test`)
 - [ ] Build passes (`make build && make vet`)

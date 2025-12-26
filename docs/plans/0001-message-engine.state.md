@@ -130,20 +130,39 @@ Used by match.Types() and match.Sources():
 1. First output with matching Matcher wins
 2. Nil Matcher (catch-all) should be registered last
 
-### Marshaler - Lightweight with Registry
+### Marshaler - Type Registry with NamingStrategy
 
-Marshaler handles serialization and type registry (needed for unmarshal).
+Marshaler handles serialization, type registry, and CE type derivation via NamingStrategy.
 
 ```go
 type Marshaler interface {
-    Register(v any)                                // register type, derive CE type name
-    Marshal(v any) ([]byte, string, error)         // returns data, CE type, error
+    Register(goType reflect.Type)              // register Go type, CE type derived via NamingStrategy
+    TypeName(goType reflect.Type) string       // Go type → CE type (lookup or derive + auto-register)
+    Marshal(v any) ([]byte, error)
     Unmarshal(data []byte, ceType string) (any, error)
     ContentType() string
 }
 ```
 
-Registry is required because `Unmarshal` receives CE type string, needs to know which Go type to instantiate.
+**Bidirectional registry:**
+```
+CE Type → Go Type    │    Go Type → CE Type
+─────────────────    │    ─────────────────
+"order.created" → OrderCreated
+"order.shipped" → OrderShipped
+```
+
+- **Unmarshal**: CE type string → Go type → instantiate
+- **TypeName**: Go type → CE type string (auto-registers if not found)
+
+**Auto-registration flow:**
+```go
+engine.AddHandler(handler, HandlerConfig{Name: "process-order"})
+// 1. Engine calls marshaler.TypeName(handler.EventType())
+// 2. Marshaler derives: OrderCreated → "order.created" via NamingStrategy
+// 3. Marshaler registers bidirectional mapping
+// 4. Engine registers: typeRoutes["order.created"] = "process-order"
+```
 
 ### Handler - Constructors, Config-based Registration
 
