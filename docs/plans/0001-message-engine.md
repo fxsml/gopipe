@@ -66,10 +66,11 @@ func NewCommandHandler[C, E any](
 
 ```go
 type CommandHandlerConfig struct {
-    Naming NamingStrategy  // default: KebabNaming
-    Source string          // required, no default
+    Source string  // required, CE source attribute (no default)
 }
 ```
+
+Note: CE type is derived via Marshaler's NamingStrategy, not per-handler config.
 
 ### InputConfig / OutputConfig
 
@@ -357,19 +358,46 @@ engine.AddLoopback(message.LoopbackConfig{
 })
 ```
 
-## Files to Create/Modify
+## MVP Implementation Order
 
-- `message/config.go` - InputConfig, OutputConfig, LoopbackConfig, HandlerConfig
-- `message/matcher.go` - Matcher interface
-- `message/match/match.go` - All, Any combinators
-- `message/match/like.go` - SQL LIKE pattern matching
-- `message/match/sources.go` - Sources matcher
-- `message/match/types.go` - Types matcher
-- `message/engine.go` - Engine with AddInput, AddOutput, AddLoopback, AddHandler (auto-routing)
-- `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
-- `message/naming.go` - NamingStrategy interface, KebabNaming, SnakeNaming
-- `message/middleware.go` - ValidateCE, WithCorrelationID
-- `message/errors.go` - ErrInputRejected, ErrNoMatchingOutput, ErrNoHandler, etc.
+### Phase 1: Core Types (depends on Plan 0002)
+1. `message/naming.go` - NamingStrategy interface, KebabNaming, SnakeNaming
+2. `message/marshaler.go` - Marshaler interface
+3. `message/json_marshaler.go` - JSONMarshaler with type registry
+
+### Phase 2: Matcher System
+4. `message/matcher.go` - Matcher interface
+5. `message/match/like.go` - SQL LIKE pattern matching
+6. `message/match/types.go` - Types matcher
+7. `message/match/sources.go` - Sources matcher
+8. `message/match/match.go` - All, Any combinators
+
+### Phase 3: Handler & Engine
+9. `message/config.go` - InputConfig, OutputConfig, LoopbackConfig, HandlerConfig
+10. `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
+11. `message/errors.go` - ErrInputRejected, ErrNoMatchingOutput, ErrNoHandler
+12. `message/engine.go` - Engine with AddInput, AddOutput, AddLoopback, AddHandler
+
+### Phase 4: Optional Enhancements
+13. `message/middleware.go` - ValidateCE, WithCorrelationID (optional - can defer)
+
+## Files Summary
+
+| File | Priority | Notes |
+|------|----------|-------|
+| `message/naming.go` | MVP | NamingStrategy interface and implementations |
+| `message/marshaler.go` | MVP | Marshaler interface |
+| `message/json_marshaler.go` | MVP | JSONMarshaler with type registry |
+| `message/matcher.go` | MVP | Matcher interface |
+| `message/match/like.go` | MVP | SQL LIKE pattern matching |
+| `message/match/types.go` | MVP | Types matcher |
+| `message/match/sources.go` | MVP | Sources matcher |
+| `message/match/match.go` | MVP | All, Any combinators |
+| `message/config.go` | MVP | Config structs |
+| `message/handler.go` | MVP | Handler interface and constructors |
+| `message/errors.go` | MVP | Error types |
+| `message/engine.go` | MVP | Engine orchestration |
+| `message/middleware.go` | Optional | ValidateCE, WithCorrelationID |
 
 ## Test Plan
 
@@ -396,6 +424,7 @@ engine.AddLoopback(message.LoopbackConfig{
 
 ## Acceptance Criteria
 
+### MVP (Required)
 - [ ] Engine.Start() orchestrates flow
 - [ ] AddInput(ch, cfg) with optional Matcher for filtering
 - [ ] AddOutput(cfg) returns channel, routes by Matcher
@@ -406,6 +435,8 @@ engine.AddLoopback(message.LoopbackConfig{
 - [ ] SQL LIKE pattern matching works (%, _)
 - [ ] match.All, match.Any, match.Sources, match.Types work
 - [ ] Error handling: ErrInputRejected, ErrNoHandler, ErrNoMatchingOutput
-- [ ] Middleware support (ValidateCE, WithCorrelationID)
 - [ ] Tests pass (`make test`)
 - [ ] Build passes (`make build && make vet`)
+
+### Optional (Can Defer)
+- [ ] Middleware support (ValidateCE, WithCorrelationID)

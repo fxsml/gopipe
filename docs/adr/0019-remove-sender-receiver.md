@@ -55,16 +55,16 @@ for group := range groups {
 }
 ```
 
-### Deprecation Plan
+### Migration Guide
 
-| Component | Action |
-|-----------|--------|
-| `Sender` | Deprecate → Remove |
-| `Receiver` | Deprecate → Remove |
-| `Publisher` | Deprecate → Remove |
-| `Subscriber` wrapper | Deprecate → Remove |
-| `broker/` package | Move to examples |
-| `multiplex/` | Deprecate → Use Engine routing |
+| Old Pattern | New Pattern |
+|-------------|-------------|
+| `Sender` interface | Broker client directly or `channel.GroupBy` |
+| `Receiver` interface | Broker implements `Subscribe() <-chan *Message` |
+| `Publisher` wrapper | `ce.NewPublisher(client).Publish(ctx, ch)` |
+| `Subscriber` wrapper | `ce.NewSubscriber(client).Subscribe(ctx, topic)` |
+| `broker/` package | Use `message/cloudevents/` adapters |
+| `multiplex/` routing | Engine output Matcher routing |
 
 ## Consequences
 

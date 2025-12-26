@@ -1,6 +1,7 @@
 # Plan 0003: CloudEvents SDK Integration
 
-**Status:** Proposed
+**Status:** Future (Optional)
+**Priority:** Low - Not required for MVP
 **Related ADRs:** [0022](../adr/0022-message-package-redesign.md)
 **Depends On:** [Plan 0001](0001-message-engine.md) (Message Engine)
 

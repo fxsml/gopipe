@@ -27,7 +27,14 @@ Subscribers → Unmarshal → FanIn → Router → Handler ─┐
 6. Type registry in Marshaler with auto-registration via NamingStrategy
 7. Sources can be added/removed at runtime with individual contexts
 
-## Requirements
+## MVP Requirements
+
+1. **Engine accepts channels** - External code manages subscription lifecycle
+2. **Pattern-based output routing** - Matcher interface with SQL LIKE syntax
+3. **Auto-routing via NamingStrategy** - Handler EventType → CE type
+4. **Loopback** - Internal re-processing without marshal/unmarshal
+
+## Future Requirements (Optional)
 
 1. **Dynamic Sources**: Add/remove subscribers at runtime
    - Use case: Leader election - only leader subscribes, unsubscribe on leadership loss
