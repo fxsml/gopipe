@@ -64,11 +64,8 @@ type Handler interface {
 // Generic constructor - typed access to message data
 func NewHandler[T any](fn func(ctx context.Context, msg *TypedMessage[T]) ([]*Message, error)) Handler
 
-// CQRS constructor - always returns slice of events
-func NewCommandHandler[C, E any](fn func(ctx context.Context, msg *TypedMessage[C]) ([]E, error)) Handler
-
-// With config (not variadic - single optional config)
-func NewCommandHandlerWithConfig[C, E any](
+// CQRS constructor - always requires config
+func NewCommandHandler[C, E any](
     fn func(ctx context.Context, msg *TypedMessage[C]) ([]E, error),
     cfg CommandHandlerConfig,
 ) Handler
@@ -158,7 +155,7 @@ type Handler interface {
 ```go
 func NewCommandHandler[C, E any](fn ..., cfg ...Config) Handler  // ❌
 ```
-**Why rejected:** Not idiomatic Go. Use separate `NewCommandHandlerWithConfig` function.
+**Why rejected:** Not idiomatic Go. Config is required parameter.
 
 ### Per-message routing attribute
 ```go
@@ -191,8 +188,8 @@ engine.Route("order.created", "process-orders")  // ❌
 
 | Aspect | Pattern | Idiomatic? |
 |--------|---------|------------|
-| Handler constructors | `NewHandler[T]()`, `NewHandlerWithConfig[T]()` | ✅ Go generic pattern |
-| Config pattern | Separate function, not variadic | ✅ Explicit over magic |
+| Handler constructors | `NewHandler[T]()`, `NewCommandHandler[C,E](fn, cfg)` | ✅ Go generic pattern |
+| Config pattern | Required parameter for CommandHandler | ✅ Explicit over magic |
 | Interface segregation | Marshaler, NamingStrategy, Handler separate | ✅ Single responsibility |
 | Engine lifecycle | Accepts channels, doesn't own I/O | ✅ Composition over inheritance |
 | Routing methods | `RouteType`, `RouteOutput` | ✅ Explicit naming |
