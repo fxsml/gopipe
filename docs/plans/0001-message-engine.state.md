@@ -134,6 +134,33 @@ engine.Use(message.ValidateCE())  // validates required CE attributes
 - `NewHandler`: Explicit - handler creates complete messages with all attributes
 - `NewCommandHandler`: Convention-based - uses NamingStrategy to auto-generate attributes
 
+### DataContentType
+
+Engine sets `DataContentType` at marshal boundary (from marshaler):
+
+```
+Input → Unmarshal (engine) → Handler (typed) → Marshal (engine, sets DataContentType) → Output
+```
+
+Handler deals with typed data, not bytes. Engine knows the marshaler and sets content type.
+
+### Middleware
+
+Correlation ID middleware for first draft:
+
+```go
+engine.Use(message.WithCorrelationID())  // propagates or generates correlation ID
+```
+
+| Attribute | Owner |
+|-----------|-------|
+| `DataContentType` | Engine (from marshaler) |
+| `Type` | Handler or NamingStrategy |
+| `Source` | Handler or Config |
+| `Subject` | Handler (explicit) |
+| `ID`, `Time`, `SpecVersion` | Handler or CommandHandler |
+| `CorrelationID` | Middleware |
+
 ### Routing - Two Explicit Methods
 
 ```go
