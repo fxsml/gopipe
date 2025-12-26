@@ -7,7 +7,7 @@
 
 ## Overview
 
-Implement a Message Engine that orchestrates message flow with marshaling at boundaries and type-based routing.
+Implement a Message Engine that orchestrates message flow with marshaling at boundaries and pattern-based output routing.
 
 ## Design Principles
 
@@ -16,6 +16,7 @@ Implement a Message Engine that orchestrates message flow with marshaling at bou
 3. **Engine doesn't own I/O lifecycle** - Accepts channels, external code manages subscription/publishing
 4. **Handler creates complete messages** - Engine only sets DataContentType from marshaler
 5. **Two handler types** - Explicit (`NewHandler`) and convention-based (`NewCommandHandler`)
+6. **Pattern-based output routing** - Match patterns on CE type, not named routing
 
 ## Architecture
 
@@ -23,15 +24,17 @@ Implement a Message Engine that orchestrates message flow with marshaling at bou
 ┌─────────────────────────────────────────────────────────────────┐
 │                         message.Engine                           │
 │                                                                  │
-│  AddInput() ──┐                                                  │
-│               ├──> pipe.Merger ──> unmarshal ──> route ──> handlers
-│               │         ↑                                   │    │
-│               │         │                                   ↓    │
-│               │         └─── loopback ─────────────── marshal    │
-│               │                                         │        │
-│               └─────────────────────────────────────────┼────────│
-│                                                         ↓        │
-│                                                    Output()      │
+│  AddInput(ch, cfg) ──┐                                           │
+│                      ├──> Merger ──> unmarshal ──> route ──> handlers
+│                      │       ↑                              │    │
+│                      │       │                              ↓    │
+│                      │       └─── loopback ──────────── marshal  │
+│                      │                                      │    │
+│                      └──────────────────────────────────────┼────│
+│                                                             ↓    │
+│                            ┌─── Match: "Order*" ───> ordersOut   │
+│                            ├─── Match: "Payment*" ─> paymentsOut │
+│  AddOutput(cfg) returns ───┴─── Match: "*" ───────> defaultOut   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -68,6 +71,19 @@ type CommandHandlerConfig struct {
 }
 ```
 
+### InputConfig / OutputConfig
+
+```go
+type InputConfig struct {
+    Name string  // optional, for tracing/metrics
+}
+
+type OutputConfig struct {
+    Name  string  // optional, for logging/metrics
+    Match string  // required: "*", "Order*", "order.*", or CESQL
+}
+```
+
 ### Engine
 
 ```go
@@ -75,8 +91,8 @@ type Engine struct {
     marshaler Marshaler
     naming    NamingStrategy
     handlers  map[reflect.Type][]Handler
-    inputs    map[string]<-chan *Message
-    outputs   map[string]chan *Message
+    inputs    []inputEntry
+    outputs   []outputEntry
 
     mu      sync.Mutex
     started bool
@@ -92,12 +108,11 @@ type EngineConfig struct {
 func NewEngine(cfg EngineConfig) *Engine
 
 func (e *Engine) AddHandler(name string, h Handler) error
-func (e *Engine) AddInput(name string, ch <-chan *Message) error
-func (e *Engine) Output(name string) <-chan *Message
+func (e *Engine) AddInput(ch <-chan *Message, cfg InputConfig) error
+func (e *Engine) AddOutput(cfg OutputConfig) <-chan *Message
 
-// Explicit routing (required if RoutingStrategy is ExplicitRouting)
+// Explicit ingress routing (required if RoutingStrategy is ExplicitRouting)
 func (e *Engine) RouteType(ceType string, handlerName string) error
-func (e *Engine) RouteOutput(handlerName string, outputName string) error
 
 func (e *Engine) Use(middleware Middleware)
 
@@ -110,8 +125,8 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error)
 type RoutingStrategy int
 
 const (
-    ConventionRouting RoutingStrategy = iota  // auto-route by NamingStrategy
-    ExplicitRouting                           // manual RouteType/RouteOutput required
+    ConventionRouting RoutingStrategy = iota  // auto-route ingress by NamingStrategy
+    ExplicitRouting                           // manual RouteType calls required
 )
 ```
 
@@ -120,11 +135,10 @@ const (
 ```go
 type NamingStrategy interface {
     TypeName(t reflect.Type) string    // Go type → CE type
-    OutputName(t reflect.Type) string  // Go type → output name
 }
 
-var KebabNaming NamingStrategy   // OrderCreated → "order.created", output: "orders"
-var SnakeNaming NamingStrategy   // OrderCreated → "order_created", output: "orders"
+var KebabNaming NamingStrategy   // OrderCreated → "order.created"
+var SnakeNaming NamingStrategy   // OrderCreated → "order_created"
 ```
 
 ## Usage
@@ -133,7 +147,7 @@ var SnakeNaming NamingStrategy   // OrderCreated → "order_created", output: "o
 
 ```go
 engine := message.NewEngine(message.EngineConfig{
-    Marshaler: message.NewJSONMarshaler(),
+    Marshaler: message.NewJSONMarshaler(message.JSONMarshalerConfig{}),
 })
 
 handler := message.NewHandler(func(ctx context.Context, msg *TypedMessage[OrderCreated]) ([]*Message, error) {
@@ -151,14 +165,18 @@ handler := message.NewHandler(func(ctx context.Context, msg *TypedMessage[OrderC
 
 engine.AddHandler("process-order", handler)
 
-// External subscription management
+// Input: external subscription management
 subscriber := ce.NewSubscriber(client)
 ch, _ := subscriber.Subscribe(ctx, "orders")
-engine.AddInput("orders", ch)
+engine.AddInput(ch, message.InputConfig{Name: "order-events"})
 
-// External publishing management
+// Output: pattern-based routing, returns channel directly
+ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
+defaultOut := engine.AddOutput(message.OutputConfig{Match: "*"})
+
+// External publishing
 publisher := ce.NewPublisher(client)
-go publisher.Publish(ctx, engine.Output("shipments"))
+go publisher.Publish(ctx, ordersOut)
 
 done, _ := engine.Start(ctx)
 <-done
@@ -178,6 +196,32 @@ handler := message.NewCommandHandler(
 )
 
 engine.AddHandler("create-order", handler)
+```
+
+## Output Pattern Matching
+
+**Match patterns:**
+- `"*"` - catch-all (default output)
+- `"Order*"` - Go type prefix match
+- `"order.*"` - CE type prefix match
+- CESQL: `"type LIKE 'order.%' AND data.priority = 'high'"`
+
+**Matching priority:**
+1. Exact match
+2. Prefix match
+3. CESQL expression
+4. Catch-all `"*"`
+
+**Example:**
+```go
+// Register outputs with patterns
+ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
+paymentsOut := engine.AddOutput(message.OutputConfig{Match: "Payment*"})
+defaultOut := engine.AddOutput(message.OutputConfig{Match: "*"})
+
+// Handler returns OrderCreated → matches "Order*" → goes to ordersOut
+// Handler returns PaymentReceived → matches "Payment*" → goes to paymentsOut
+// Handler returns UnknownEvent → matches "*" → goes to defaultOut
 ```
 
 ## Attribute Ownership
@@ -202,10 +246,10 @@ engine.Use(message.WithCorrelationID())  // propagate or generate correlation ID
 
 ```go
 var (
-    ErrAlreadyStarted    = errors.New("already started")
-    ErrOutputNotFound    = errors.New("output not found")
-    ErrTypeNotFound      = errors.New("type not found")
-    ErrNoHandler         = errors.New("no handler for type")
+    ErrAlreadyStarted = errors.New("already started")
+    ErrNoMatch        = errors.New("no output matches message type")
+    ErrTypeNotFound   = errors.New("type not found")
+    ErrNoHandler      = errors.New("no handler for type")
 )
 
 // ErrorHandler signature
@@ -216,19 +260,20 @@ type ErrorHandler func(msg *Message, err error)
 
 ## Loopback
 
-Route handler output back to engine input:
+Route output back to input for re-processing:
 
 ```go
-// With convention routing: handler output type determines routing
-// OrderCreated → "orders" output
-// If "orders" is also an input, it loops back
+// Create output for validation results
+loopback := engine.AddOutput(message.OutputConfig{Match: "Validate*"})
 
-// With explicit routing:
-engine.RouteOutput("validate-order", "process-order")  // handler → handler
+// Feed it back to engine as input
+engine.AddInput(loopback, message.InputConfig{Name: "loopback"})
 ```
 
 ## Files to Create/Modify
 
+- `message/config.go` - InputConfig, OutputConfig
+- `message/match.go` - Pattern matching for OutputConfig.Match
 - `message/engine.go` - Engine implementation
 - `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
 - `message/naming.go` - NamingStrategy interface, KebabNaming, SnakeNaming
@@ -240,21 +285,23 @@ engine.RouteOutput("validate-order", "process-order")  // handler → handler
 1. NewHandler receives TypedMessage with typed data
 2. NewCommandHandler auto-generates CE attributes
 3. RouteType routes CE type to handler
-4. RouteOutput routes handler output to output channel
-5. ConventionRouting auto-routes by NamingStrategy
-6. Loopback routes handler to handler
-7. Engine sets DataContentType from marshaler
-8. ValidateCE middleware rejects invalid messages
-9. WithCorrelationID propagates correlation ID
-10. ErrorHandler receives errors
-11. Start() returns ErrAlreadyStarted on second call
+4. AddOutput with Match pattern routes correctly
+5. Wildcard match `"*"` catches all
+6. Prefix match `"Order*"` matches OrderCreated, OrderShipped
+7. Loopback: output channel fed to input
+8. Engine sets DataContentType from marshaler
+9. ValidateCE middleware rejects invalid messages
+10. WithCorrelationID propagates correlation ID
+11. ErrorHandler receives errors
+12. Start() returns ErrAlreadyStarted on second call
 
 ## Acceptance Criteria
 
 - [ ] Engine.Start() orchestrates flow
-- [ ] AddInput/Output for channel management
+- [ ] AddInput(ch, cfg) for input channels
+- [ ] AddOutput(cfg) returns channel, routes by pattern
 - [ ] NewHandler and NewCommandHandler constructors work
-- [ ] Convention and explicit routing strategies
+- [ ] Pattern matching works (exact, prefix, wildcard, CESQL)
 - [ ] Middleware support (ValidateCE, WithCorrelationID)
 - [ ] Tests pass (`make test`)
 - [ ] Build passes (`make build && make vet`)

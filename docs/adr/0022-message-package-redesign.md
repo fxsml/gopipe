@@ -44,10 +44,11 @@ The message package grew too complex too early. Current state includes:
 
 3. **Engine in `message/` package:**
    - Orchestrates flow, doesn't own I/O lifecycle
-   - AddInput/Output for channel management
+   - `AddInput(ch, InputConfig)` - channel with optional name for tracing
+   - `AddOutput(OutputConfig)` - returns channel, routes by Match pattern
    - Two handler types: explicit (`NewHandler`) and convention (`NewCommandHandler`)
-   - NamingStrategy for type/output name derivation
-   - Routing: ConventionRouting (default) or ExplicitRouting
+   - NamingStrategy for CE type name derivation
+   - Pattern-based output routing (wildcards, CESQL)
    - Handler creates complete messages, engine only sets DataContentType
 
 4. **Lightweight Marshaler:**
@@ -100,14 +101,19 @@ handler := message.NewCommandHandler(
 )
 engine.AddHandler("create-order", handler)
 
-// External I/O management
+// Input: external subscription, config has optional name
 client, _ := cloudevents.NewClientHTTP()
 subscriber := ce.NewSubscriber(client)
 ch, _ := subscriber.Subscribe(ctx, "orders")
-engine.AddInput("orders", ch)
+engine.AddInput(ch, message.InputConfig{Name: "order-events"})
 
+// Output: pattern-based routing, returns channel directly
+ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
+defaultOut := engine.AddOutput(message.OutputConfig{Match: "*"})
+
+// External publishing
 publisher := ce.NewPublisher(client)
-go publisher.Publish(ctx, engine.Output("orders"))
+go publisher.Publish(ctx, ordersOut)
 
 // Start engine
 done, _ := engine.Start(ctx)

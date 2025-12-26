@@ -5,8 +5,8 @@
 | Concept | Description | Example |
 |---------|-------------|---------|
 | **Topic** | Logical channel within a messaging system | `"orders"`, `"payments.received"` |
-| **Input** | Named channel into engine | `"orders"`, `"payments"` |
-| **Output** | Named channel from engine | `"shipments"`, `"notifications"` |
+| **Input** | Channel into engine (with optional name) | `InputConfig{Name: "orders"}` |
+| **Output** | Channel from engine (with Match pattern) | `OutputConfig{Match: "Order*"}` |
 | **CE Type** | CloudEvents type attribute | `"order.created"`, `"user.updated"` |
 
 ## Design
@@ -16,14 +16,18 @@
 Engine accepts and provides channels. External code manages subscription/publishing:
 
 ```go
-// External subscription management
+// Input: external subscription, optional name for tracing
 subscriber := ce.NewSubscriber(client)
 ch, _ := subscriber.Subscribe(ctx, "orders")
-engine.AddInput("orders", ch)
+engine.AddInput(ch, message.InputConfig{Name: "order-events"})
 
-// External publishing management
+// Output: pattern-based routing, returns channel directly
+ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
+defaultOut := engine.AddOutput(message.OutputConfig{Match: "*"})
+
+// External publishing
 publisher := ce.NewPublisher(client)
-go publisher.Publish(ctx, engine.Output("shipments"))
+go publisher.Publish(ctx, ordersOut)
 
 // Start engine
 done, _ := engine.Start(ctx)
@@ -36,36 +40,58 @@ done, _ := engine.Start(ctx)
 
 ### Routing
 
-**Two routing methods:**
+**Ingress (CE type → handler):**
 
 ```go
-// CE type → handler
+// Explicit
 engine.RouteType("order.created", "process-orders")
 
-// Handler → output (or handler for loopback)
-engine.RouteOutput("process-orders", "shipments")
+// Or convention: Handler's EventType() derives CE type via NamingStrategy
 ```
 
-**Two routing strategies:**
+**Egress (handler output → output channel):**
+
+```go
+// Pattern matching in OutputConfig - no explicit routing needed
+ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
+// Handler returns OrderCreated → matches "Order*" → goes to ordersOut
+```
+
+**Routing strategies (for ingress only):**
 
 | Strategy | Description |
 |----------|-------------|
-| `ConventionRouting` (default) | Auto-route by NamingStrategy |
-| `ExplicitRouting` | Manual RouteType/RouteOutput required |
+| `ConventionRouting` (default) | Auto-route ingress by NamingStrategy |
+| `ExplicitRouting` | Manual RouteType calls required |
 
 ### NamingStrategy
 
-Convention-based routing uses NamingStrategy:
+Convention-based ingress routing uses NamingStrategy:
 
 ```go
 type NamingStrategy interface {
     TypeName(t reflect.Type) string    // Go type → CE type
-    OutputName(t reflect.Type) string  // Go type → output name
 }
 
 // KebabNaming (default):
 // OrderCreated → CE type "order.created"
-// OrderCreated → output "orders"
+```
+
+### Output Pattern Matching
+
+Egress routing uses pattern matching on CE type:
+
+```go
+type OutputConfig struct {
+    Name  string  // optional, for logging/metrics
+    Match string  // required: "*", "Order*", "order.*", or CESQL
+}
+
+// Match patterns:
+// "*"           - catch-all (default output)
+// "Order*"      - Go type prefix match
+// "order.*"     - CE type prefix match
+// CESQL         - "type LIKE 'order.%' AND data.priority = 'high'"
 ```
 
 ### Handler Types
@@ -117,11 +143,14 @@ handler := message.NewCommandHandler(
 
 ## Loopback
 
-Route handler output back to another handler:
+Route output back to input for re-processing:
 
 ```go
-// With explicit routing:
-engine.RouteOutput("validate-order", "process-order")  // handler → handler
+// Create output for validation results
+loopback := engine.AddOutput(message.OutputConfig{Match: "Validate*"})
+
+// Feed it back to engine as input
+engine.AddInput(loopback, message.InputConfig{Name: "loopback"})
 ```
 
 ## Adapter Responsibility
@@ -132,11 +161,11 @@ The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Engine                                    │
 │                                                                  │
-│  AddInput("orders", ch)                                          │
-│       ↓                                                          │
-│  unmarshal → route → handler → marshal                           │
-│       ↓                                                          │
-│  Output("shipments")                                             │
+│  AddInput(ch, cfg) ──> unmarshal ──> route ──> handler ──> marshal
+│                                                              │   │
+│                            ┌─── Match: "Order*" ─────────────┤   │
+│  AddOutput(cfg) returns ───┼─── Match: "Payment*" ───────────┤   │
+│                            └─── Match: "*" ──────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
          ↑                                       ↓
    Subscriber                              Publisher
@@ -153,8 +182,8 @@ The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 | Component | Concept | When | Example |
 |-----------|---------|------|---------|
 | Subscriber | topic | Subscribe time | `"orders"` |
-| Engine | input name | AddInput | `"orders"` |
+| Engine | input | AddInput(ch, cfg) | `InputConfig{Name: "order-events"}` |
 | Handler | CE type | EventType() | `"order.created"` |
-| Handler | output routing | NamingStrategy | `"orders"` |
-| Engine | output name | Output() | `"shipments"` |
+| Engine | output | AddOutput(cfg) | `OutputConfig{Match: "Order*"}` |
+| Output routing | Match pattern | Pattern match on CE type | `"Order*"` matches `OrderCreated` |
 | Publisher | topic | Publish config | `"prod.shipments.v1"` |

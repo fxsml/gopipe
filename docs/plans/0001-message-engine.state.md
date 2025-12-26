@@ -20,21 +20,48 @@
 Engine accepts channels, doesn't own I/O lifecycle.
 
 ```go
-// Input: Engine accepts named channels
-engine.AddInput("orders", ch)
+// Input: channel is primary, config has optional name for tracing
+engine.AddInput(ch, message.InputConfig{Name: "order-events"})
+engine.AddInput(ch, message.InputConfig{})  // no name
 
-// Output: Engine provides named output channels
-out := engine.Output("shipments")
+// Output: match pattern is primary, returns channel directly
+ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
+defaultOut := engine.AddOutput(message.OutputConfig{Match: "*"})  // catch-all
 
 // External code manages subscription lifecycle
 subscriber := ce.NewSubscriber(client)
 ch, _ := subscriber.Subscribe(ctx, "orders")
-engine.AddInput("orders", ch)
+engine.AddInput(ch, message.InputConfig{})
 
 // External code manages publishing lifecycle
 publisher := ce.NewPublisher(client)
-publisher.Publish(ctx, engine.Output("shipments"))
+go publisher.Publish(ctx, ordersOut)
 ```
+
+### InputConfig / OutputConfig
+
+```go
+type InputConfig struct {
+    Name string  // optional, for tracing/metrics
+}
+
+type OutputConfig struct {
+    Name  string  // optional, for logging/metrics
+    Match string  // required: "*", "Order*", "order.*", or CESQL
+}
+```
+
+**Match patterns:**
+- `"*"` - catch-all (default output)
+- `"Order*"` - Go type prefix match
+- `"order.*"` - CE type prefix match
+- CESQL: `"type LIKE 'order.%' AND data.priority = 'high'"`
+
+**Matching priority:**
+1. Exact match
+2. Prefix match
+3. CESQL expression
+4. Catch-all `"*"`
 
 ### Marshaler - Lightweight with Registry
 
@@ -161,11 +188,26 @@ engine.Use(message.WithCorrelationID())  // propagates or generates correlation 
 | `ID`, `Time`, `SpecVersion` | Handler or CommandHandler |
 | `CorrelationID` | Middleware |
 
-### Routing - Two Explicit Methods
+### Routing
 
+**Ingress (CE type → handler):**
 ```go
-engine.RouteType("order.created", "process-orders")   // CE type → handler
-engine.RouteOutput("process-orders", "shipments")     // handler → output (or handler for loopback)
+engine.RouteType("order.created", "process-orders")   // explicit
+// Or convention: Handler's EventType() derives CE type via NamingStrategy
+```
+
+**Egress (handler output → output channel):**
+```go
+// Pattern matching in OutputConfig - no explicit routing needed
+ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
+// Handler returns OrderCreated → matches "Order*" → goes to ordersOut
+```
+
+**Loopback:**
+```go
+// Output that feeds back to engine input
+loopback := engine.AddOutput(message.OutputConfig{Match: "Validate*"})
+engine.AddInput(loopback, message.InputConfig{Name: "loopback"})
 ```
 
 ### Routing Strategies
@@ -175,13 +217,13 @@ type RoutingStrategy int
 
 const (
     ConventionRouting RoutingStrategy = iota  // default: auto-route by naming
-    ExplicitRouting                           // manual Route* calls required
+    ExplicitRouting                           // manual RouteType calls required
 )
 ```
 
 **Convention rules:**
-- Ingress: Handler's `EventType()` derives CE type name
-- Egress: `OrderCreated` → `orders` output (domain prefix, pluralized)
+- Ingress: Handler's `EventType()` derives CE type via NamingStrategy
+- Egress: Output's `Match` pattern matches message CE type
 
 ### NamingStrategy - Separate Concern
 
@@ -197,7 +239,8 @@ var CQRSNaming NamingStrategy  // CreateOrder→"create.order", OrderCreated→"
 
 ### Attributes
 
-- No per-message routing attribute by default (convention-based)
+- No per-message routing attribute by default (pattern-based output matching)
+- Input name (optional) set on message for tracing
 - Tracing/observability is middleware concern, not engine
 
 ## Rejected Ideas
@@ -218,9 +261,17 @@ func NewCommandHandler[C, E any](fn ..., cfg ...Config) Handler  // ❌
 
 ### Per-message routing attribute
 ```go
-message.New(event, Attributes{Output: "shipments"})  // ❌ as default
+message.New(event, Attributes{Output: "shipments"})  // ❌
 ```
-**Why rejected:** Routing should be by type/convention. Attribute only as escape hatch.
+**Why rejected:** Routing by pattern matching on CE type. No per-message routing needed.
+
+### Named outputs with RouteOutput
+```go
+engine.AddOutput("shipments", ch)  // ❌ name as primary
+engine.RouteOutput("handler", "shipments")  // ❌ explicit routing
+out := engine.Output("shipments")  // ❌ getter by name
+```
+**Why rejected:** Match pattern is primary. AddOutput returns channel directly. Names are optional metadata.
 
 ### Engine owns I/O lifecycle
 ```go
@@ -248,21 +299,21 @@ engine.Route("order.created", "process-orders")  // ❌
 | Aspect | Pattern | Idiomatic? |
 |--------|---------|------------|
 | Handler constructors | `NewHandler[T]()`, `NewCommandHandler[C,E](fn, cfg)` | ✅ Go generic pattern |
-| Config pattern | Required parameter for CommandHandler | ✅ Explicit over magic |
+| Config pattern | Required config for AddInput/AddOutput/CommandHandler | ✅ Explicit over magic |
 | Interface segregation | Marshaler, NamingStrategy, Handler separate | ✅ Single responsibility |
 | Engine lifecycle | Accepts channels, doesn't own I/O | ✅ Composition over inheritance |
-| Routing methods | `RouteType`, `RouteOutput` | ✅ Explicit naming |
+| Input/Output | Config-based, names optional | ✅ Primary data first |
+| Output routing | Pattern matching on CE type | ✅ Declarative |
 | Optional features | Middleware (`Use()`) | ✅ Standard pattern |
-| Default + override | ConventionRouting default, explicit override | ✅ Progressive disclosure |
 
 ## Open Questions
 
-1. **Output() behavior**: Should `Output()` create channel on-demand or require explicit registration via `AddOutput()`?
-2. **Loopback detection**: How to detect/prevent infinite loops when routing handler → handler?
-3. **Default output**: What happens to messages from handlers with no matching output? Error? Dead letter?
-4. **Type auto-registration**: Should `NewCommandHandler` auto-register input/output types with marshaler?
-5. **Middleware order**: Pre-handler vs post-handler middleware? Or single chain?
-6. **Handler error handling**: Per-handler error handler or engine-level only?
+1. **Loopback detection**: How to detect/prevent infinite loops when output feeds back to input?
+2. **No match**: What happens to messages matching no output pattern? Error? Drop? (catch-all `"*"` recommended)
+3. **Type auto-registration**: Should `NewCommandHandler` auto-register input/output types with marshaler?
+4. **Middleware order**: Pre-handler vs post-handler middleware? Or single chain?
+5. **Handler error handling**: Per-handler error handler or engine-level only?
+6. **CESQL support**: Full CESQL or subset? Dependency on cloudevents/sdk-go?
 
 ## Ready to Implement
 
@@ -273,7 +324,9 @@ Core components are well-defined:
 | NamingStrategy | ✅ Ready | Interface + KebabNaming, SnakeNaming |
 | Marshaler | ✅ Ready | Lightweight, uses NamingStrategy |
 | Handler | ✅ Ready | NewHandler (explicit), NewCommandHandler (convention) |
-| Engine | ✅ Ready | AddInput/Output, RouteType/RouteOutput, Start() |
+| InputConfig | ✅ Ready | Optional name for tracing |
+| OutputConfig | ✅ Ready | Match pattern (wildcards, CESQL) |
+| Engine | ✅ Ready | AddInput, AddOutput, RouteType, Start() |
 | Middleware | ✅ Ready | ValidateCE, WithCorrelationID |
 
 ## Implementation Order
@@ -281,8 +334,10 @@ Core components are well-defined:
 1. `message/naming.go` - NamingStrategy interface and implementations
 2. `message/marshaler.go` - Marshaler interface
 3. `message/json_marshaler.go` - JSONMarshaler
-4. `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
-5. `message/middleware.go` - ValidateCE, WithCorrelationID
-6. `message/errors.go` - Error definitions
-7. `message/engine.go` - Engine implementation
-8. `message/cloudevents/` - CE adapter package
+4. `message/config.go` - InputConfig, OutputConfig
+5. `message/match.go` - Pattern matching for OutputConfig.Match
+6. `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
+7. `message/middleware.go` - ValidateCE, WithCorrelationID
+8. `message/errors.go` - Error definitions
+9. `message/engine.go` - Engine implementation
+10. `message/cloudevents/` - CE adapter package
