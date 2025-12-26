@@ -74,27 +74,65 @@ func NewCommandHandler[C, E any](
 engine.AddHandler("process-order", handler)
 ```
 
-### Handler Creates Complete Messages
+### CommandHandlerConfig
 
-Handler is responsible for all message attributes (except auto-fields).
+```go
+type CommandHandlerConfig struct {
+    // NamingStrategy derives CE type and output name from Go types
+    // Default: KebabNaming
+    Naming NamingStrategy
+
+    // Source for CE source attribute (required, no default)
+    Source string
+}
+
+// Usage
+handler := message.NewCommandHandler(
+    func(ctx context.Context, msg *TypedMessage[CreateOrder]) ([]OrderCreated, error) {
+        return []OrderCreated{{OrderID: "123"}}, nil
+    },
+    message.CommandHandlerConfig{
+        Source: "/orders-service",  // required
+        // Naming: message.KebabNaming (default)
+    },
+)
+```
+
+**CommandHandler auto-generates:**
+- `ID`: UUID
+- `SpecVersion`: "1.0"
+- `Time`: now()
+- `Type`: via `Naming.TypeName()` (e.g., `OrderCreated` → `"order.created"`)
+- `Source`: from config
+- Output routing: via `Naming.OutputName()` (e.g., `OrderCreated` → `"orders"`)
+
+### NewHandler - Explicit Messages
+
+`NewHandler` requires handler to create complete messages with all attributes:
 
 ```go
 handler := message.NewHandler(func(ctx context.Context, msg *TypedMessage[OrderCreated]) ([]*Message, error) {
     order := msg.Data  // typed access
     return []*Message{
         message.New(OrderShipped{OrderID: order.ID}, message.Attributes{
-            Type:   "order.shipped",
-            Source: "/orders-service",
+            ID:          uuid.New().String(),
+            SpecVersion: "1.0",
+            Type:        "order.shipped",
+            Source:      "/orders-service",
+            Time:        time.Now(),
         }),
     }, nil
 })
 ```
 
-Engine only adds auto-fields:
-- `ID` (if not set) - auto-generate UUID
-- `SpecVersion` - "1.0"
-- `Time` - now()
-- `Input` - input channel name (for tracing)
+Use optional validation middleware to ensure CE compliance:
+```go
+engine.Use(message.ValidateCE())  // validates required CE attributes
+```
+
+**Summary:**
+- `NewHandler`: Explicit - handler creates complete messages with all attributes
+- `NewCommandHandler`: Convention-based - uses NamingStrategy to auto-generate attributes
 
 ### Routing - Two Explicit Methods
 
@@ -130,16 +168,10 @@ type NamingStrategy interface {
 var CQRSNaming NamingStrategy  // CreateOrder→"create.order", OrderCreated→"orders"
 ```
 
-### Validation - Optional Middleware
-
-```go
-engine.Use(message.ValidateCE())  // validates required CE attributes
-```
-
 ### Attributes
 
-- `Input`: Set by engine on ingress (input channel name, for tracing)
 - No per-message routing attribute by default (convention-based)
+- Tracing/observability is middleware concern, not engine
 
 ## Rejected Ideas
 
