@@ -5,95 +5,126 @@
 | Concept | Description | Example |
 |---------|-------------|---------|
 | **Topic** | Logical channel within a messaging system | `"orders"`, `"payments.received"` |
-| **Subscriber** | Subscriber name (set by engine on ingress) | `"order-events"`, `"payment-stream"` |
-| **Publisher** | Publisher name (set by handler for egress) | `"shipments"`, `"notifications"` |
-| **Subject** | CloudEvents attribute for topic/category | `"order.created"`, `"user.123"` |
+| **Input** | Named channel into engine | `"orders"`, `"payments"` |
+| **Output** | Named channel from engine | `"shipments"`, `"notifications"` |
+| **CE Type** | CloudEvents type attribute | `"order.created"`, `"user.updated"` |
 
 ## Design
 
-### Subscriber: Name and Topic
+### Engine Doesn't Own I/O Lifecycle
 
-Subscribers are registered by **name** and subscribe to a **topic**:
+Engine accepts and provides channels. External code manages subscription/publishing:
 
 ```go
-// Subscriber interface
-type Subscriber interface {
-    Subscribe(ctx context.Context, topic string) (<-chan *Message, error)
+// External subscription management
+subscriber := ce.NewSubscriber(client)
+ch, _ := subscriber.Subscribe(ctx, "orders")
+engine.AddInput("orders", ch)
+
+// External publishing management
+publisher := ce.NewPublisher(client)
+go publisher.Publish(ctx, engine.Output("shipments"))
+
+// Start engine
+done, _ := engine.Start(ctx)
+```
+
+**Why this separation?**
+- Leader election: subscribe only when leader
+- Dynamic scaling: add/remove inputs at runtime
+- Multi-tenant: subscribe to tenant-specific topics
+
+### Routing
+
+**Two routing methods:**
+
+```go
+// CE type → handler
+engine.RouteType("order.created", "process-orders")
+
+// Handler → output (or handler for loopback)
+engine.RouteOutput("process-orders", "shipments")
+```
+
+**Two routing strategies:**
+
+| Strategy | Description |
+|----------|-------------|
+| `ConventionRouting` (default) | Auto-route by NamingStrategy |
+| `ExplicitRouting` | Manual RouteType/RouteOutput required |
+
+### NamingStrategy
+
+Convention-based routing uses NamingStrategy:
+
+```go
+type NamingStrategy interface {
+    TypeName(t reflect.Type) string    // Go type → CE type
+    OutputName(t reflect.Type) string  // Go type → output name
 }
 
-// Engine registration with name
-engine.AddSubscriber("order-events", subscriber)
+// KebabNaming (default):
+// OrderCreated → CE type "order.created"
+// OrderCreated → output "orders"
 ```
 
-When messages arrive through a subscriber, the engine sets the `Subscriber` attribute to the subscriber name. This provides traceability for where messages entered the engine.
+### Handler Types
 
-**Why separate name and topic?**
-- **Name**: Identity for logging, metrics, tracing
-- **Topic**: What to subscribe to (can be dynamic)
+**NewHandler - Explicit:**
 
-```go
-// Dynamic subscription based on leadership
-election.OnBecomeLeader(func() {
-    subscriber.Subscribe(ctx, "orders")  // topic
-})
-
-election.OnLoseLeadership(func() {
-    // Context cancellation stops subscription
-})
-```
-
-### Publisher: Publisher Attribute in Message
-
-Handlers set the `Publisher` attribute to route messages:
+Handler creates complete messages with all attributes:
 
 ```go
-type Publisher interface {
-    Publish(ctx context.Context, msgs <-chan *Message) error
-}
-```
-
-**Why publisher in message?**
-- Handlers decide routing, not infrastructure
-- Single engine can route to multiple publishers
-- Publisher is a handler concern, not a wiring concern
-
-```go
-// Handler determines publisher (logical name, not URL)
-func handleOrder(ctx context.Context, order OrderCreated) ([]*Message, error) {
+handler := message.NewHandler(func(ctx context.Context, msg *TypedMessage[OrderCreated]) ([]*Message, error) {
     return []*Message{
         message.New(OrderShipped{...}, message.Attributes{
-            Subject:   "order.shipped",
-            Publisher: "shipments",  // logical name, matches registered publisher
+            ID:          uuid.New().String(),
+            SpecVersion: "1.0",
+            Type:        "order.shipped",
+            Source:      "/orders-service",
+            Time:        time.Now(),
         }),
     }, nil
-}
+})
 ```
 
-### Publisher Attribute = Registered Publisher Name
+**NewCommandHandler - Convention:**
 
-The `Publisher` attribute is a **logical routing name** that matches the publisher registration:
+Handler returns typed events, CommandHandler generates CE attributes:
 
 ```go
-// Publishers registered by logical name
-engine.AddPublisher("shipments", kafkaPublisher)
-engine.AddPublisher("notifications", natsPublisher)
-
-// Handler sets Publisher attribute to route to specific publisher
-message.New(event, Attributes{Publisher: "shipments"})
+handler := message.NewCommandHandler(
+    func(ctx context.Context, msg *TypedMessage[CreateOrder]) ([]OrderCreated, error) {
+        return []OrderCreated{{OrderID: "123"}}, nil
+    },
+    message.CommandHandlerConfig{
+        Source: "/orders-service",
+        // Naming: message.KebabNaming (default)
+    },
+)
 ```
 
-The publisher/adapter knows the actual broker details (host, port, topic). The message only carries logical routing intent.
+## Attribute Ownership
 
-### Loopback
+| Attribute | Owner |
+|-----------|-------|
+| `DataContentType` | Engine (from marshaler) |
+| `Type` | Handler or NamingStrategy |
+| `Source` | Handler or CommandHandlerConfig |
+| `Subject` | Handler (explicit) |
+| `ID`, `Time`, `SpecVersion` | Handler or CommandHandler |
+| `CorrelationID` | Middleware |
 
-Use the `Loopback` constant to route messages back through the engine:
+## Loopback
+
+Route handler output back to another handler:
 
 ```go
-// Route message back through engine for further processing
-message.New(event, Attributes{Publisher: message.Loopback})
+// With explicit routing:
+engine.RouteOutput("validate-order", "process-order")  // handler → handler
 ```
 
-### Adapter Responsibility
+## Adapter Responsibility
 
 The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 
@@ -101,37 +132,29 @@ The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Engine                                    │
 │                                                                  │
-│  Subscriber.Subscribe(ctx, "orders")                             │
+│  AddInput("orders", ch)                                          │
 │       ↓                                                          │
-│  [messages with Subscriber attribute set]                        │
+│  unmarshal → route → handler → marshal                           │
 │       ↓                                                          │
-│  Engine routes by Publisher → registered Publisher               │
-│       ↓                                                          │
-│  Publisher/Adapter sends to actual broker                        │
+│  Output("shipments")                                             │
 └─────────────────────────────────────────────────────────────────┘
+         ↑                                       ↓
+   Subscriber                              Publisher
+   (external)                              (external)
 ```
 
 **Adapter configuration (not in message):**
 - Broker URL: `kafka://broker:9092`
-- Topic mapping: publisher `"shipments"` → topic `"prod.shipments.v1"`
+- Topic mapping: output `"shipments"` → topic `"prod.shipments.v1"`
 - Authentication, TLS, etc.
-
-## CloudEvents Mapping
-
-| gopipe | CloudEvents | Notes |
-|--------|-------------|-------|
-| `Subscriber` | N/A | gopipe extension for ingress tracing |
-| `Publisher` | N/A | gopipe extension for egress routing |
-| `Subject` | `subject` | Optional, describes topic/category |
-| `Source` | `source` | Required, origin URI (CloudEvents) |
-| `Type` | `type` | Required, event type |
 
 ## Summary
 
 | Component | Concept | When | Example |
 |-----------|---------|------|---------|
-| Subscriber | name + topic | Registration + Subscribe | `"order-events"` + `"orders"` |
-| Message (ingress) | `Subscriber` attribute | Set by engine | `"order-events"` |
-| Message (egress) | `Publisher` attribute | Set by handler | `"shipments"` |
-| Publisher | name (matches Publisher attr) | Registration | `"shipments"` |
-| Adapter | broker config | Construction | URL, topic mapping |
+| Subscriber | topic | Subscribe time | `"orders"` |
+| Engine | input name | AddInput | `"orders"` |
+| Handler | CE type | EventType() | `"order.created"` |
+| Handler | output routing | NamingStrategy | `"orders"` |
+| Engine | output name | Output() | `"shipments"` |
+| Publisher | topic | Publish config | `"prod.shipments.v1"` |

@@ -257,13 +257,32 @@ engine.Route("order.created", "process-orders")  // ❌
 
 ## Open Questions
 
-1. Should `Output()` return a channel or require registration first?
-2. Loopback: Is `RouteOutput("handler-a", "handler-b")` enough?
-3. Default output for unrouted handler output?
-4. Should `NewCommandHandler` auto-register types with marshaler?
+1. **Output() behavior**: Should `Output()` create channel on-demand or require explicit registration via `AddOutput()`?
+2. **Loopback detection**: How to detect/prevent infinite loops when routing handler → handler?
+3. **Default output**: What happens to messages from handlers with no matching output? Error? Dead letter?
+4. **Type auto-registration**: Should `NewCommandHandler` auto-register input/output types with marshaler?
+5. **Middleware order**: Pre-handler vs post-handler middleware? Or single chain?
+6. **Handler error handling**: Per-handler error handler or engine-level only?
 
-## Next Steps
+## Ready to Implement
 
-1. Update Plan 0001 with refined design
-2. Update ADR 0022 with marshaler/handler separation
-3. Create NamingStrategy interface specification
+Core components are well-defined:
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| NamingStrategy | ✅ Ready | Interface + KebabNaming, SnakeNaming |
+| Marshaler | ✅ Ready | Lightweight, uses NamingStrategy |
+| Handler | ✅ Ready | NewHandler (explicit), NewCommandHandler (convention) |
+| Engine | ✅ Ready | AddInput/Output, RouteType/RouteOutput, Start() |
+| Middleware | ✅ Ready | ValidateCE, WithCorrelationID |
+
+## Implementation Order
+
+1. `message/naming.go` - NamingStrategy interface and implementations
+2. `message/marshaler.go` - Marshaler interface
+3. `message/json_marshaler.go` - JSONMarshaler
+4. `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
+5. `message/middleware.go` - ValidateCE, WithCorrelationID
+6. `message/errors.go` - Error definitions
+7. `message/engine.go` - Engine implementation
+8. `message/cloudevents/` - CE adapter package

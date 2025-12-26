@@ -43,12 +43,19 @@ The message package grew too complex too early. Current state includes:
    - `broker/`, `cqrs/`, `multiplex/`, `cloudevents/` subpackages
 
 3. **Engine in `message/` package:**
-   - Type-based routing using `reflect.Type`
-   - Marshaler with bidirectional type registry
-   - Dynamic subscriber/generator management
-   - No external dependencies in core
+   - Orchestrates flow, doesn't own I/O lifecycle
+   - AddInput/Output for channel management
+   - Two handler types: explicit (`NewHandler`) and convention (`NewCommandHandler`)
+   - NamingStrategy for type/output name derivation
+   - Routing: ConventionRouting (default) or ExplicitRouting
+   - Handler creates complete messages, engine only sets DataContentType
 
-4. **CloudEvents bridge in `message/cloudevents/`:**
+4. **Lightweight Marshaler:**
+   - `Register`, `Marshal`, `Unmarshal`, `ContentType`
+   - Type registry for CE type ↔ Go type mapping
+   - Uses NamingStrategy for name derivation
+
+5. **CloudEvents bridge in `message/cloudevents/`:**
    - Adapter package imports both `message` and `cloudevents/sdk-go/v2`
    - `FromEvent(cloudevents.Event) *message.Message` - convert SDK event to message
    - `ToEvent(*message.Message) cloudevents.Event` - convert message to SDK event
@@ -63,37 +70,48 @@ The message package grew too complex too early. Current state includes:
 - **Native CloudEvents** - Official SDK for protocol/serialization via bridge
 - **Clean slate** - No legacy patterns to maintain
 - **Idiomatic Go** - Core is standalone, adapters add integrations
+- **Separation of concerns** - Engine orchestrates, handlers create messages, marshalers serialize
 
 **Breaking Changes (pre-v1):**
 
-All removed types are breaking changes. Since we're pre-v1 with single user, this is acceptable. Migration is straightforward:
+All removed types are breaking changes. Since we're pre-v1 with single user, this is acceptable.
+
+## Usage
 
 ```go
-// Before: Custom broker integration
-receiver := broker.NewChannelReceiver(ch)
-subscriber := message.NewSubscriber(receiver, config)
-msgs := subscriber.Subscribe(ctx, "topic")
-
-// After: CloudEvents SDK + Engine
 import (
     "github.com/fxsml/gopipe/message"
     ce "github.com/fxsml/gopipe/message/cloudevents"
 )
 
+// Create engine
+engine := message.NewEngine(message.EngineConfig{
+    Marshaler: message.NewJSONMarshaler(message.JSONMarshalerConfig{}),
+})
+
+// Add handler (convention-based)
+handler := message.NewCommandHandler(
+    func(ctx context.Context, msg *TypedMessage[CreateOrder]) ([]OrderCreated, error) {
+        return []OrderCreated{{OrderID: "123"}}, nil
+    },
+    message.CommandHandlerConfig{
+        Source: "/orders-service",
+    },
+)
+engine.AddHandler("create-order", handler)
+
+// External I/O management
 client, _ := cloudevents.NewClientHTTP()
-engine := message.NewEngine(config)
-engine.AddHandler(handler)
+subscriber := ce.NewSubscriber(client)
+ch, _ := subscriber.Subscribe(ctx, "orders")
+engine.AddInput("orders", ch)
 
-// Subscriber/Publisher registered by name
-engine.AddSubscriber("order-events", ce.NewSubscriber(client))
-engine.AddPublisher("shipments", ce.NewPublisher(client))
+publisher := ce.NewPublisher(client)
+go publisher.Publish(ctx, engine.Output("orders"))
 
-// Start engine (orchestration per ADR 0018)
+// Start engine
 done, _ := engine.Start(ctx)
 <-done
-
-// Handlers set Publisher attribute (logical name, matches registered publisher)
-// message.New(event, Attributes{Publisher: "shipments"})
 ```
 
 ## Implementation
@@ -101,6 +119,7 @@ done, _ := engine.Start(ctx)
 See:
 - [Plan 0001](../plans/0001-message-engine.md) - Engine implementation
 - [Plan 0002](../plans/0002-marshaler.md) - Marshaler implementation
+- [Design State](../plans/0001-message-engine.state.md) - Current design decisions
 
 ## Links
 
