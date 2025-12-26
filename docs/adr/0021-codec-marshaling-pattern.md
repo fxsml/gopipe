@@ -1,69 +1,115 @@
-# ADR 0021: Marshaler Pattern
+# ADR 0021: Codec, TypeRegistry, and NamingStrategy
 
 **Date:** 2025-12-22
+**Updated:** 2025-12-26
 **Status:** Proposed (see [ADR 0022](0022-message-package-redesign.md))
 
 ## Context
 
-Messages cross system boundaries as `[]byte`, but handlers work with typed Go data. We need bidirectional mapping between CloudEvents `type` attribute and Go types.
+Messages cross system boundaries as `[]byte`, but handlers work with typed Go data. We need:
+1. Serialization/deserialization
+2. Mapping between CloudEvents `type` attribute and Go types
+3. Convention for deriving CE type from Go type names
 
 ## Decision
 
-Introduce a Marshaler with type registry and NamingStrategy:
+Split into three separate components with clear responsibilities:
+
+### Codec - Pure Serialization
 
 ```go
-type Marshaler interface {
-    Register(goType reflect.Type)              // register Go type, derive CE type via NamingStrategy
-    TypeName(goType reflect.Type) string       // Go type → CE type (lookup or derive)
+type Codec interface {
     Marshal(v any) ([]byte, error)
-    Unmarshal(data []byte, ceType string) (any, error)
-    ContentType() string
+    Unmarshal(data []byte, v any) error
+    ContentType() string  // e.g., "application/json"
 }
 ```
 
-### Type Registry
+Codec does one thing: convert between Go values and bytes. No type registry, no naming.
 
-Bidirectional mapping stored internally:
+### TypeRegistry - CE Type ↔ Go Type Mapping
 
+```go
+type TypeRegistry interface {
+    Register(ceType string, goType reflect.Type)
+    Lookup(ceType string) (reflect.Type, bool)
+}
 ```
-CE Type → Go Type    │    Go Type → CE Type
-─────────────────    │    ─────────────────
-"order.created" → OrderCreated
-"order.shipped" → OrderShipped
-```
 
-- **Unmarshal**: CE type string → Go type → instantiate
-- **TypeName**: Go type → CE type string
+TypeRegistry maps CE types to Go types for unmarshaling. Registration is explicit.
 
-### NamingStrategy
-
-NamingStrategy lives in Marshaler and derives CE type from Go type:
+### NamingStrategy - Standalone Utility
 
 ```go
 type NamingStrategy interface {
     TypeName(t reflect.Type) string  // Go type → CE type
 }
+
+var KebabNaming NamingStrategy   // OrderCreated → "order.created"
+var SnakeNaming NamingStrategy   // OrderCreated → "order_created"
 ```
 
-Implementations:
-- `KebabNaming`: `OrderCreated` → `"order.created"`
-- `SnakeNaming`: `OrderCreated` → `"order_created"`
+NamingStrategy is a utility used by handler constructors to derive CE type from Go type.
 
-### Auto-Registration
+## Usage
 
-Types are auto-registered when `TypeName` is called for unregistered types. This enables the Engine to auto-register handler types without explicit registration.
+### Handler Construction
+
+```go
+handler := message.NewHandler(processOrder, message.KebabNaming)
+// handler.EventType() returns "order.created"
+// handler.GoType() returns reflect.Type of OrderCreated
+```
+
+### Engine Setup
+
+```go
+engine := message.NewEngine(message.EngineConfig{
+    Codec:    message.NewJSONCodec(),
+    Registry: message.NewTypeRegistry(),
+})
+
+// Handler self-registers via EventType() and GoType()
+engine.AddHandler(handler, message.HandlerConfig{Name: "process-order"})
+```
+
+### Unmarshaling Flow
+
+```go
+// Engine receives []byte + CE type from input
+// 1. Lookup Go type in registry
+goType, _ := registry.Lookup(ceType)
+
+// 2. Instantiate and unmarshal
+instance := reflect.New(goType).Interface()
+codec.Unmarshal(data, instance)
+```
 
 ## Consequences
 
 **Benefits:**
-- Handlers receive typed data, not `[]byte`
-- Centralized type registry with bidirectional lookup
-- Auto-derive CE type from Go type via NamingStrategy
-- Auto-registration on TypeName simplifies usage
+- Clean separation of concerns
+- Codec is simple and testable
+- TypeRegistry has explicit registration (no magic)
+- NamingStrategy encapsulated in handler constructors
+- Handler is self-describing (knows its own CE type)
 
 **Drawbacks:**
-- Must have types registered for Unmarshal (explicit or auto)
-- Reflection overhead
+- Must register types in TypeRegistry (via AddHandler)
+- Reflection overhead for instantiation
+
+## Rejected: Combined Marshaler
+
+```go
+type Marshaler interface {
+    Register(goType reflect.Type)        // ❌
+    TypeName(goType reflect.Type) string // ❌
+    Marshal(v any) ([]byte, error)
+    Unmarshal(data []byte, ceType string) (any, error)
+}
+```
+
+**Why rejected:** Marshaler was doing too much - serialization, type registry, and naming all in one interface. Splitting into three focused components is cleaner and more idiomatic.
 
 ## Links
 

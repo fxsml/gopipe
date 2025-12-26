@@ -52,13 +52,12 @@ The message package grew too complex too early. Current state includes:
    - Pattern-based output routing via Matcher (SQL LIKE syntax)
    - Handler creates complete messages, engine only sets DataContentType
 
-4. **Marshaler with Type Registry:**
-   - `Register(goType reflect.Type)` - register Go type, CE type derived via NamingStrategy
-   - `TypeName(goType reflect.Type) string` - Go type → CE type (with auto-registration)
-   - `Marshal(v any) ([]byte, error)` - serialize Go value
-   - `Unmarshal(data []byte, ceType string) (any, error)` - CE type → Go type → instance
-   - `ContentType() string` - MIME type for DataContentType
-   - NamingStrategy lives in Marshaler, derives CE type from Go type names
+4. **Codec, TypeRegistry, NamingStrategy (separate concerns):**
+   - `Codec`: Pure serialization - `Marshal(v) []byte`, `Unmarshal(data, v)`, `ContentType()`
+   - `TypeRegistry`: Maps CE type ↔ Go type - `Register(ceType, goType)`, `Lookup(ceType)`
+   - `NamingStrategy`: Standalone utility - `TypeName(goType) string`
+   - Handler is self-describing: `GoType()`, `EventType()`, `Handle()`
+   - Handler constructors take NamingStrategy to derive EventType at construction
 
 5. **CloudEvents bridge in `message/cloudevents/`:**
    - Adapter package imports both `message` and `cloudevents/sdk-go/v2`
@@ -90,26 +89,26 @@ import (
     ce "github.com/fxsml/gopipe/message/cloudevents"
 )
 
-// Create engine with marshaler (NamingStrategy lives in marshaler)
+// Create engine with Codec and TypeRegistry
 engine := message.NewEngine(message.EngineConfig{
-    Marshaler: message.NewJSONMarshaler(message.JSONMarshalerConfig{
-        Naming: message.KebabNaming,
-    }),
+    Codec:    message.NewJSONCodec(),
+    Registry: message.NewTypeRegistry(),
 })
 
-// Add handler (convention-based)
+// Add handler (convention-based) - NamingStrategy in config
 handler := message.NewCommandHandler(
     func(ctx context.Context, msg *TypedMessage[CreateOrder]) ([]OrderCreated, error) {
         return []OrderCreated{{OrderID: "123"}}, nil
     },
     message.CommandHandlerConfig{
         Source: "/orders-service",
+        Naming: message.KebabNaming,  // CreateOrder → "create.order"
     },
 )
-engine.AddHandler(handler, message.HandlerConfig{
-    Name: "create-order",
-    // Type: derived via marshaler.TypeName(handler.EventType())
-})
+// handler.EventType() returns "create.order"
+// handler.GoType() returns reflect.Type of CreateOrder
+
+engine.AddHandler(handler, message.HandlerConfig{Name: "create-order"})
 
 // Input: external subscription with optional Matcher for filtering
 client, _ := cloudevents.NewClientHTTP()
@@ -134,7 +133,7 @@ done, _ := engine.Start(ctx)
 
 See:
 - [Plan 0001](../plans/0001-message-engine.md) - Engine implementation
-- [Plan 0002](../plans/0002-marshaler.md) - Marshaler implementation
+- [Plan 0002](../plans/0002-marshaler.md) - Codec, TypeRegistry, NamingStrategy
 - [Design State](../plans/0001-message-engine.state.md) - Current design decisions
 
 ## Links
