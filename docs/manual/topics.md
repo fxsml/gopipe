@@ -25,9 +25,9 @@ engine.AddInput(ch, message.InputConfig{Name: "order-events"})
 ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
 defaultOut := engine.AddOutput(message.OutputConfig{Match: "*"})
 
-// External publishing
+// External publishing (Publish runs in goroutine internally)
 publisher := ce.NewPublisher(client)
-go publisher.Publish(ctx, ordersOut)
+publisher.Publish(ctx, ordersOut)
 
 // Start engine
 done, _ := engine.Start(ctx)
@@ -159,13 +159,19 @@ The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Engine                                    │
+│                         Engine                                   │
 │                                                                  │
-│  AddInput(ch, cfg) ──> unmarshal ──> route ──> handler ──> marshal
-│                                                              │   │
-│                            ┌─── Match: "Order*" ─────────────┤   │
-│  AddOutput(cfg) returns ───┼─── Match: "Payment*" ───────────┤   │
-│                            └─── Match: "*" ──────────────────┘   │
+│  AddInput(ch, cfg) ──> unmarshal ──┐                             │
+│                                    ├──> route ──> handler ──┐   │
+│                  loopback ─────────┘                        │   │
+│                     ↑                                       ↓   │
+│                     │                                   marshal │
+│                     │                                       │   │
+│                     │          ┌─── Match: "Order*" ────────┤   │
+│  AddOutput(cfg) ────┼──────────┼─── Match: "Payment*" ──────┤   │
+│    returns          │          └─── Match: "*" ─────────────┘   │
+│                     │                                           │
+│              (no marshal for loopback - already typed)          │
 └─────────────────────────────────────────────────────────────────┘
          ↑                                       ↓
    Subscriber                              Publisher

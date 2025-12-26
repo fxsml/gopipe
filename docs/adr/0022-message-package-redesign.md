@@ -111,9 +111,9 @@ engine.AddInput(ch, message.InputConfig{Name: "order-events"})
 ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
 defaultOut := engine.AddOutput(message.OutputConfig{Match: "*"})
 
-// External publishing
+// External publishing (Publish runs in goroutine internally)
 publisher := ce.NewPublisher(client)
-go publisher.Publish(ctx, ordersOut)
+publisher.Publish(ctx, ordersOut)
 
 // Start engine
 done, _ := engine.Start(ctx)

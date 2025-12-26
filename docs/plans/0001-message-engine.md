@@ -24,17 +24,17 @@ Implement a Message Engine that orchestrates message flow with marshaling at bou
 ┌─────────────────────────────────────────────────────────────────┐
 │                         message.Engine                           │
 │                                                                  │
-│  AddInput(ch, cfg) ──┐                                           │
-│                      ├──> Merger ──> unmarshal ──> route ──> handlers
-│                      │       ↑                              │    │
-│                      │       │                              ↓    │
-│                      │       └─── loopback ──────────── marshal  │
-│                      │                                      │    │
-│                      └──────────────────────────────────────┼────│
-│                                                             ↓    │
-│                            ┌─── Match: "Order*" ───> ordersOut   │
-│                            ├─── Match: "Payment*" ─> paymentsOut │
-│  AddOutput(cfg) returns ───┴─── Match: "*" ───────> defaultOut   │
+│  AddInput(ch, cfg) ──> unmarshal ──┐                             │
+│                                    ├──> Merger ──> route ──> handlers
+│                   loopback ────────┘                         │   │
+│                      ↑                                       ↓   │
+│                      │                                   marshal │
+│                      │                                       │   │
+│                      │       ┌─── Match: "Order*" ───────────┤   │
+│  AddOutput(cfg) ─────┼───────┼─── Match: "Payment*" ─────────┤   │
+│    returns           │       └─── Match: "*" ────────────────┘   │
+│                      │                                           │
+│               (loopback bypasses marshal - already typed)        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -174,9 +174,9 @@ engine.AddInput(ch, message.InputConfig{Name: "order-events"})
 ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
 defaultOut := engine.AddOutput(message.OutputConfig{Match: "*"})
 
-// External publishing
+// External publishing (Publish runs in goroutine internally)
 publisher := ce.NewPublisher(client)
-go publisher.Publish(ctx, ordersOut)
+publisher.Publish(ctx, ordersOut)
 
 done, _ := engine.Start(ctx)
 <-done

@@ -33,9 +33,9 @@ subscriber := ce.NewSubscriber(client)
 ch, _ := subscriber.Subscribe(ctx, "orders")
 engine.AddInput(ch, message.InputConfig{})
 
-// External code manages publishing lifecycle
+// External code manages publishing lifecycle (Publish runs in goroutine internally)
 publisher := ce.NewPublisher(client)
-go publisher.Publish(ctx, ordersOut)
+publisher.Publish(ctx, ordersOut)
 ```
 
 ### InputConfig / OutputConfig
@@ -166,10 +166,15 @@ engine.Use(message.ValidateCE())  // validates required CE attributes
 Engine sets `DataContentType` at marshal boundary (from marshaler):
 
 ```
-Input → Unmarshal (engine) → Handler (typed) → Marshal (engine, sets DataContentType) → Output
+AddInput → Unmarshal → Handler (typed) → Marshal (sets DataContentType) → Output
+                ↑                                        │
+                └─────── loopback (no marshal) ──────────┘
 ```
 
-Handler deals with typed data, not bytes. Engine knows the marshaler and sets content type.
+- Unmarshal happens directly after AddInput
+- Marshal happens directly before Output
+- Loopback bypasses marshal/unmarshal (already typed messages)
+- Handler deals with typed data, not bytes
 
 ### Middleware
 
