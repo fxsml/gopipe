@@ -40,12 +40,13 @@ done, _ := engine.Start(ctx)
 
 ### Routing
 
-**Ingress (CE type → handler) - automatic via NamingStrategy:**
+**Ingress (CE type → handler):**
 
 ```go
-engine.AddHandler("process-orders", handler)
-// Auto-derives: handler.EventType() → OrderCreated → "order.created"
-// Registers: typeRoutes["order.created"] = "process-orders"
+engine.AddHandler(handler, message.HandlerConfig{
+    Name: "process-orders",
+    // Type: "order.created" (optional, derived via marshaler if not set)
+})
 ```
 
 **Egress (handler output → output channel):**
@@ -59,10 +60,7 @@ defaultOut := engine.AddOutput(message.OutputConfig{})  // nil = catch-all
 
 ### NamingStrategy
 
-NamingStrategy derives CE type from Go types. Used in two places:
-
-1. **Engine**: Auto-derive ingress routing from `handler.EventType()`
-2. **CommandHandler**: Auto-derive output CE type from event type `E`
+NamingStrategy lives in Marshaler. Used to derive CE type from Go types:
 
 ```go
 type NamingStrategy interface {
@@ -72,6 +70,10 @@ type NamingStrategy interface {
 // KebabNaming (default):
 // OrderCreated → CE type "order.created"
 ```
+
+**Usage:**
+- **Engine**: If `HandlerConfig.Type` is empty, derives via `marshaler.TypeName(handler.EventType())`
+- **CommandHandler**: Derives output CE type via marshaler
 
 ### Matcher Interface
 
@@ -231,8 +233,8 @@ The adapter (e.g., `message/cloudevents`) handles broker-specific details:
 |-----------|---------|------|---------|
 | Subscriber | topic | Subscribe time | `"orders"` |
 | Engine | input | AddInput(ch, cfg) | `InputConfig{Name: "...", Matcher: ...}` |
-| Engine | routing | AddHandler (auto via NamingStrategy) | `OrderCreated` → `"order.created"` → handler |
-| Handler | CE type | EventType() | `"order.created"` |
+| Engine | handler | AddHandler(h, cfg) | `HandlerConfig{Name: "...", Type: "..."}` |
+| Handler | CE type | EventType() | `"order.created"` (derived via marshaler if not explicit) |
 | Engine | output | AddOutput(cfg) | `OutputConfig{Matcher: match.Types("order.%")}` |
 | Engine | loopback | AddLoopback(cfg) | `LoopbackConfig{Matcher: match.Types("validate.%")}` |
 | Output routing | Match pattern | SQL LIKE on CE type | `"order.%"` matches `order.created` |

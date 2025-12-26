@@ -9,10 +9,10 @@
 
 | Component | Responsibility |
 |-----------|----------------|
-| **Engine** | Orchestrates flow, auto-routing via NamingStrategy, lifecycle |
-| **Marshaler** | Serialization + type registry |
+| **Engine** | Orchestrates flow, routing, lifecycle |
+| **Marshaler** | Serialization + type registry + NamingStrategy |
 | **Handler** | Business logic, creates output messages |
-| **NamingStrategy** | Derives CE type from Go type (ingress routing + CommandHandler output) |
+| **NamingStrategy** | Derives CE type from Go type (in Marshaler) |
 | **Input/Output** | Named channels (external lifecycle) |
 
 ### Engine - Orchestration Only
@@ -51,6 +51,16 @@ type InputConfig struct {
 type OutputConfig struct {
     Name    string   // optional, for logging/metrics
     Matcher Matcher  // optional, nil = match all (catch-all)
+}
+
+type LoopbackConfig struct {
+    Name    string   // optional, for tracing/metrics
+    Matcher Matcher  // required, matches output to loop back
+}
+
+type HandlerConfig struct {
+    Name string  // required, handler name for registration
+    Type string  // optional, CE type to handle (derived via marshaler if not set)
 }
 ```
 
@@ -135,9 +145,9 @@ type Marshaler interface {
 
 Registry is required because `Unmarshal` receives CE type string, needs to know which Go type to instantiate.
 
-### Handler - Constructors, Not Engine Methods
+### Handler - Constructors, Config-based Registration
 
-Handlers created via constructors, registered by name on engine.
+Handlers created via constructors, registered with config on engine.
 
 ```go
 type Handler interface {
@@ -154,18 +164,17 @@ func NewCommandHandler[C, E any](
     cfg CommandHandlerConfig,
 ) Handler
 
-// Registration
-engine.AddHandler("process-order", handler)
+// Registration with config (consistent with AddInput, AddOutput, AddLoopback)
+engine.AddHandler(handler, message.HandlerConfig{
+    Name: "process-order",
+    // Type: "order.created" (optional, derived via marshaler if not set)
+})
 ```
 
 ### CommandHandlerConfig
 
 ```go
 type CommandHandlerConfig struct {
-    // NamingStrategy derives CE type and output name from Go types
-    // Default: KebabNaming
-    Naming NamingStrategy
-
     // Source for CE source attribute (required, no default)
     Source string
 }
@@ -177,7 +186,6 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{
         Source: "/orders-service",  // required
-        // Naming: message.KebabNaming (default)
     },
 )
 ```
@@ -186,9 +194,8 @@ handler := message.NewCommandHandler(
 - `ID`: UUID
 - `SpecVersion`: "1.0"
 - `Time`: now()
-- `Type`: via `Naming.TypeName()` (e.g., `OrderCreated` → `"order.created"`)
+- `Type`: via marshaler's NamingStrategy (e.g., `OrderCreated` → `"order.created"`)
 - `Source`: from config
-- Output routing: via `Naming.OutputName()` (e.g., `OrderCreated` → `"orders"`)
 
 ### NewHandler - Explicit Messages
 
@@ -252,11 +259,13 @@ engine.Use(message.WithCorrelationID())  // propagates or generates correlation 
 
 ### Routing
 
-**Ingress (CE type → handler) - automatic via NamingStrategy:**
+**Ingress (CE type → handler):**
 ```go
-engine.AddHandler("process-orders", handler)
-// Engine auto-derives: handler.EventType() → OrderCreated → "order.created"
-// Registers: typeRoutes["order.created"] = "process-orders"
+engine.AddHandler(handler, message.HandlerConfig{
+    Name: "process-orders",
+    // Type: "order.created" (optional, derived via marshaler if not set)
+})
+// If Type not set: marshaler.TypeName(handler.EventType()) → "order.created"
 ```
 
 **Egress (handler output → output channel):**
@@ -290,12 +299,9 @@ var (
 - No handler for CE type → `ErrNoHandler` to ErrorHandler
 - No output matches → try next output, finally `ErrNoMatchingOutput` to ErrorHandler
 
-### NamingStrategy
+### NamingStrategy - Marshaler Only
 
-NamingStrategy derives CE type from Go types. Used in two places:
-
-1. **Engine**: Auto-derive ingress routing from `handler.EventType()`
-2. **CommandHandler**: Auto-derive output CE type from event type `E`
+NamingStrategy lives in Marshaler only. Engine uses marshaler to derive CE type:
 
 ```go
 type NamingStrategy interface {
@@ -306,12 +312,10 @@ var KebabNaming NamingStrategy   // OrderCreated → "order.created"
 var SnakeNaming NamingStrategy   // OrderCreated → "order_created"
 ```
 
-**Auto-routing flow:**
+**CE type derivation:**
 ```go
-engine.AddHandler("process-orders", handler)
-// 1. handler.EventType() returns reflect.Type of OrderCreated
-// 2. engine.naming.TypeName(type) returns "order.created"
-// 3. engine registers: typeRoutes["order.created"] = "process-orders"
+// If HandlerConfig.Type is empty:
+ceType := marshaler.TypeName(handler.EventType())  // "order.created"
 ```
 
 ### Attributes
@@ -411,13 +415,14 @@ Core components are well-defined:
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| NamingStrategy | ✅ Ready | Interface + KebabNaming, SnakeNaming (CommandHandler only) |
-| Marshaler | ✅ Ready | Lightweight, uses NamingStrategy for registry |
+| NamingStrategy | ✅ Ready | Interface + KebabNaming, SnakeNaming (in Marshaler) |
+| Marshaler | ✅ Ready | Serialization + type registry + NamingStrategy |
 | Matcher | ✅ Ready | Interface in message/, implementations in match/ |
 | match.All/Any | ✅ Ready | Combinators for AND/OR |
 | match.Sources | ✅ Ready | CE source pattern matching |
 | match.Types | ✅ Ready | CE type pattern matching |
 | Handler | ✅ Ready | NewHandler (explicit), NewCommandHandler (convention) |
+| HandlerConfig | ✅ Ready | Name (required) + Type (optional, derived via marshaler) |
 | InputConfig | ✅ Ready | Optional name + Matcher for filtering |
 | OutputConfig | ✅ Ready | Matcher for routing (SQL LIKE syntax) |
 | LoopbackConfig | ✅ Ready | Name + Matcher for internal re-processing |
@@ -435,7 +440,7 @@ Core components are well-defined:
 6. `message/match/match.go` - All, Any combinators
 7. `message/match/sources.go` - Sources matcher
 8. `message/match/types.go` - Types matcher
-9. `message/config.go` - InputConfig, OutputConfig, LoopbackConfig
+9. `message/config.go` - InputConfig, OutputConfig, LoopbackConfig, HandlerConfig
 10. `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
 11. `message/middleware.go` - ValidateCE, WithCorrelationID
 12. `message/errors.go` - ErrInputRejected, ErrNoMatchingOutput, ErrNoHandler, etc.

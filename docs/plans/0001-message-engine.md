@@ -88,6 +88,11 @@ type LoopbackConfig struct {
     Name    string   // optional, for tracing/metrics
     Matcher Matcher  // required, matches output to loop back
 }
+
+type HandlerConfig struct {
+    Name string  // required, handler name for registration
+    Type string  // optional, CE type to handle (derived via marshaler if not set)
+}
 ```
 
 ### Matcher Interface
@@ -152,9 +157,8 @@ defaultOut := engine.AddOutput(message.OutputConfig{})  // catch-all
 ```go
 type Engine struct {
     marshaler    Marshaler
-    naming       NamingStrategy
     handlers     map[string]Handler
-    typeRoutes   map[string]string  // CE type → handler name (auto-derived)
+    typeRoutes   map[string]string  // CE type → handler name
     inputs       []inputEntry
     outputs      []outputEntry
     loopbacks    []loopbackEntry
@@ -165,13 +169,12 @@ type Engine struct {
 
 type EngineConfig struct {
     Marshaler    Marshaler
-    Naming       NamingStrategy  // default: KebabNaming
     ErrorHandler func(msg *Message, err error)
 }
 
 func NewEngine(cfg EngineConfig) *Engine
 
-func (e *Engine) AddHandler(name string, h Handler) error  // auto-routes via NamingStrategy
+func (e *Engine) AddHandler(h Handler, cfg HandlerConfig) error  // derives CE type via marshaler if cfg.Type empty
 func (e *Engine) AddInput(ch <-chan *Message, cfg InputConfig) error
 func (e *Engine) AddOutput(cfg OutputConfig) <-chan *Message
 func (e *Engine) AddLoopback(cfg LoopbackConfig) error
@@ -183,10 +186,7 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error)
 
 ### NamingStrategy
 
-NamingStrategy derives CE type from Go types. Used in two places:
-
-1. **Engine**: Auto-derive ingress routing from `handler.EventType()`
-2. **CommandHandler**: Auto-derive output CE type from event type `E`
+NamingStrategy lives in Marshaler. Used to derive CE type from Go types:
 
 ```go
 type NamingStrategy interface {
@@ -197,14 +197,19 @@ var KebabNaming NamingStrategy   // OrderCreated → "order.created"
 var SnakeNaming NamingStrategy   // OrderCreated → "order_created"
 ```
 
+**Usage:**
+- **Engine**: If `HandlerConfig.Type` is empty, derives via `marshaler.TypeName(handler.EventType())`
+- **CommandHandler**: Derives output CE type via marshaler
+
 ## Usage
 
 ### Explicit Handler (NewHandler)
 
 ```go
 engine := message.NewEngine(message.EngineConfig{
-    Marshaler: message.NewJSONMarshaler(message.JSONMarshalerConfig{}),
-    // Naming: message.KebabNaming (default)
+    Marshaler: message.NewJSONMarshaler(message.JSONMarshalerConfig{
+        // Naming: message.KebabNaming (default)
+    }),
 })
 
 handler := message.NewHandler(func(ctx context.Context, msg *TypedMessage[OrderCreated]) ([]*Message, error) {
@@ -220,8 +225,10 @@ handler := message.NewHandler(func(ctx context.Context, msg *TypedMessage[OrderC
     }, nil
 })
 
-engine.AddHandler("process-order", handler)
-// Auto-routing: OrderCreated → "order.created" → "process-order"
+engine.AddHandler(handler, message.HandlerConfig{
+    Name: "process-order",
+    // Type: "order.created" (optional, derived via marshaler)
+})
 
 // Input: external subscription management
 subscriber := ce.NewSubscriber(client)
@@ -249,13 +256,14 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{
         Source: "/orders-service",
-        // Naming: message.KebabNaming (default) - derives output CE type
     },
 )
 
-engine.AddHandler("create-order", handler)
-// Auto-routing: CreateOrder → "create.order" → "create-order"
-// Output CE type: OrderCreated → "order.created" (via CommandHandlerConfig.Naming)
+engine.AddHandler(handler, message.HandlerConfig{
+    Name: "create-order",
+    // Type: "create.order" (optional, derived via marshaler)
+})
+// Output CE type: OrderCreated → "order.created" (via marshaler's NamingStrategy)
 ```
 
 ## Output Routing
@@ -351,7 +359,7 @@ engine.AddLoopback(message.LoopbackConfig{
 
 ## Files to Create/Modify
 
-- `message/config.go` - InputConfig, OutputConfig, LoopbackConfig
+- `message/config.go` - InputConfig, OutputConfig, LoopbackConfig, HandlerConfig
 - `message/matcher.go` - Matcher interface
 - `message/match/match.go` - All, Any combinators
 - `message/match/like.go` - SQL LIKE pattern matching
