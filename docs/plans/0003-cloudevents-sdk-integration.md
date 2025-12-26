@@ -154,58 +154,56 @@ Replace custom CloudEvents handling entirely with CE-SDK.
 
 ## Implementation: Phase 1 - CESQL
 
-### Matcher Types
+Builds on existing `message/match` package structure:
+
+```
+message/
+├── matcher.go           # Matcher interface (exists)
+├── match/
+│   ├── match.go         # All, Any (exists)
+│   ├── like.go          # SQL LIKE pattern (exists)
+│   ├── sources.go       # Sources matcher (exists)
+│   ├── types.go         # Types matcher (exists)
+│   └── cesql.go         # CESQL matcher (new, CE-SDK dep)
+```
+
+### CESQL Matcher
 
 ```go
-// match.go
+// message/match/cesql.go
+package match
 
-type Matcher interface {
-    Match(msg *Message) bool
+import (
+    cesqlparser "github.com/cloudevents/sdk-go/sql/v2/parser"
+    cloudevents "github.com/cloudevents/sdk-go/v2"
+)
+
+// CESQL creates a matcher from a CESQL expression.
+// Example: match.CESQL("type LIKE 'order.%' AND source = '/orders'")
+func CESQL(expr string) (message.Matcher, error) {
+    parsed, err := cesqlparser.Parse(expr)
+    if err != nil {
+        return nil, err
+    }
+    return &cesqlMatcher{expr: parsed}, nil
 }
 
-// Simple wildcard matcher (fast path)
-type wildcardMatcher struct {
-    pattern string  // "Order*", "*", "order.*"
-}
-
-// CESQL matcher (advanced filtering)
 type cesqlMatcher struct {
     expr cesql.Expression
 }
 
-// Factory function
-func NewMatcher(pattern string) (Matcher, error) {
-    if isCESQLExpression(pattern) {
-        expr, err := cesqlparser.Parse(pattern)
-        if err != nil {
-            return nil, err
-        }
-        return &cesqlMatcher{expr: expr}, nil
+func (m *cesqlMatcher) Match(msg *message.Message) bool {
+    event := toCloudEvent(msg)
+    result, err := m.expr.Evaluate(event)
+    if err != nil {
+        return false
     }
-    return &wildcardMatcher{pattern: pattern}, nil
+    return result.(bool)
 }
 
-// Detection heuristic
-func isCESQLExpression(s string) bool {
-    // CESQL uses SQL keywords
-    keywords := []string{" LIKE ", " AND ", " OR ", " NOT ", " IN ", " EXISTS "}
-    upper := strings.ToUpper(s)
-    for _, kw := range keywords {
-        if strings.Contains(upper, kw) {
-            return true
-        }
-    }
-    return false
-}
-```
-
-### Message to CloudEvent Conversion
-
-```go
-// For CESQL evaluation only - internal conversion
-func toCloudEvent(msg *Message) cloudevents.Event {
+// toCloudEvent converts message to CE event for CESQL evaluation
+func toCloudEvent(msg *message.Message) cloudevents.Event {
     event := cloudevents.NewEvent()
-
     if id, ok := msg.Attributes.ID(); ok {
         event.SetID(id)
     }
@@ -215,36 +213,49 @@ func toCloudEvent(msg *Message) cloudevents.Event {
     if src, ok := msg.Attributes.Source(); ok {
         event.SetSource(src)
     }
-    // ... other attributes
-
     event.SetData(cloudevents.ApplicationJSON, msg.Data)
     return event
 }
 ```
 
+### Usage
+
+```go
+import "github.com/fxsml/gopipe/message/match"
+
+// Simple patterns (no CE-SDK dependency)
+engine.AddInput(ch, message.InputConfig{
+    Matcher: match.Types("order.%"),
+})
+
+// Complex CESQL (requires CE-SDK)
+cesqlMatcher, _ := match.CESQL("type LIKE 'order.%' AND source = '/orders'")
+engine.AddInput(ch, message.InputConfig{
+    Matcher: cesqlMatcher,
+})
+```
+
 ### Files to Create/Modify
 
-- `message/match.go` - Matcher interface, wildcard/CESQL implementations
-- `message/go.mod` - Add `github.com/cloudevents/sdk-go/sql/v2` dependency
-- `message/match_test.go` - Tests for pattern matching
+- `message/match/cesql.go` - CESQL matcher implementation
+- `message/match/go.mod` - Add `github.com/cloudevents/sdk-go/sql/v2` dependency
+- `message/match/cesql_test.go` - Tests for CESQL matching
 
 ### Test Plan
 
-1. Wildcard matching: `"*"`, `"Order*"`, `"order.*"`
-2. CESQL basic: `type = 'order.created'`
-3. CESQL LIKE: `type LIKE 'order.%'`
-4. CESQL AND/OR: `type LIKE 'order.%' AND source = '/orders'`
-5. CESQL with data access: `data.priority = 'high'` (if supported)
-6. Invalid CESQL returns error
-7. Benchmark: wildcard vs CESQL for simple patterns
+1. CESQL basic: `type = 'order.created'`
+2. CESQL LIKE: `type LIKE 'order.%'`
+3. CESQL AND/OR: `type LIKE 'order.%' AND source = '/orders'`
+4. CESQL with data access: `data.priority = 'high'` (if supported)
+5. Invalid CESQL returns error
+6. Benchmark: match.Types vs match.CESQL for simple patterns
 
 ## Acceptance Criteria
 
 ### Phase 1 (CESQL)
-- [ ] Matcher interface defined
-- [ ] Wildcard matcher for simple patterns
-- [ ] CESQL matcher for advanced patterns
-- [ ] Auto-detection of CESQL vs wildcard
+- [ ] match.CESQL function implemented
+- [ ] CESQL expressions evaluate correctly
+- [ ] CE-SDK dependency isolated to match/cesql.go
 - [ ] Tests pass (`make test`)
 - [ ] Build passes (`make build && make vet`)
 

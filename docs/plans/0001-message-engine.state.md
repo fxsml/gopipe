@@ -42,26 +42,68 @@ publisher.Publish(ctx, ordersOut)
 
 ```go
 type InputConfig struct {
-    Name string  // optional, for tracing/metrics
+    Name    string   // optional, for tracing/metrics
+    Matcher Matcher  // optional, defense in depth filtering
 }
 
 type OutputConfig struct {
     Name  string  // optional, for logging/metrics
-    Match string  // required: "*", "Order*", "order.*", or CESQL
+    Match string  // required: "%", "order.%", uses SQL LIKE syntax
 }
 ```
 
+### Matcher Interface and Match Package
+
+Interface in `message/`, implementations in `message/match/`:
+
+```go
+// message/matcher.go
+type Matcher interface {
+    Match(msg *Message) bool
+}
+
+// message/match/match.go
+import "github.com/fxsml/gopipe/message/match"
+
+func All(matchers ...message.Matcher) message.Matcher   // AND
+func Any(matchers ...message.Matcher) message.Matcher   // OR
+func Sources(patterns ...string) message.Matcher        // CE source filter
+func Types(patterns ...string) message.Matcher          // CE type filter
+```
+
+**Usage:**
+
+```go
+engine.AddInput(ch, message.InputConfig{
+    Name: "order-events",
+    Matcher: match.All(
+        match.Sources("https://my-domain.com/orders/%"),
+        match.Types("order.%"),
+    ),
+})
+```
+
+**Why separate package?**
+- Clean namespace: `match.All` vs `message.MatchAll`
+- Future CESQL can isolate CE-SDK dependency
+- Interface stays in core `message/`
+
+### SQL LIKE Pattern Syntax
+
+Uses SQL LIKE for consistency with CESQL:
+- `%` matches any sequence of characters
+- `_` matches a single character
+
 **Match patterns:**
-- `"*"` - catch-all (default output)
-- `"Order*"` - Go type prefix match
-- `"order.*"` - CE type prefix match
-- CESQL: `"type LIKE 'order.%' AND data.priority = 'high'"`
+- `"%"` - catch-all (default output)
+- `"order.%"` - prefix match (order.created, order.shipped)
+- `"%.created"` - suffix match (order.created, user.created)
+- `"order.created"` - exact match
 
 **Matching priority:**
 1. Exact match
-2. Prefix match
-3. CESQL expression
-4. Catch-all `"*"`
+2. Prefix/suffix match
+3. Catch-all `"%"`
 
 ### Marshaler - Lightweight with Registry
 
@@ -328,9 +370,13 @@ Core components are well-defined:
 |-----------|--------|-------|
 | NamingStrategy | ✅ Ready | Interface + KebabNaming, SnakeNaming |
 | Marshaler | ✅ Ready | Lightweight, uses NamingStrategy |
+| Matcher | ✅ Ready | Interface in message/, implementations in match/ |
+| match.All/Any | ✅ Ready | Combinators for AND/OR |
+| match.Sources | ✅ Ready | CE source pattern matching |
+| match.Types | ✅ Ready | CE type pattern matching |
 | Handler | ✅ Ready | NewHandler (explicit), NewCommandHandler (convention) |
-| InputConfig | ✅ Ready | Optional name for tracing |
-| OutputConfig | ✅ Ready | Match pattern (wildcards, CESQL) |
+| InputConfig | ✅ Ready | Optional name + Matcher for filtering |
+| OutputConfig | ✅ Ready | Match pattern (SQL LIKE syntax) |
 | Engine | ✅ Ready | AddInput, AddOutput, RouteType, Start() |
 | Middleware | ✅ Ready | ValidateCE, WithCorrelationID |
 
@@ -339,10 +385,14 @@ Core components are well-defined:
 1. `message/naming.go` - NamingStrategy interface and implementations
 2. `message/marshaler.go` - Marshaler interface
 3. `message/json_marshaler.go` - JSONMarshaler
-4. `message/config.go` - InputConfig, OutputConfig
-5. `message/match.go` - Pattern matching for OutputConfig.Match
-6. `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
-7. `message/middleware.go` - ValidateCE, WithCorrelationID
-8. `message/errors.go` - Error definitions
-9. `message/engine.go` - Engine implementation
-10. `message/cloudevents/` - CE adapter package
+4. `message/matcher.go` - Matcher interface
+5. `message/match/like.go` - SQL LIKE pattern matching
+6. `message/match/match.go` - All, Any combinators
+7. `message/match/sources.go` - Sources matcher
+8. `message/match/types.go` - Types matcher
+9. `message/config.go` - InputConfig, OutputConfig
+10. `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
+11. `message/middleware.go` - ValidateCE, WithCorrelationID
+12. `message/errors.go` - Error definitions
+13. `message/engine.go` - Engine implementation
+14. `message/cloudevents/` - CE adapter package

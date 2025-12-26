@@ -75,13 +75,51 @@ type CommandHandlerConfig struct {
 
 ```go
 type InputConfig struct {
-    Name string  // optional, for tracing/metrics
+    Name    string   // optional, for tracing/metrics
+    Matcher Matcher  // optional, defense in depth filtering
 }
 
 type OutputConfig struct {
     Name  string  // optional, for logging/metrics
-    Match string  // required: "*", "Order*", "order.*", or CESQL
+    Match string  // required: "%", "Order%", "order.%", uses SQL LIKE syntax
 }
+```
+
+### Matcher Interface
+
+```go
+// In message/matcher.go
+type Matcher interface {
+    Match(msg *Message) bool
+}
+```
+
+### Match Package
+
+Implementations in `message/match/`:
+
+```go
+import "github.com/fxsml/gopipe/message/match"
+
+// Combinators
+func All(matchers ...message.Matcher) message.Matcher   // AND
+func Any(matchers ...message.Matcher) message.Matcher   // OR
+
+// Attribute matchers (use SQL LIKE syntax: % = any, _ = single char)
+func Sources(patterns ...string) message.Matcher  // match CE source
+func Types(patterns ...string) message.Matcher    // match CE type
+```
+
+**Usage:**
+
+```go
+engine.AddInput(ch, message.InputConfig{
+    Name: "order-events",
+    Matcher: match.All(
+        match.Sources("https://my-domain.com/orders/%"),
+        match.Types("order.%"),
+    ),
+})
 ```
 
 ### Engine
@@ -200,28 +238,32 @@ engine.AddHandler("create-order", handler)
 
 ## Output Pattern Matching
 
+Uses SQL LIKE syntax for consistency with CESQL:
+- `%` matches any sequence of characters
+- `_` matches a single character
+
 **Match patterns:**
-- `"*"` - catch-all (default output)
-- `"Order*"` - Go type prefix match
-- `"order.*"` - CE type prefix match
-- CESQL: `"type LIKE 'order.%' AND data.priority = 'high'"`
+- `"%"` - catch-all (default output)
+- `"Order%"` - prefix match (OrderCreated, OrderShipped)
+- `"order.%"` - CE type prefix match
+- `"%.created"` - suffix match
+- `"order.created"` - exact match
 
 **Matching priority:**
 1. Exact match
-2. Prefix match
-3. CESQL expression
-4. Catch-all `"*"`
+2. Prefix/suffix match
+3. Catch-all `"%"`
 
 **Example:**
 ```go
 // Register outputs with patterns
-ordersOut := engine.AddOutput(message.OutputConfig{Match: "Order*"})
-paymentsOut := engine.AddOutput(message.OutputConfig{Match: "Payment*"})
-defaultOut := engine.AddOutput(message.OutputConfig{Match: "*"})
+ordersOut := engine.AddOutput(message.OutputConfig{Match: "order.%"})
+paymentsOut := engine.AddOutput(message.OutputConfig{Match: "payment.%"})
+defaultOut := engine.AddOutput(message.OutputConfig{Match: "%"})
 
-// Handler returns OrderCreated → matches "Order*" → goes to ordersOut
-// Handler returns PaymentReceived → matches "Payment*" → goes to paymentsOut
-// Handler returns UnknownEvent → matches "*" → goes to defaultOut
+// Handler returns order.created → matches "order.%" → goes to ordersOut
+// Handler returns payment.received → matches "payment.%" → goes to paymentsOut
+// Handler returns unknown.event → matches "%" → goes to defaultOut
 ```
 
 ## Attribute Ownership
@@ -273,7 +315,11 @@ engine.AddInput(loopback, message.InputConfig{Name: "loopback"})
 ## Files to Create/Modify
 
 - `message/config.go` - InputConfig, OutputConfig
-- `message/match.go` - Pattern matching for OutputConfig.Match
+- `message/matcher.go` - Matcher interface
+- `message/match/match.go` - All, Any combinators
+- `message/match/like.go` - SQL LIKE pattern matching
+- `message/match/sources.go` - Sources matcher
+- `message/match/types.go` - Types matcher
 - `message/engine.go` - Engine implementation
 - `message/handler.go` - Handler interface, NewHandler, NewCommandHandler
 - `message/naming.go` - NamingStrategy interface, KebabNaming, SnakeNaming
@@ -286,22 +332,29 @@ engine.AddInput(loopback, message.InputConfig{Name: "loopback"})
 2. NewCommandHandler auto-generates CE attributes
 3. RouteType routes CE type to handler
 4. AddOutput with Match pattern routes correctly
-5. Wildcard match `"*"` catches all
-6. Prefix match `"Order*"` matches OrderCreated, OrderShipped
-7. Loopback: output channel fed to input
-8. Engine sets DataContentType from marshaler
-9. ValidateCE middleware rejects invalid messages
-10. WithCorrelationID propagates correlation ID
-11. ErrorHandler receives errors
-12. Start() returns ErrAlreadyStarted on second call
+5. Catch-all match `"%"` catches all
+6. Prefix match `"order.%"` matches order.created, order.shipped
+7. Suffix match `"%.created"` matches order.created, user.created
+8. Loopback: output channel fed to input
+9. Engine sets DataContentType from marshaler
+10. ValidateCE middleware rejects invalid messages
+11. WithCorrelationID propagates correlation ID
+12. ErrorHandler receives errors
+13. Start() returns ErrAlreadyStarted on second call
+14. match.All combines matchers with AND
+15. match.Any combines matchers with OR
+16. match.Sources filters by source pattern
+17. match.Types filters by type pattern
+18. InputConfig.Matcher filters incoming messages
 
 ## Acceptance Criteria
 
 - [ ] Engine.Start() orchestrates flow
-- [ ] AddInput(ch, cfg) for input channels
+- [ ] AddInput(ch, cfg) with optional Matcher for filtering
 - [ ] AddOutput(cfg) returns channel, routes by pattern
 - [ ] NewHandler and NewCommandHandler constructors work
-- [ ] Pattern matching works (exact, prefix, wildcard, CESQL)
+- [ ] SQL LIKE pattern matching works (%, _)
+- [ ] match.All, match.Any, match.Sources, match.Types work
 - [ ] Middleware support (ValidateCE, WithCorrelationID)
 - [ ] Tests pass (`make test`)
 - [ ] Build passes (`make build && make vet`)
