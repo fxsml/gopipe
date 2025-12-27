@@ -91,7 +91,7 @@ engine := message.NewEngine(message.EngineConfig{
 ```go
 // NamingStrategy used at construction time
 handler := message.NewHandler(
-    func(ctx context.Context, msg *TypedMessage[OrderCreated]) ([]*Message, error) {
+    func(ctx context.Context, msg *Message[OrderCreated]) ([]*RawMessage, error) {
         // ...
     },
     message.KebabNaming,  // derives EventType from OrderCreated

@@ -30,8 +30,8 @@ The message package grew too complex too early. Current state includes:
 **Clean redesign of the message package:**
 
 1. **Keep only essentials:**
-   - `Message` (alias for `TypedMessage[[]byte]`)
-   - `TypedMessage[T]` with `Data`, `Attributes`, `Ack()`, `Nack()`
+   - `RawMessage` (alias for `Message[[]byte]`)
+   - `Message[T]` with `Data`, `Attributes`, `Ack()`, `Nack()`
    - `Attributes` map and accessor methods with consts for CloudEvents
    - `Acking` for acknowledgment coordination
 

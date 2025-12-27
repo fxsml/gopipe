@@ -171,12 +171,12 @@ Handler is self-describing - knows its CE type and can create instances for unma
 type Handler interface {
     EventType() string       // CE type - for routing
     NewInput() any           // creates new instance for unmarshaling (e.g., *OrderCreated)
-    Handle(ctx context.Context, msg *Message) ([]*Message, error)
+    Handle(ctx context.Context, msg *Message) ([]*RawMessage, error)
 }
 
 // Generic constructor - NamingStrategy derives EventType from T
 func NewHandler[T any](
-    fn func(ctx context.Context, msg *TypedMessage[T]) ([]*Message, error),
+    fn func(ctx context.Context, msg *Message[T]) ([]*RawMessage, error),
     naming NamingStrategy,
 ) Handler
 
@@ -199,7 +199,7 @@ type CommandHandlerConfig struct {
     Naming NamingStrategy  // derives CE types for input (C) and output (E)
 }
 
-// Usage - receives command directly, not TypedMessage
+// Usage - receives command directly, not Message[T]
 handler := message.NewCommandHandler(
     func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
         // Access message attributes via context if needed:
@@ -229,9 +229,9 @@ handler := message.NewCommandHandler(
 
 ```go
 handler := message.NewHandler(
-    func(ctx context.Context, msg *TypedMessage[OrderCreated]) ([]*Message, error) {
+    func(ctx context.Context, msg *Message[OrderCreated]) ([]*RawMessage, error) {
         order := msg.Data  // typed access
-        return []*Message{
+        return []*RawMessage{
             message.New(OrderShipped{OrderID: order.ID}, message.Attributes{
                 ID:          uuid.New().String(),
                 SpecVersion: "1.0",
@@ -253,7 +253,7 @@ engine.Use(message.ValidateCE())  // validates required CE attributes
 ```
 
 **Summary:**
-- `NewHandler`: Takes NamingStrategy, handler creates complete output messages, receives TypedMessage
+- `NewHandler`: Takes NamingStrategy, handler creates complete output messages, receives Message[T]
 - `NewCommandHandler`: Takes config with Source + Naming, auto-generates output message attributes, receives cmd directly
 
 ### DataContentType
@@ -279,7 +279,7 @@ Middleware wraps handler execution with pre/post-handler logic. Similar to `pipe
 ```go
 type Middleware func(next HandlerFunc) HandlerFunc
 
-type HandlerFunc func(ctx context.Context, msg *Message) ([]*Message, error)
+type HandlerFunc func(ctx context.Context, msg *Message) ([]*RawMessage, error)
 
 // Usage
 engine.Use(message.WithCorrelationID())  // propagates or generates correlation ID
