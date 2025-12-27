@@ -1,6 +1,7 @@
 # ADR 0018: Interface Naming Conventions
 
 **Date:** 2025-12-22
+**Updated:** 2025-12-28
 **Status:** Implemented
 
 ## Context
@@ -22,10 +23,12 @@ type Generator[Out any] interface {
 }
 
 type Merger[T any] interface {
+    AddInput(ch <-chan T) (<-chan struct{}, error)
     Merge(ctx context.Context) (<-chan T, error)
 }
 
-type Distributor[T any] interface {  // Not yet implemented
+type Distributor[T any] interface {
+    AddOutput(matcher func(T) bool) (<-chan T, error)
     Distribute(ctx context.Context, in <-chan T) (<-chan struct{}, error)
 }
 
@@ -41,10 +44,12 @@ type Engine interface {
 - `Pipe.Start()` → `Pipe.Pipe()`
 - `FanIn` → `Merger`, `FanInConfig` → `MergerConfig`
 - `FanIn.Start()` → `Merger.Merge()`
+- `Merger.Add()` → `Merger.AddInput()` (added 2025-12-28 for symmetry with `Distributor.AddOutput()`)
 
 **Benefits:**
 - Consistent `<Verb>er.<Verb>()` pattern across library
 - `Start()` clearly indicates orchestration-level component
+- Symmetric `AddInput`/`AddOutput` naming for inverse operations (Merger/Distributor)
 
 **Drawbacks:**
 - Breaking change for existing `Pipe` and `FanIn` users

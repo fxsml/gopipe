@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Graceful shutdown with configurable timeout
   - Consistent API with `Merger` (inverse operation: one input → many outputs)
 
+### Changed
+- **pipe**: `Merger.Add()` renamed to `Merger.AddInput()` for symmetry with `Distributor.AddOutput()`
+
 ## [0.11.0] - Upcoming
 
 ### Breaking Changes
