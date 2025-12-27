@@ -16,10 +16,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 
-	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/fxsml/gopipe/message"
 )
 
@@ -71,23 +71,23 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// HTTP handler
+	// HTTP handler - parse CloudEvents from headers
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Parse CloudEvent from HTTP request
-		event, err := cloudevents.NewEventFromHTTPRequest(r)
+		// Read body
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		// Convert to RawMessage
+		// Parse CE headers
 		raw := &message.RawMessage{
-			Data: event.Data(),
+			Data: body,
 			Attributes: message.Attributes{
-				"id":          event.ID(),
-				"type":        event.Type(),
-				"source":      event.Source(),
-				"specversion": event.SpecVersion(),
+				"id":          r.Header.Get("Ce-Id"),
+				"type":        r.Header.Get("Ce-Type"),
+				"source":      r.Header.Get("Ce-Source"),
+				"specversion": r.Header.Get("Ce-Specversion"),
 			},
 		}
 
