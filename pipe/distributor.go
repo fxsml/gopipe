@@ -8,8 +8,20 @@ import (
 )
 
 // Distributor routes messages from a single input to multiple output channels.
-// Each output has an optional matcher; messages are sent to the first matching output.
-// It safely handles concurrent AddOutput() calls and provides graceful shutdown.
+// It is the inverse of Merger: one input → many outputs.
+//
+// Key features:
+//   - First-match-wins routing with optional matcher functions
+//   - Dynamic AddOutput() during runtime (concurrent-safe)
+//   - NoMatchHandler for unmatched messages
+//   - Graceful shutdown with configurable timeout
+//
+// Example:
+//
+//	dist := pipe.NewDistributor[int](pipe.DistributorConfig[int]{Buffer: 10})
+//	evens, _ := dist.AddOutput(func(v int) bool { return v%2 == 0 })
+//	odds, _ := dist.AddOutput(func(v int) bool { return v%2 != 0 })
+//	done, _ := dist.Distribute(ctx, input)
 type Distributor[T any] struct {
 	mu        sync.RWMutex
 	wg        sync.WaitGroup

@@ -8,11 +8,25 @@ import (
 )
 
 // Merger merges multiple input channels into a single output channel.
-// It safely handles concurrent AddInput() calls and provides graceful shutdown.
+// It is the inverse of Distributor: many inputs → one output.
+//
+// Key features:
+//   - Dynamic AddInput() during runtime (concurrent-safe)
+//   - Per-input done channels for tracking completion
+//   - Graceful shutdown with configurable timeout
+//   - Thread-safe for concurrent AddInput() calls
+//
+// Example:
+//
+//	merger := pipe.NewMerger[int](pipe.MergerConfig{Buffer: 10})
+//	merger.AddInput(ch1)
+//	merger.AddInput(ch2)
+//	out, _ := merger.Merge(ctx)
+//	for v := range out { ... }
 type Merger[T any] struct {
-	out       chan T
 	mu        sync.Mutex
 	wg        sync.WaitGroup
+	out       chan T
 	done      chan struct{}
 	config    MergerConfig
 	closed    bool
@@ -22,7 +36,7 @@ type Merger[T any] struct {
 
 // MergerConfig configures Merger behavior.
 type MergerConfig struct {
-	// Buffer size for the output channel
+	// Buffer size for the output channel.
 	Buffer int
 	// ShutdownTimeout is the max time to wait for input channels to drain.
 	// If 0, waits indefinitely for clean shutdown.
@@ -41,15 +55,17 @@ func NewMerger[T any](config MergerConfig) *Merger[T] {
 }
 
 // AddInput registers an input channel to be merged into the output.
-// Safe to call concurrently. Returns a done channel that closes when all messages
-// from the input channel have been processed, and an error if Merger is already closed.
+// Returns a done channel that closes when all messages from this input
+// have been forwarded to the output channel.
+// Safe to call concurrently and after Merge() has been called.
+// Returns an error if the Merger is already closed.
 func (m *Merger[T]) AddInput(ch <-chan T) (<-chan struct{}, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		done := make(chan struct{})
 		close(done)
-		return done, errors.New("gopipe merger: closed")
+		return done, errors.New("merger: closed")
 	}
 
 	done := make(chan struct{})
