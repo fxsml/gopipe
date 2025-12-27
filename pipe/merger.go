@@ -8,7 +8,7 @@ import (
 )
 
 // Merger merges multiple input channels into a single output channel.
-// It safely handles concurrent Add() calls and provides graceful shutdown.
+// It safely handles concurrent AddInput() calls and provides graceful shutdown.
 type Merger[T any] struct {
 	out       chan T
 	mu        sync.Mutex
@@ -30,7 +30,7 @@ type MergerConfig struct {
 }
 
 // NewMerger creates a new Merger instance.
-// Add input channels with Add(), then call Merge() exactly once.
+// Add input channels with AddInput(), then call Merge() exactly once.
 func NewMerger[T any](config MergerConfig) *Merger[T] {
 	return &Merger[T]{
 		out:    make(chan T, config.Buffer),
@@ -40,10 +40,10 @@ func NewMerger[T any](config MergerConfig) *Merger[T] {
 	}
 }
 
-// Add registers an input channel to be merged into the output.
+// AddInput registers an input channel to be merged into the output.
 // Safe to call concurrently. Returns a done channel that closes when all messages
 // from the input channel have been processed, and an error if Merger is already closed.
-func (m *Merger[T]) Add(ch <-chan T) (<-chan struct{}, error) {
+func (m *Merger[T]) AddInput(ch <-chan T) (<-chan struct{}, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {

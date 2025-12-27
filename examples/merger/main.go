@@ -21,9 +21,9 @@ func main() {
 
 	// Register input channels
 	// NOTE: Errors are ignored since merger is not closed yet
-	merger.Add(channel.FromValues("A", "B", "C"))
-	merger.Add(channel.FromValues("1", "2", "3"))
-	merger.Add(channel.FromValues("!", "@", "#"))
+	merger.AddInput(channel.FromValues("A", "B", "C"))
+	merger.AddInput(channel.FromValues("1", "2", "3"))
+	merger.AddInput(channel.FromValues("!", "@", "#"))
 
 	// Merge
 	out, err := merger.Merge(ctx)

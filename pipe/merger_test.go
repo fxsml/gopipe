@@ -32,15 +32,15 @@ func TestMerger_BasicMerge(t *testing.T) {
 	ch2 := make(chan int)
 	ch3 := make(chan int)
 
-	done1, err := merger.Add(ch1)
+	done1, err := merger.AddInput(ch1)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch1: %v", err)
 	}
-	done2, err := merger.Add(ch2)
+	done2, err := merger.AddInput(ch2)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch2: %v", err)
 	}
-	done3, err := merger.Add(ch3)
+	done3, err := merger.AddInput(ch3)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch3: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestMerger_AddAfterClosed(t *testing.T) {
 	}
 
 	ch1 := make(chan int)
-	done1, err := merger.Add(ch1)
+	done1, err := merger.AddInput(ch1)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestMerger_AddAfterClosed(t *testing.T) {
 	ch2 <- 99
 	close(ch2)
 
-	_, err2 := merger.Add(ch2)
+	_, err2 := merger.AddInput(ch2)
 	if err2 == nil {
 		t.Error("expected error when adding channel after close")
 	}
@@ -145,7 +145,7 @@ func TestMerger_ContextCancellation(t *testing.T) {
 	})
 
 	ch := make(chan int, 5)
-	done, err := merger.Add(ch)
+	done, err := merger.AddInput(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestMerger_ShutdownDuration(t *testing.T) {
 		ch <- i
 	}
 
-	done, err := merger.Add(ch)
+	done, err := merger.AddInput(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestMerger_NoShutdownDuration(t *testing.T) {
 	})
 
 	ch := make(chan int)
-	done, err := merger.Add(ch)
+	done, err := merger.AddInput(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestMerger_ConcurrentAdds(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			ch := make(chan int, 5)
-			done, err := merger.Add(ch)
+			done, err := merger.AddInput(ch)
 			if err != nil {
 				t.Errorf("unexpected error adding channel: %v", err)
 				return
@@ -352,7 +352,7 @@ func TestMerger_EmptyChannel(t *testing.T) {
 	})
 
 	ch := make(chan int)
-	done, err := merger.Add(ch)
+	done, err := merger.AddInput(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
@@ -391,15 +391,15 @@ func TestMerger_MultipleInputsOneCloses(t *testing.T) {
 	ch2 := make(chan int)
 	ch3 := make(chan int)
 
-	done1, err := merger.Add(ch1)
+	done1, err := merger.AddInput(ch1)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch1: %v", err)
 	}
-	done2, err := merger.Add(ch2)
+	done2, err := merger.AddInput(ch2)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch2: %v", err)
 	}
-	done3, err := merger.Add(ch3)
+	done3, err := merger.AddInput(ch3)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch3: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestMerger_BufferFull(t *testing.T) {
 	})
 
 	ch := make(chan int, 5)
-	done, err := merger.Add(ch)
+	done, err := merger.AddInput(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
@@ -540,7 +540,7 @@ func TestMerger_NoGoroutineLeakWhenMergedAndStopped(t *testing.T) {
 	doneChs := []<-chan struct{}{}
 	for range 5 {
 		ch := make(chan int, 10)
-		done, err := merger.Add(ch)
+		done, err := merger.AddInput(ch)
 		if err != nil {
 			t.Fatalf("unexpected error adding channel: %v", err)
 		}
@@ -608,7 +608,7 @@ func TestMerger_NoGoroutineLeakWhenNeverMerged(t *testing.T) {
 	// Add several channels without starting
 	for range 5 {
 		ch := make(chan int, 10)
-		if _, err := merger.Add(ch); err != nil {
+		if _, err := merger.AddInput(ch); err != nil {
 			t.Fatalf("unexpected error adding channel: %v", err)
 		}
 	}
