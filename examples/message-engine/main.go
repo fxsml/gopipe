@@ -1,31 +1,31 @@
-// Example: HTTP server with CloudEvents SDK and message engine.
+// Example: HTTP server with CloudEvents structured JSON and message engine.
 //
-// Demonstrates using the message engine to process CloudEvents received via HTTP.
-// Uses CloudEvents SDK for parsing and channel package helpers for cleaner code.
+// Demonstrates using the message engine to process CloudEvents received via HTTP
+// in structured JSON format (all attributes in the JSON body, no headers).
 //
 // Run: go run ./examples/message-engine
 //
 // Test with:
 //
 //	curl -X POST http://localhost:8080/ \
-//	  -H "Content-Type: application/json" \
-//	  -H "Ce-Id: 123" \
-//	  -H "Ce-Type: order.created" \
-//	  -H "Ce-Source: /test" \
-//	  -H "Ce-Specversion: 1.0" \
-//	  -d '{"order_id": "ABC123", "amount": 99.99}'
+//	  -H "Content-Type: application/cloudevents+json" \
+//	  -d '{
+//	    "specversion": "1.0",
+//	    "type": "order.created",
+//	    "source": "/test",
+//	    "id": "123",
+//	    "data": {"order_id": "ABC123", "amount": 99.99}
+//	  }'
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 
-	cloudevents "github.com/cloudevents/sdk-go/v2"
-	"github.com/cloudevents/sdk-go/v2/binding"
-	cehttp "github.com/cloudevents/sdk-go/v2/protocol/http"
-	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 )
 
@@ -63,33 +63,11 @@ func main() {
 	)
 	engine.AddHandler(handler, message.HandlerConfig{Name: "process-order"})
 
-	// Create channels for HTTP request/response flow
-	// httpRequests receives parsed CloudEvents from HTTP handlers
-	httpRequests := make(chan *cloudevents.Event, 10)
+	// Create channel for HTTP request/response flow
+	httpRequests := make(chan *message.RawMessage, 10)
 
-	// Use channel.Transform to convert CloudEvents to RawMessages
-	rawMessages := channel.Transform(httpRequests, func(event *cloudevents.Event) *message.RawMessage {
-		raw := &message.RawMessage{
-			Data: event.Data(),
-			Attributes: message.Attributes{
-				"id":              event.ID(),
-				"type":            event.Type(),
-				"source":          event.Source(),
-				"specversion":     event.SpecVersion(),
-				"datacontenttype": event.DataContentType(),
-			},
-		}
-		if !event.Time().IsZero() {
-			raw.Attributes["time"] = event.Time().String()
-		}
-		if event.Subject() != "" {
-			raw.Attributes["subject"] = event.Subject()
-		}
-		return raw
-	})
-
-	// Connect transformed channel to engine
-	engine.AddInput(rawMessages, message.InputConfig{Name: "http-input"})
+	// Connect channel to engine
+	engine.AddInput(httpRequests, message.InputConfig{Name: "http-input"})
 	output := engine.AddOutput(message.OutputConfig{Name: "http-output"})
 
 	// Start engine
@@ -101,37 +79,53 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// HTTP handler - parse CloudEvents using SDK
+	// HTTP handler - parse CloudEvents structured JSON
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Use CloudEvents SDK to parse the request
-		msg := cehttp.NewMessageFromHttpRequest(r)
-		event, err := binding.ToEvent(r.Context(), msg)
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to read body: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// Parse CloudEvents structured JSON
+		var ce struct {
+			Data json.RawMessage `json:"data"`
+			message.Attributes
+		}
+		if err := json.Unmarshal(body, &ce); err != nil {
 			http.Error(w, fmt.Sprintf("failed to parse CloudEvent: %v", err), http.StatusBadRequest)
 			return
 		}
 
-		// Send event through the channel pipeline
-		httpRequests <- event
+		// Extract attributes from the full JSON (excluding "data")
+		var attrs message.Attributes
+		if err := json.Unmarshal(body, &attrs); err != nil {
+			http.Error(w, fmt.Sprintf("failed to parse attributes: %v", err), http.StatusBadRequest)
+			return
+		}
+		delete(attrs, "data")
+
+		// Send through the channel pipeline
+		httpRequests <- &message.RawMessage{
+			Data:       ce.Data,
+			Attributes: attrs,
+		}
 
 		select {
 		case out := <-output:
-			w.Header().Set("Content-Type", "application/json")
-			w.Write(out.Data)
+			w.Header().Set("Content-Type", "application/cloudevents+json")
+			out.WriteTo(w)
 		case <-r.Context().Done():
 			http.Error(w, "timeout", http.StatusGatewayTimeout)
 		}
 	})
 
 	log.Println("Server starting on :8080")
-	log.Println("Test with:")
-	log.Println(`  curl -X POST http://localhost:8080/ \`)
-	log.Println(`    -H "Content-Type: application/json" \`)
-	log.Println(`    -H "Ce-Id: 123" \`)
-	log.Println(`    -H "Ce-Type: order.created" \`)
-	log.Println(`    -H "Ce-Source: /test" \`)
-	log.Println(`    -H "Ce-Specversion: 1.0" \`)
-	log.Println(`    -d '{"order_id": "ABC123", "amount": 99.99}'`)
+	fmt.Println()
+	fmt.Println("Test with:")
+	fmt.Println(`  curl -X POST http://localhost:8080/ \`)
+	fmt.Println(`    -H "Content-Type: application/cloudevents+json" \`)
+	fmt.Println(`    -d '{"specversion":"1.0","type":"order.created","source":"/test","id":"123","data":{"order_id":"ABC123","amount":99.99}}'`)
 
 	go func() {
 		if err := http.ListenAndServe(":8080", nil); err != nil {

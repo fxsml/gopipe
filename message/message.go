@@ -1,6 +1,10 @@
 package message
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"maps"
 	"sync"
 )
 
@@ -172,4 +176,55 @@ func Copy[In, Out any](msg *TypedMessage[In], data Out) *TypedMessage[Out] {
 		Attributes: msg.Attributes,
 		a:          msg.a,
 	}
+}
+
+// cloudEvent returns the message as a CloudEvents structured map.
+// Injects specversion "1.0" if not present in attributes.
+func (m *TypedMessage[T]) cloudEvent() map[string]any {
+	ce := make(map[string]any, len(m.Attributes)+2)
+	maps.Copy(ce, m.Attributes)
+	if _, ok := ce["specversion"]; !ok {
+		ce["specversion"] = "1.0"
+	}
+
+	// For []byte data, embed as raw JSON if valid
+	if data, ok := any(m.Data).([]byte); ok {
+		if json.Valid(data) {
+			ce["data"] = json.RawMessage(data)
+		} else {
+			ce["data"] = data
+		}
+	} else {
+		ce["data"] = m.Data
+	}
+	return ce
+}
+
+// String returns the message in CloudEvents structured JSON format.
+// Injects specversion "1.0" if not present in attributes.
+func (m *TypedMessage[T]) String() string {
+	b, err := json.Marshal(m.cloudEvent())
+	if err != nil {
+		return fmt.Sprintf("gopipe error: marshaling CloudEvents message: %v", err)
+	}
+	return string(b)
+}
+
+// WriteTo writes the message in CloudEvents structured JSON format to w.
+// Implements io.WriterTo for direct streaming to http.ResponseWriter, files, etc.
+func (m *TypedMessage[T]) WriteTo(w io.Writer) (int64, error) {
+	cw := &countWriter{w: w}
+	err := json.NewEncoder(cw).Encode(m.cloudEvent())
+	return cw.n, err
+}
+
+type countWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
 }

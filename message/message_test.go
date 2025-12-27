@@ -1,6 +1,9 @@
 package message
 
 import (
+	"bytes"
+	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -185,6 +188,129 @@ func TestCopy(t *testing.T) {
 		copied.Ack()
 		if !acked {
 			t.Error("expected shared acking to work")
+		}
+	})
+}
+
+func TestString(t *testing.T) {
+	t.Run("injects specversion when missing", func(t *testing.T) {
+		msg := New("hello", Attributes{"type": "greeting"})
+		s := msg.String()
+
+		var ce map[string]any
+		if err := json.Unmarshal([]byte(s), &ce); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		if ce["specversion"] != "1.0" {
+			t.Errorf("expected specversion 1.0, got %v", ce["specversion"])
+		}
+		if ce["type"] != "greeting" {
+			t.Errorf("expected type greeting, got %v", ce["type"])
+		}
+		if ce["data"] != "hello" {
+			t.Errorf("expected data hello, got %v", ce["data"])
+		}
+	})
+
+	t.Run("preserves existing specversion", func(t *testing.T) {
+		msg := New("data", Attributes{"specversion": "2.0"})
+		s := msg.String()
+
+		var ce map[string]any
+		if err := json.Unmarshal([]byte(s), &ce); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		if ce["specversion"] != "2.0" {
+			t.Errorf("expected specversion 2.0, got %v", ce["specversion"])
+		}
+	})
+
+	t.Run("embeds valid JSON bytes as raw JSON", func(t *testing.T) {
+		data := []byte(`{"orderId":"123","amount":50}`)
+		msg := New(data, Attributes{"type": "order.created"})
+		s := msg.String()
+
+		// Should contain the raw JSON, not base64 encoded
+		if !strings.Contains(s, `"orderId"`) {
+			t.Errorf("expected raw JSON in output, got %s", s)
+		}
+
+		var ce map[string]any
+		if err := json.Unmarshal([]byte(s), &ce); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		dataMap, ok := ce["data"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected data to be object, got %T", ce["data"])
+		}
+		if dataMap["orderId"] != "123" {
+			t.Errorf("expected orderId 123, got %v", dataMap["orderId"])
+		}
+	})
+
+	t.Run("handles invalid JSON bytes", func(t *testing.T) {
+		data := []byte("not json")
+		msg := New(data, nil)
+		s := msg.String()
+
+		// Should still produce valid JSON output
+		var ce map[string]any
+		if err := json.Unmarshal([]byte(s), &ce); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+	})
+}
+
+func TestWriteTo(t *testing.T) {
+	t.Run("writes to buffer", func(t *testing.T) {
+		msg := New("hello", Attributes{"type": "greeting"})
+		var buf bytes.Buffer
+
+		n, err := msg.WriteTo(&buf)
+		if err != nil {
+			t.Fatalf("WriteTo failed: %v", err)
+		}
+		if n != int64(buf.Len()) {
+			t.Errorf("expected n=%d, got %d", buf.Len(), n)
+		}
+
+		var ce map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &ce); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		if ce["specversion"] != "1.0" {
+			t.Errorf("expected specversion 1.0, got %v", ce["specversion"])
+		}
+		if ce["data"] != "hello" {
+			t.Errorf("expected data hello, got %v", ce["data"])
+		}
+	})
+
+	t.Run("embeds raw JSON for byte slices", func(t *testing.T) {
+		data := []byte(`{"id":123}`)
+		msg := New(data, nil)
+		var buf bytes.Buffer
+
+		_, err := msg.WriteTo(&buf)
+		if err != nil {
+			t.Fatalf("WriteTo failed: %v", err)
+		}
+
+		var ce map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &ce); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		dataMap, ok := ce["data"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected data to be object, got %T", ce["data"])
+		}
+		if dataMap["id"] != float64(123) {
+			t.Errorf("expected id 123, got %v", dataMap["id"])
 		}
 	})
 }
