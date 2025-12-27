@@ -22,8 +22,10 @@ import (
 	"log"
 	"net/http"
 
+	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/cloudevents/sdk-go/v2/binding"
 	cehttp "github.com/cloudevents/sdk-go/v2/protocol/http"
+	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 )
 
@@ -61,9 +63,33 @@ func main() {
 	)
 	engine.AddHandler(handler, message.HandlerConfig{Name: "process-order"})
 
-	// Create input/output channels
-	input := make(chan *message.RawMessage, 10)
-	engine.AddInput(input, message.InputConfig{Name: "http-input"})
+	// Create channels for HTTP request/response flow
+	// httpRequests receives parsed CloudEvents from HTTP handlers
+	httpRequests := make(chan *cloudevents.Event, 10)
+
+	// Use channel.Transform to convert CloudEvents to RawMessages
+	rawMessages := channel.Transform(httpRequests, func(event *cloudevents.Event) *message.RawMessage {
+		raw := &message.RawMessage{
+			Data: event.Data(),
+			Attributes: message.Attributes{
+				"id":              event.ID(),
+				"type":            event.Type(),
+				"source":          event.Source(),
+				"specversion":     event.SpecVersion(),
+				"datacontenttype": event.DataContentType(),
+			},
+		}
+		if !event.Time().IsZero() {
+			raw.Attributes["time"] = event.Time().String()
+		}
+		if event.Subject() != "" {
+			raw.Attributes["subject"] = event.Subject()
+		}
+		return raw
+	})
+
+	// Connect transformed channel to engine
+	engine.AddInput(rawMessages, message.InputConfig{Name: "http-input"})
 	output := engine.AddOutput(message.OutputConfig{Name: "http-output"})
 
 	// Start engine
@@ -85,27 +111,8 @@ func main() {
 			return
 		}
 
-		// Convert to RawMessage
-		raw := &message.RawMessage{
-			Data: event.Data(),
-			Attributes: message.Attributes{
-				"id":              event.ID(),
-				"type":            event.Type(),
-				"source":          event.Source(),
-				"specversion":     event.SpecVersion(),
-				"datacontenttype": event.DataContentType(),
-			},
-		}
-
-		// Add optional attributes
-		if !event.Time().IsZero() {
-			raw.Attributes["time"] = event.Time().String()
-		}
-		if event.Subject() != "" {
-			raw.Attributes["subject"] = event.Subject()
-		}
-
-		input <- raw
+		// Send event through the channel pipeline
+		httpRequests <- event
 
 		select {
 		case out := <-output:

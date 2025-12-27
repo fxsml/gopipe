@@ -104,10 +104,17 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 	e.started = true
 	e.mu.Unlock()
 
-	// Apply input matchers using channel.Filter and collect filtered channels
+	// Build the processing pipeline using channel helpers
 	filteredInputs := make([]<-chan *RawMessage, 0, len(e.inputs))
 	for _, input := range e.inputs {
-		filtered := e.filterInput(ctx, input)
+		// Use channel.Cancel for context-aware input handling
+		cancelled := channel.Cancel(ctx, input.ch, func(msg *RawMessage, err error) {
+			// Messages in-flight during cancellation are dropped
+		})
+
+		// Use channel.Process for filtering with error callback
+		// Process returns 0 or 1 messages per input (filter semantics)
+		filtered := e.applyInputMatcher(cancelled, input.config.Matcher)
 		filteredInputs = append(filteredInputs, filtered)
 	}
 
@@ -131,36 +138,23 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 	return e.done, nil
 }
 
-// filterInput applies input matcher and context cancellation to an input channel.
-func (e *Engine) filterInput(ctx context.Context, in inputEntry) <-chan *RawMessage {
-	out := make(chan *RawMessage)
-	go func() {
-		defer close(out)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-in.ch:
-				if !ok {
-					return
-				}
-				// Apply input matcher
-				if in.config.Matcher != nil {
-					m := &Message{Attributes: msg.Attributes}
-					if !in.config.Matcher.Match(m) {
-						e.errorHandler(m, ErrInputRejected)
-						continue
-					}
-				}
-				select {
-				case out <- msg:
-				case <-ctx.Done():
-					return
-				}
-			}
+// applyInputMatcher filters messages using the matcher, calling errorHandler for rejected messages.
+// Uses channel.Process to map each input to 0 or 1 outputs (filter with side effects).
+func (e *Engine) applyInputMatcher(in <-chan *RawMessage, matcher Matcher) <-chan *RawMessage {
+	if matcher == nil {
+		// No matcher - pass through all messages
+		return in
+	}
+
+	// Use channel.Process for filter-with-callback semantics
+	return channel.Process(in, func(msg *RawMessage) []*RawMessage {
+		m := &Message{Attributes: msg.Attributes}
+		if matcher.Match(m) {
+			return []*RawMessage{msg}
 		}
-	}()
-	return out
+		e.errorHandler(m, ErrInputRejected)
+		return nil // Filter out rejected messages
+	})
 }
 
 func (e *Engine) processMessage(ctx context.Context, raw *RawMessage) {

@@ -177,46 +177,53 @@ func main() {
 		log.Printf("PAYMENT OUTPUT: type=%s data=%s", raw.Attributes["type"], raw.Data)
 	})
 
-	// --- Simulate Input Messages ---
+	// --- Simulate Input Messages Using channel.FromSlice ---
+
+	// Create test order commands using channel.FromSlice
+	orderData, _ := json.Marshal(CreateOrder{
+		OrderID:    "ORD-001",
+		CustomerID: "CUST-123",
+		Amount:     99.99,
+	})
+	orderCommands := channel.FromSlice([]*message.RawMessage{{
+		Data: orderData,
+		Attributes: message.Attributes{
+			"type":   "create.order",
+			"source": "/api",
+			"id":     "msg-1",
+		},
+	}})
+
+	// Create test payment commands using channel.FromSlice
+	paymentData, _ := json.Marshal(ProcessPayment{
+		PaymentID: "PAY-001",
+		OrderID:   "ORD-001",
+		Amount:    99.99,
+	})
+	paymentCommands := channel.FromSlice([]*message.RawMessage{{
+		Data: paymentData,
+		Attributes: message.Attributes{
+			"type":   "process.payment",
+			"source": "/api",
+			"id":     "msg-2",
+		},
+	}})
+
+	// Use channel.Sink to forward test messages to engine inputs
+	// This demonstrates using Sink for message forwarding
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		<-channel.Sink(orderCommands, func(msg *message.RawMessage) {
+			orderInput <- msg
+		})
+		close(orderInput)
+	}()
 
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-
-		// Send order command
-		orderData, _ := json.Marshal(CreateOrder{
-			OrderID:    "ORD-001",
-			CustomerID: "CUST-123",
-			Amount:     99.99,
+		<-channel.Sink(paymentCommands, func(msg *message.RawMessage) {
+			paymentInput <- msg
 		})
-		orderInput <- &message.RawMessage{
-			Data: orderData,
-			Attributes: message.Attributes{
-				"type":   "create.order",
-				"source": "/api",
-				"id":     "msg-1",
-			},
-		}
-
-		// Send payment command
-		paymentData, _ := json.Marshal(ProcessPayment{
-			PaymentID: "PAY-001",
-			OrderID:   "ORD-001",
-			Amount:    99.99,
-		})
-		paymentInput <- &message.RawMessage{
-			Data: paymentData,
-			Attributes: message.Attributes{
-				"type":   "process.payment",
-				"source": "/api",
-				"id":     "msg-2",
-			},
-		}
-
-		// Give time for processing
-		time.Sleep(500 * time.Millisecond)
-
-		// Close inputs to trigger shutdown
-		close(orderInput)
 		close(paymentInput)
 	}()
 
@@ -232,6 +239,7 @@ func main() {
 	fmt.Println("  - Input matchers filtering by event type")
 	fmt.Println("  - Multiple output channels with type-based routing")
 	fmt.Println("  - Loopback for saga pattern (OrderCreated -> OrderCompleted)")
-	fmt.Println("  - channel.Sink for consuming outputs")
-	fmt.Println("  - channel.Merge for coordinating shutdown")
+	fmt.Println("  - channel.FromSlice for generating test messages")
+	fmt.Println("  - channel.Sink for consuming outputs and forwarding messages")
+	fmt.Println("  - channel.Merge and channel.Drain for coordinating shutdown")
 }
