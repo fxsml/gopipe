@@ -50,7 +50,7 @@ Handler is self-describing - knows its CE type and can create instances for unma
 type Handler interface {
     EventType() string       // CE type - for routing
     NewInput() any           // creates new instance for unmarshaling (e.g., *OrderCreated)
-    Handle(ctx context.Context, msg *RawMessage) ([]*RawMessage, error)
+    Handle(ctx context.Context, msg *Message[any]) ([]*Message[any], error)
 }
 ```
 
@@ -60,7 +60,7 @@ type Handler interface {
 // Generic constructor - explicit message creation
 // NamingStrategy derives EventType() from T
 func NewHandler[T any](
-    fn func(ctx context.Context, msg *Message[T]) ([]*RawMessage, error),
+    fn func(ctx context.Context, msg *Message[T]) ([]*Message[any], error),
     naming NamingStrategy,
 ) Handler
 
@@ -131,7 +131,7 @@ type HandlerConfig struct {
 ```go
 // In message/matcher.go
 type Matcher interface {
-    Match(msg *RawMessage) bool
+    Match(msg *Message[any]) bool
 }
 ```
 
@@ -220,14 +220,14 @@ type Engine struct {
 
 type EngineConfig struct {
     Codec        Codec
-    ErrorHandler func(msg *RawMessage, err error)
+    ErrorHandler func(msg *Message[any], err error)
 }
 
 func NewEngine(cfg EngineConfig) *Engine
 
 func (e *Engine) AddHandler(h Handler, cfg HandlerConfig) error  // uses handler.EventType() and handler.NewInput()
 func (e *Engine) AddInput(ch <-chan *RawMessage, cfg InputConfig) error
-func (e *Engine) AddOutput(cfg OutputConfig) <-chan *RawMessage
+func (e *Engine) AddOutput(cfg OutputConfig) <-chan *RawMessage  // returns RawMessage for broker
 func (e *Engine) AddLoopback(cfg LoopbackConfig) error
 
 func (e *Engine) Use(middleware Middleware)
@@ -247,10 +247,10 @@ engine := message.NewEngine(message.EngineConfig{
 
 // Create handler with NamingStrategy (derives EventType at construction)
 handler := message.NewHandler(
-    func(ctx context.Context, msg *Message[OrderCreated]) ([]*RawMessage, error) {
+    func(ctx context.Context, msg *Message[OrderCreated]) ([]*Message[any], error) {
         order := msg.Data
-        return []*RawMessage{
-            message.NewRaw(OrderShipped{OrderID: order.ID}, message.Attributes{
+        return []*Message[any]{
+            message.New[any](OrderShipped{OrderID: order.ID}, message.Attributes{
                 ID:          uuid.New().String(),
                 SpecVersion: "1.0",
                 Type:        "order.shipped",
@@ -364,7 +364,7 @@ Middleware wraps handler execution with pre/post-handler logic:
 ```go
 type Middleware func(next HandlerFunc) HandlerFunc
 
-type HandlerFunc func(ctx context.Context, msg *RawMessage) ([]*RawMessage, error)
+type HandlerFunc func(ctx context.Context, msg *Message[any]) ([]*Message[any], error)
 
 // Usage
 engine.Use(message.ValidateCE())         // validate required CE attributes
@@ -390,7 +390,7 @@ var (
 )
 
 // ErrorHandler signature
-type ErrorHandler func(msg *RawMessage, err error)
+type ErrorHandler func(msg *Message[any], err error)
 
 // Default: log via slog.Error
 ```
