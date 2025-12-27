@@ -1,0 +1,131 @@
+package message
+
+import (
+	"context"
+	"reflect"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// Handler processes messages of a specific CE type.
+type Handler interface {
+	// EventType returns the CE type this handler processes.
+	EventType() string
+
+	// NewInput creates a new instance for unmarshaling input data.
+	NewInput() any
+
+	// Handle processes a message and returns output messages.
+	Handle(ctx context.Context, msg *Message) ([]*Message, error)
+}
+
+// handler wraps a typed handler function.
+type handler[T any] struct {
+	eventType string
+	fn        func(ctx context.Context, msg *TypedMessage[T]) ([]*Message, error)
+}
+
+// NewHandler creates a handler from a typed function.
+// NamingStrategy derives EventType from T.
+func NewHandler[T any](
+	fn func(ctx context.Context, msg *TypedMessage[T]) ([]*Message, error),
+	naming NamingStrategy,
+) Handler {
+	var zero T
+	t := reflect.TypeOf(zero)
+	return &handler[T]{
+		eventType: naming.TypeName(t),
+		fn:        fn,
+	}
+}
+
+func (h *handler[T]) EventType() string {
+	return h.eventType
+}
+
+func (h *handler[T]) NewInput() any {
+	return new(T)
+}
+
+func (h *handler[T]) Handle(ctx context.Context, msg *Message) ([]*Message, error) {
+	typed := &TypedMessage[T]{
+		Attributes: msg.Attributes,
+		a:          msg.a,
+	}
+	if msg.Data != nil {
+		if v, ok := msg.Data.(*T); ok {
+			typed.Data = *v
+		} else if v, ok := msg.Data.(T); ok {
+			typed.Data = v
+		}
+	}
+	return h.fn(ctx, typed)
+}
+
+// commandHandler wraps a command function with convention-based output.
+type commandHandler[C, E any] struct {
+	eventType string
+	source    string
+	naming    NamingStrategy
+	fn        func(ctx context.Context, cmd C) ([]E, error)
+}
+
+// NewCommandHandler creates a handler that receives commands directly.
+// Config provides Source and NamingStrategy for deriving CE types.
+func NewCommandHandler[C, E any](
+	fn func(ctx context.Context, cmd C) ([]E, error),
+	cfg CommandHandlerConfig,
+) Handler {
+	var zeroC C
+	t := reflect.TypeOf(zeroC)
+	return &commandHandler[C, E]{
+		eventType: cfg.Naming.TypeName(t),
+		source:    cfg.Source,
+		naming:    cfg.Naming,
+		fn:        fn,
+	}
+}
+
+func (h *commandHandler[C, E]) EventType() string {
+	return h.eventType
+}
+
+func (h *commandHandler[C, E]) NewInput() any {
+	return new(C)
+}
+
+func (h *commandHandler[C, E]) Handle(ctx context.Context, msg *Message) ([]*Message, error) {
+	var cmd C
+	if msg.Data != nil {
+		if v, ok := msg.Data.(*C); ok {
+			cmd = *v
+		} else if v, ok := msg.Data.(C); ok {
+			cmd = v
+		}
+	}
+
+	// Store attributes in context for handler access
+	ctx = contextWithAttributes(ctx, msg.Attributes)
+
+	events, err := h.fn(ctx, cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	var zeroE E
+	eventType := h.naming.TypeName(reflect.TypeOf(zeroE))
+
+	outputs := make([]*Message, len(events))
+	for i, event := range events {
+		outputs[i] = New[any](event, Attributes{
+			"id":          uuid.New().String(),
+			"specversion": "1.0",
+			"type":        eventType,
+			"source":      h.source,
+			"time":        time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+
+	return outputs, nil
+}
