@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+
+	"github.com/fxsml/gopipe/channel"
 )
 
 // ErrorHandler processes engine errors.
@@ -102,70 +104,63 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 	e.started = true
 	e.mu.Unlock()
 
-	// Merge all inputs into a single channel
-	merged := make(chan *RawMessage)
-	var wg sync.WaitGroup
-
+	// Apply input matchers using channel.Filter and collect filtered channels
+	filteredInputs := make([]<-chan *RawMessage, 0, len(e.inputs))
 	for _, input := range e.inputs {
-		wg.Add(1)
-		go func(in inputEntry) {
-			defer wg.Done()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case msg, ok := <-in.ch:
-					if !ok {
-						return
-					}
-					// Apply input matcher
-					if in.config.Matcher != nil {
-						// Convert to Message for matcher
-						m := &Message{Attributes: msg.Attributes}
-						if !in.config.Matcher.Match(m) {
-							e.errorHandler(m, ErrInputRejected)
-							continue
-						}
-					}
-					select {
-					case merged <- msg:
-					case <-ctx.Done():
-						return
-					}
-				}
-			}
-		}(input)
+		filtered := e.filterInput(ctx, input)
+		filteredInputs = append(filteredInputs, filtered)
 	}
 
-	// Close merged when all inputs are done
+	// Merge all filtered inputs using channel.Merge
+	merged := channel.Merge(filteredInputs...)
+
+	// Process messages using channel.Sink
+	sinkDone := channel.Sink(merged, func(raw *RawMessage) {
+		e.processMessage(ctx, raw)
+	})
+
+	// Wait for sink to complete and close outputs
 	go func() {
-		wg.Wait()
-		close(merged)
+		<-sinkDone
+		for _, out := range e.outputs {
+			close(out.ch)
+		}
+		close(e.done)
 	}()
 
-	// Process messages
-	go func() {
-		defer close(e.done)
-		defer func() {
-			for _, out := range e.outputs {
-				close(out.ch)
-			}
-		}()
+	return e.done, nil
+}
 
+// filterInput applies input matcher and context cancellation to an input channel.
+func (e *Engine) filterInput(ctx context.Context, in inputEntry) <-chan *RawMessage {
+	out := make(chan *RawMessage)
+	go func() {
+		defer close(out)
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case raw, ok := <-merged:
+			case msg, ok := <-in.ch:
 				if !ok {
 					return
 				}
-				e.processMessage(ctx, raw)
+				// Apply input matcher
+				if in.config.Matcher != nil {
+					m := &Message{Attributes: msg.Attributes}
+					if !in.config.Matcher.Match(m) {
+						e.errorHandler(m, ErrInputRejected)
+						continue
+					}
+				}
+				select {
+				case out <- msg:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 	}()
-
-	return e.done, nil
+	return out
 }
 
 func (e *Engine) processMessage(ctx context.Context, raw *RawMessage) {

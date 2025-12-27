@@ -1,4 +1,7 @@
-// Example: Minimal HTTP server with CloudEvents and message engine.
+// Example: HTTP server with CloudEvents SDK and message engine.
+//
+// Demonstrates using the message engine to process CloudEvents received via HTTP.
+// Uses CloudEvents SDK for parsing and channel package helpers for cleaner code.
 //
 // Run: go run ./examples/message-engine
 //
@@ -16,10 +19,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 
+	"github.com/cloudevents/sdk-go/v2/binding"
+	cehttp "github.com/cloudevents/sdk-go/v2/protocol/http"
 	"github.com/fxsml/gopipe/message"
 )
 
@@ -71,22 +75,34 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// HTTP handler - parse CloudEvents from Ce-* headers
+	// HTTP handler - parse CloudEvents using SDK
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
+		// Use CloudEvents SDK to parse the request
+		msg := cehttp.NewMessageFromHttpRequest(r)
+		event, err := binding.ToEvent(r.Context(), msg)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("failed to parse CloudEvent: %v", err), http.StatusBadRequest)
 			return
 		}
 
+		// Convert to RawMessage
 		raw := &message.RawMessage{
-			Data: body,
+			Data: event.Data(),
 			Attributes: message.Attributes{
-				"id":          r.Header.Get("Ce-Id"),
-				"type":        r.Header.Get("Ce-Type"),
-				"source":      r.Header.Get("Ce-Source"),
-				"specversion": r.Header.Get("Ce-Specversion"),
+				"id":              event.ID(),
+				"type":            event.Type(),
+				"source":          event.Source(),
+				"specversion":     event.SpecVersion(),
+				"datacontenttype": event.DataContentType(),
 			},
+		}
+
+		// Add optional attributes
+		if !event.Time().IsZero() {
+			raw.Attributes["time"] = event.Time().String()
+		}
+		if event.Subject() != "" {
+			raw.Attributes["subject"] = event.Subject()
 		}
 
 		input <- raw
@@ -116,6 +132,7 @@ func main() {
 		}
 	}()
 
+	// Wait for engine to complete
 	<-done
 	fmt.Println("Engine stopped")
 }
