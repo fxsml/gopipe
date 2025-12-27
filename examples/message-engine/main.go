@@ -1,6 +1,6 @@
 // Example: Minimal HTTP server with CloudEvents and message engine.
 //
-// Run: go run ./example
+// Run: go run ./examples/message-engine
 //
 // Test with:
 //
@@ -16,10 +16,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 
-	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/fxsml/gopipe/message"
 )
 
@@ -71,30 +71,26 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// HTTP handler using CloudEvents SDK
+	// HTTP handler - parse CloudEvents from Ce-* headers
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Parse CloudEvent from HTTP request
-		event, err := cloudevents.NewEventFromHTTPRequest(r)
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		// Convert to RawMessage
 		raw := &message.RawMessage{
-			Data: event.Data(),
+			Data: body,
 			Attributes: message.Attributes{
-				"id":          event.ID(),
-				"type":        event.Type(),
-				"source":      event.Source(),
-				"specversion": event.SpecVersion(),
+				"id":          r.Header.Get("Ce-Id"),
+				"type":        r.Header.Get("Ce-Type"),
+				"source":      r.Header.Get("Ce-Source"),
+				"specversion": r.Header.Get("Ce-Specversion"),
 			},
 		}
 
-		// Send to engine
 		input <- raw
 
-		// Wait for output
 		select {
 		case out := <-output:
 			w.Header().Set("Content-Type", "application/json")
@@ -120,7 +116,6 @@ func main() {
 		}
 	}()
 
-	// Wait for engine to complete
 	<-done
 	fmt.Println("Engine stopped")
 }
