@@ -314,3 +314,45 @@ func TestWriteTo(t *testing.T) {
 		}
 	})
 }
+
+func TestParseRawMessage(t *testing.T) {
+	t.Run("parses CloudEvents JSON", func(t *testing.T) {
+		input := `{"specversion":"1.0","type":"order.created","source":"/test","id":"123","data":{"order_id":"ABC"}}`
+		msg, err := ParseRawMessage(strings.NewReader(input))
+		if err != nil {
+			t.Fatalf("ParseRawMessage failed: %v", err)
+		}
+
+		if msg.Attributes["type"] != "order.created" {
+			t.Errorf("expected type order.created, got %v", msg.Attributes["type"])
+		}
+		if msg.Attributes["specversion"] != "1.0" {
+			t.Errorf("expected specversion 1.0, got %v", msg.Attributes["specversion"])
+		}
+		if string(msg.Data) != `{"order_id":"ABC"}` {
+			t.Errorf("expected data {\"order_id\":\"ABC\"}, got %s", msg.Data)
+		}
+	})
+
+	t.Run("roundtrip with WriteTo", func(t *testing.T) {
+		original := New([]byte(`{"id":456}`), Attributes{
+			"type":   "test.event",
+			"source": "/roundtrip",
+		})
+
+		var buf bytes.Buffer
+		original.WriteTo(&buf)
+
+		parsed, err := ParseRawMessage(&buf)
+		if err != nil {
+			t.Fatalf("ParseRawMessage failed: %v", err)
+		}
+
+		if parsed.Attributes["type"] != "test.event" {
+			t.Errorf("expected type test.event, got %v", parsed.Attributes["type"])
+		}
+		if string(parsed.Data) != `{"id":456}` {
+			t.Errorf("expected data {\"id\":456}, got %s", parsed.Data)
+		}
+	})
+}

@@ -20,9 +20,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 
@@ -79,37 +77,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// HTTP handler - parse CloudEvents structured JSON
+	// HTTP handler - parse and respond with CloudEvents structured JSON
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
+		msg, err := message.ParseRawMessage(r.Body)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to read body: %v", err), http.StatusBadRequest)
-			return
-		}
-
-		// Parse CloudEvents structured JSON
-		var ce struct {
-			Data json.RawMessage `json:"data"`
-			message.Attributes
-		}
-		if err := json.Unmarshal(body, &ce); err != nil {
 			http.Error(w, fmt.Sprintf("failed to parse CloudEvent: %v", err), http.StatusBadRequest)
 			return
 		}
 
-		// Extract attributes from the full JSON (excluding "data")
-		var attrs message.Attributes
-		if err := json.Unmarshal(body, &attrs); err != nil {
-			http.Error(w, fmt.Sprintf("failed to parse attributes: %v", err), http.StatusBadRequest)
-			return
-		}
-		delete(attrs, "data")
-
-		// Send through the channel pipeline
-		httpRequests <- &message.RawMessage{
-			Data:       ce.Data,
-			Attributes: attrs,
-		}
+		httpRequests <- msg
 
 		select {
 		case out := <-output:

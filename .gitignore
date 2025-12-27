@@ -37,11 +37,11 @@ go.work.sum
 tmp/
 
 # Example binaries
-advanced-channel-operations
-basic-channel-operations
-batch-pipe
-generator
-merger
-message-engine
-message-engine-advanced
-transform-pipe
+/advanced-channel-operations
+/basic-channel-operations
+/batch-pipe
+/generator
+/merger
+/message-engine
+/message-engine-advanced
+/transform-pipe
