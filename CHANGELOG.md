@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **pipe**: `Distributor` for one-to-many message routing with matcher-based output selection
+  - First-match-wins routing with optional matcher functions (nil matches all)
+  - Dynamic `AddOutput()` during runtime (concurrent-safe)
+  - `NoMatchHandler` callback for unmatched messages
+  - Graceful shutdown with configurable timeout
+  - Consistent API with `Merger` (inverse operation: one input → many outputs)
+
 ## [0.11.0] - Upcoming
 
 ### Breaking Changes
