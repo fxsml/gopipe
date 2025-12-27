@@ -10,7 +10,7 @@
 | Component | Responsibility |
 |-----------|----------------|
 | **Engine** | Orchestrates flow, routing, lifecycle |
-| **Codec** | Pure serialization (Marshal/Unmarshal/ContentType) |
+| **Marshaler** | Pure serialization (Marshal/Unmarshal/DataContentType) |
 | **Handler** | Self-describing (EventType, NewInput), business logic |
 | **NamingStrategy** | Standalone utility, used by handler constructors |
 | **Input/Output** | Named channels (external lifecycle) |
@@ -130,16 +130,16 @@ Used by match.Types() and match.Sources():
 1. First output with matching Matcher wins
 2. Nil Matcher (catch-all) should be registered last
 
-### Codec - Pure Serialization
+### Marshaler - Pure Serialization
 
-Codec handles pure serialization. No TypeRegistry needed - Handler.NewInput() provides instance creation.
+Marshaler handles pure serialization. No TypeRegistry needed - Handler.NewInput() provides instance creation.
 
 ```go
-// Codec - pure serialization, no type awareness
-type Codec interface {
+// Marshaler - pure serialization, no type awareness
+type Marshaler interface {
     Marshal(v any) ([]byte, error)
     Unmarshal(data []byte, v any) error
-    ContentType() string  // e.g., "application/json"
+    DataContentType() string  // CE attribute, e.g., "application/json"
 }
 
 // NamingStrategy - standalone utility
@@ -258,17 +258,17 @@ engine.Use(message.ValidateCE())  // validates required CE attributes
 
 ### DataContentType
 
-Engine sets `DataContentType` at marshal boundary (from Codec.ContentType()):
+Engine sets `DataContentType` at marshal boundary (from Marshaler.DataContentType()):
 
 ```
 AddInput → Unmarshal → Handler (typed) → Marshal (sets DataContentType) → Output
-       (Codec+Registry)                    (Codec)
+     (Marshaler+Registry)                (Marshaler)
                 ↑                                        │
                 └─────── loopback (no marshal) ──────────┘
 ```
 
-- Unmarshal happens directly after AddInput (uses Codec + TypeRegistry)
-- Marshal happens directly before Output (uses Codec)
+- Unmarshal happens directly after AddInput (uses Marshaler + TypeRegistry)
+- Marshal happens directly before Output (uses Marshaler)
 - Loopback bypasses marshal/unmarshal (already typed messages)
 - Handler deals with typed data, not bytes
 
@@ -295,7 +295,7 @@ Response: handler → B.post → A.post
 
 | Attribute | Owner |
 |-----------|-------|
-| `DataContentType` | Engine (from Codec.ContentType()) |
+| `DataContentType` | Engine (from Marshaler.DataContentType()) |
 | `Type` | Handler (via NamingStrategy at construction) |
 | `Source` | Handler or CommandHandlerConfig |
 | `Subject` | Handler (explicit) |
@@ -408,7 +408,7 @@ engine.AddSubscriber("orders", subscriber)  // ❌ Engine subscribes internally
 ```
 **Why rejected:** Doesn't handle leader election, dynamic scaling. External concern.
 
-### Marshaler with TypeName and Registry
+### Combined Marshaler with TypeName and Registry
 ```go
 type Marshaler interface {
     Register(goType reflect.Type)        // ❌
@@ -417,8 +417,8 @@ type Marshaler interface {
     Unmarshal(data []byte, ceType string) (any, error)
 }
 ```
-**Why rejected:** Marshaler was doing too much. Split into:
-- Codec (pure serialization)
+**Why rejected:** Combined interface was doing too much. Split into:
+- Marshaler (pure serialization)
 - NamingStrategy (utility for handler constructors)
 - Handler.NewInput() (provides instances for unmarshaling)
 
@@ -469,8 +469,8 @@ Core components are well-defined:
 | Component | Status | Notes |
 |-----------|--------|-------|
 | NamingStrategy | ✅ Ready | Standalone utility, KebabNaming, SnakeNaming |
-| Codec | ✅ Ready | Pure serialization interface |
-| JSONCodec | ✅ Ready | JSON implementation |
+| Marshaler | ✅ Ready | Pure serialization interface |
+| JSONMarshaler | ✅ Ready | JSON implementation |
 | Matcher | ✅ Ready | Interface in message/, implementations in match/ |
 | match.All/Any | ✅ Ready | Combinators for AND/OR |
 | match.Sources | ✅ Ready | CE source pattern matching |
@@ -489,8 +489,8 @@ Core components are well-defined:
 ## Implementation Order
 
 1. `message/naming.go` - NamingStrategy interface, KebabNaming, SnakeNaming
-2. `message/codec.go` - Codec interface
-3. `message/json_codec.go` - JSONCodec implementation
+2. `message/marshaler.go` - Marshaler interface
+3. `message/json_marshaler.go` - JSONMarshaler implementation
 4. `message/matcher.go` - Matcher interface
 5. `message/match/like.go` - SQL LIKE pattern matching
 6. `message/match/types.go` - Types matcher

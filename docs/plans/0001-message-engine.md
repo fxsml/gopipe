@@ -14,11 +14,11 @@ Implement a Message Engine that orchestrates message flow with marshaling at bou
 1. **Reuse `pipe` and `channel` packages** - Build on existing foundation
 2. **Engine implements `Start()` signature** - Orchestration type per ADR 0018
 3. **Engine doesn't own I/O lifecycle** - Accepts channels, external code manages subscription/publishing
-4. **Handler creates complete messages** - Engine only sets DataContentType from Codec
+4. **Handler creates complete messages** - Engine only sets DataContentType from Marshaler
 5. **Handler is self-describing** - `EventType()` for routing, `NewInput()` for unmarshaling
 6. **Two handler types** - Explicit (`NewHandler`) and convention-based (`NewCommandHandler`)
 7. **Pattern-based output routing** - Match patterns on CE type, not named routing
-8. **Clean separation** - Codec (serialization), NamingStrategy (utility), Handler (self-contained)
+8. **Clean separation** - Marshaler (serialization), NamingStrategy (utility), Handler (self-contained)
 
 ## Architecture
 
@@ -27,10 +27,10 @@ Implement a Message Engine that orchestrates message flow with marshaling at bou
 │                         message.Engine                           │
 │                                                                  │
 │  AddInput(ch, cfg) ──> unmarshal ──┐                             │
-│         (Codec + handler.NewInput) ├──> Merger ──> route ──> handlers
+│     (Marshaler + handler.NewInput) ├──> Merger ──> route ──> handlers
 │             AddLoopback ───────────┘   (by handler.EventType())  │
 │                  ↑                                           ↓   │
-│                  │                                  marshal (Codec)
+│                  │                              marshal (Marshaler)
 │                  │                                           │   │
 │                  │       ┌─── Matcher: "order.%" ────────────┤   │
 │  AddOutput(cfg) ─┼───────┼─── Matcher: "payment.%" ──────────┤   │
@@ -183,14 +183,14 @@ paymentsOut := engine.AddOutput(message.OutputConfig{
 defaultOut := engine.AddOutput(message.OutputConfig{})  // catch-all
 ```
 
-### Codec and NamingStrategy
+### Marshaler and NamingStrategy
 
 ```go
-// Codec - pure serialization
-type Codec interface {
+// Marshaler - pure serialization
+type Marshaler interface {
     Marshal(v any) ([]byte, error)
     Unmarshal(data []byte, v any) error
-    ContentType() string  // e.g., "application/json"
+    DataContentType() string  // CE attribute, e.g., "application/json"
 }
 
 // NamingStrategy - standalone utility for deriving CE types
@@ -208,7 +208,7 @@ Note: No TypeRegistry needed - Handler.NewInput() provides instance creation.
 
 ```go
 type Engine struct {
-    codec        Codec
+    marshaler    Marshaler
     handlers     map[string]Handler  // CE type → handler
     inputs       []inputEntry
     outputs      []outputEntry
@@ -219,7 +219,7 @@ type Engine struct {
 }
 
 type EngineConfig struct {
-    Codec        Codec
+    Marshaler    Marshaler
     ErrorHandler func(msg *Message[any], err error)
 }
 
@@ -240,9 +240,9 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error)
 ### Explicit Handler (NewHandler)
 
 ```go
-// Create engine with Codec
+// Create engine with Marshaler
 engine := message.NewEngine(message.EngineConfig{
-    Codec: message.NewJSONCodec(),
+    Marshaler: message.NewJSONMarshaler(),
 })
 
 // Create handler with NamingStrategy (derives EventType at construction)
@@ -350,7 +350,7 @@ priorityOut := engine.AddOutput(message.OutputConfig{
 
 | Attribute | Owner |
 |-----------|-------|
-| `DataContentType` | Engine (from Codec.ContentType() at marshal boundary) |
+| `DataContentType` | Engine (from Marshaler.DataContentType() at marshal boundary) |
 | `Type` | Handler (via NamingStrategy at construction) |
 | `Source` | Handler or CommandHandlerConfig |
 | `Subject` | Handler (explicit) |
@@ -415,8 +415,8 @@ engine.AddLoopback(message.LoopbackConfig{
 
 ### Phase 1: Core Types (depends on Plan 0002)
 1. `message/naming.go` - NamingStrategy interface, KebabNaming, SnakeNaming
-2. `message/codec.go` - Codec interface
-3. `message/json_codec.go` - JSONCodec implementation
+2. `message/marshaler.go` - Marshaler interface
+3. `message/json_marshaler.go` - JSONMarshaler implementation
 
 ### Phase 2: Matcher System
 4. `message/matcher.go` - Matcher interface
@@ -440,8 +440,8 @@ engine.AddLoopback(message.LoopbackConfig{
 | File | Priority | Notes |
 |------|----------|-------|
 | `message/naming.go` | MVP | NamingStrategy interface and implementations |
-| `message/codec.go` | MVP | Codec interface |
-| `message/json_codec.go` | MVP | JSONCodec implementation |
+| `message/marshaler.go` | MVP | Marshaler interface |
+| `message/json_marshaler.go` | MVP | JSONMarshaler implementation |
 | `message/matcher.go` | MVP | Matcher interface |
 | `message/match/like.go` | MVP | SQL LIKE pattern matching |
 | `message/match/types.go` | MVP | Types matcher |
@@ -468,7 +468,7 @@ engine.AddLoopback(message.LoopbackConfig{
 10. match.Types("order.%") matches order.created, order.shipped
 11. match.Types("%.created") matches order.created, user.created
 12. AddLoopback routes matching output back to handlers
-13. Engine sets DataContentType from Codec.ContentType()
+13. Engine sets DataContentType from Marshaler.DataContentType()
 14. ValidateCE middleware rejects invalid messages (optional)
 15. WithCorrelationID propagates correlation ID (optional)
 16. ErrorHandler receives ErrInputRejected, ErrNoHandler, ErrNoMatchingOutput
@@ -489,7 +489,7 @@ engine.AddLoopback(message.LoopbackConfig{
 - [ ] NewHandler takes NamingStrategy, derives EventType at construction
 - [ ] NewCommandHandler takes config with Source + Naming, receives cmd directly
 - [ ] AttributesFromContext for accessing message attributes in handlers
-- [ ] Codec interface with Marshal, Unmarshal, ContentType
+- [ ] Marshaler interface with Marshal, Unmarshal, DataContentType
 - [ ] NamingStrategy with KebabNaming, SnakeNaming
 - [ ] Engine.Start() orchestrates flow
 - [ ] AddInput(ch, cfg) with optional Matcher for filtering

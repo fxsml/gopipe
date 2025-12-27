@@ -52,8 +52,8 @@ The message package grew too complex too early. Current state includes:
    - Pattern-based output routing via Matcher (SQL LIKE syntax)
    - Handler creates complete messages, engine only sets DataContentType
 
-4. **Codec, NamingStrategy, Handler (separate concerns):**
-   - `Codec`: Pure serialization - `Marshal(v) []byte`, `Unmarshal(data, v)`, `ContentType()`
+4. **Marshaler, NamingStrategy, Handler (separate concerns):**
+   - `Marshaler`: Pure serialization - `Marshal(v) []byte`, `Unmarshal(data, v)`, `DataContentType()`
    - `NamingStrategy`: Standalone utility - `TypeName(goType) string`
    - Handler is self-describing: `EventType()`, `NewInput()`, `Handle()`
    - Handler constructors take NamingStrategy to derive EventType at construction
@@ -89,9 +89,9 @@ import (
     ce "github.com/fxsml/gopipe/message/cloudevents"
 )
 
-// Create engine with Codec
+// Create engine with Marshaler
 engine := message.NewEngine(message.EngineConfig{
-    Codec: message.NewJSONCodec(),
+    Marshaler: message.NewJSONMarshaler(),
 })
 
 // Add handler (convention-based) - receives command directly

@@ -1,4 +1,4 @@
-# ADR 0021: Codec and NamingStrategy
+# ADR 0021: Marshaler and NamingStrategy
 
 **Date:** 2025-12-22
 **Updated:** 2025-12-27
@@ -14,17 +14,17 @@ Messages cross system boundaries as `[]byte`, but handlers work with typed Go da
 
 Split into two separate components with clear responsibilities:
 
-### Codec - Pure Serialization
+### Marshaler - Pure Serialization
 
 ```go
-type Codec interface {
+type Marshaler interface {
     Marshal(v any) ([]byte, error)
     Unmarshal(data []byte, v any) error
-    ContentType() string  // e.g., "application/json"
+    DataContentType() string  // CE attribute, e.g., "application/json"
 }
 ```
 
-Codec does one thing: convert between Go values and bytes. No type registry, no naming.
+Marshaler does one thing: convert between Go values and bytes. No type registry, no naming.
 
 ### NamingStrategy - Standalone Utility
 
@@ -65,7 +65,7 @@ handler := message.NewHandler(processOrder, message.KebabNaming)
 
 ```go
 engine := message.NewEngine(message.EngineConfig{
-    Codec: message.NewJSONCodec(),
+    Marshaler: message.NewJSONMarshaler(),
 })
 
 // Engine routes by handler.EventType(), uses handler.NewInput() for unmarshaling
@@ -81,14 +81,14 @@ handler := engine.handlers[ceType]
 instance := handler.NewInput()  // returns *OrderCreated
 
 // 2. Unmarshal into instance
-codec.Unmarshal(data, instance)
+marshaler.Unmarshal(data, instance)
 ```
 
 ## Consequences
 
 **Benefits:**
 - Clean separation of concerns
-- Codec is simple and testable
+- Marshaler is simple and testable
 - No public TypeRegistry - Handler.NewInput() handles instance creation
 - NamingStrategy encapsulated in handler constructors
 - Handler is self-describing (knows its own CE type and how to create instances)
@@ -97,7 +97,7 @@ codec.Unmarshal(data, instance)
 - Handler interface has 3 methods instead of 1
 - Each handler must implement NewInput()
 
-## Rejected: Combined Marshaler
+## Rejected: Combined Interface
 
 ```go
 type Marshaler interface {
@@ -108,7 +108,7 @@ type Marshaler interface {
 }
 ```
 
-**Why rejected:** Marshaler was doing too much - serialization, type registry, and naming all in one interface. Splitting into three focused components is cleaner and more idiomatic.
+**Why rejected:** Combined interface was doing too much - serialization, type registry, and naming all in one. Splitting into three focused components is cleaner and more idiomatic.
 
 ## Links
 
