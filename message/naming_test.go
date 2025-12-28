@@ -9,6 +9,8 @@ type OrderCreated struct{}
 type UserSignedUp struct{}
 type HTTPRequest struct{}
 type ID struct{}
+type IOBroker struct{}
+type XMLHTTPRequest struct{}
 
 func TestKebabNaming(t *testing.T) {
 	tests := []struct {
@@ -17,8 +19,10 @@ func TestKebabNaming(t *testing.T) {
 	}{
 		{OrderCreated{}, "order.created"},
 		{UserSignedUp{}, "user.signed.up"},
-		{HTTPRequest{}, "h.t.t.p.request"},
-		{ID{}, "i.d"},
+		{HTTPRequest{}, "http.request"},
+		{ID{}, "id"},
+		{IOBroker{}, "io.broker"},
+		{XMLHTTPRequest{}, "xmlhttp.request"},
 	}
 
 	for _, tt := range tests {
@@ -38,8 +42,10 @@ func TestSnakeNaming(t *testing.T) {
 	}{
 		{OrderCreated{}, "order_created"},
 		{UserSignedUp{}, "user_signed_up"},
-		{HTTPRequest{}, "h_t_t_p_request"},
-		{ID{}, "i_d"},
+		{HTTPRequest{}, "http_request"},
+		{ID{}, "id"},
+		{IOBroker{}, "io_broker"},
+		{XMLHTTPRequest{}, "xmlhttp_request"},
 	}
 
 	for _, tt := range tests {
@@ -60,9 +66,15 @@ func TestSplitPascalCase(t *testing.T) {
 	}{
 		{"", ".", ""},
 		{"A", ".", "a"},
-		{"AB", ".", "a.b"},
+		{"AB", ".", "ab"},
+		{"ABC", ".", "abc"},
+		{"ABCdef", ".", "ab.cdef"},
 		{"OrderCreated", ".", "order.created"},
 		{"OrderCreated", "_", "order_created"},
+		{"HTTPRequest", ".", "http.request"},
+		{"IOBroker", ".", "io.broker"},
+		{"ID", ".", "id"},
+		{"XMLHTTPRequest", ".", "xmlhttp.request"},
 	}
 
 	for _, tt := range tests {

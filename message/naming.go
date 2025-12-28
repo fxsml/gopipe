@@ -32,18 +32,35 @@ func (snakeNaming) TypeName(t reflect.Type) string {
 }
 
 // splitPascalCase splits a PascalCase string into lowercase words joined by sep.
+// Consecutive uppercase letters are treated as acronyms:
+//   - HTTPRequest → http.request
+//   - IOBroker → io.broker
+//   - ID → id
+//   - OrderCreated → order.created
 func splitPascalCase(s string, sep string) string {
 	if s == "" {
 		return ""
 	}
 
+	runes := []rune(s)
 	var words []string
 	var current strings.Builder
 
-	for i, r := range s {
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+
 		if i > 0 && unicode.IsUpper(r) {
-			words = append(words, strings.ToLower(current.String()))
-			current.Reset()
+			// Check if this is the start of a new word or part of an acronym
+			prevUpper := unicode.IsUpper(runes[i-1])
+			nextLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+
+			// Start new word if:
+			// 1. Previous was lowercase (normal word boundary: orderC → order, C)
+			// 2. Previous was uppercase AND next is lowercase (acronym end: HTTPr → HTTP, r)
+			if !prevUpper || (prevUpper && nextLower) {
+				words = append(words, strings.ToLower(current.String()))
+				current.Reset()
+			}
 		}
 		current.WriteRune(r)
 	}
