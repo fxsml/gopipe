@@ -184,6 +184,130 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 
 ---
 
+### Issue 6: Loopbacks create N goroutines instead of using channel.Merge
+
+**Location:** `Start()` lines 328-345
+
+**Current:**
+```go
+for _, lb := range e.loopbacks {
+    loopbackCh, _ := e.distributor.AddOutput(lbMatcher)
+    go func(ch <-chan *Message) {
+        for msg := range ch {
+            loopbackIn <- msg  // N goroutines all writing to same channel
+        }
+    }(loopbackCh)
+}
+```
+
+**Problem:** N loopbacks = N distributor outputs + N forwarding goroutines, all feeding ONE loopbackIn channel. This is just merging!
+
+**Fix using channel.Merge:**
+```go
+var loopbackChannels []<-chan *Message
+for _, lb := range e.loopbacks {
+    ch, _ := e.distributor.AddOutput(lb.config.Matcher.Match)
+    loopbackChannels = append(loopbackChannels, ch)
+}
+if len(loopbackChannels) > 0 {
+    merged := channel.Merge(loopbackChannels...)
+    e.typedMerger.AddInput(merged)
+}
+```
+
+**Even simpler - ONE distributor output:**
+Since all loopbacks feed into the same place, and distributor is first-match-wins:
+```go
+if len(e.loopbacks) > 0 {
+    // Combine all loopback matchers with Any
+    matchers := make([]Matcher, len(e.loopbacks))
+    for i, lb := range e.loopbacks {
+        matchers[i] = lb.config.Matcher
+    }
+    combined := match.Any(matchers...)
+
+    loopbackCh, _ := e.distributor.AddOutput(combined.Match)
+    e.typedMerger.AddInput(loopbackCh)  // Direct! No forwarding!
+}
+```
+
+---
+
+### Issue 7: Raw distributor matcher creates garbage on every check
+
+**Location:** `Start()` line 389-391, `AddRawOutput()` line 200-202
+
+**Current:**
+```go
+rawCh, _ := e.rawDistributor.AddOutput(func(msg *RawMessage) bool {
+    m := &Message{Attributes: msg.Attributes}  // Allocates on EVERY match check
+    return outMatcher == nil || outMatcher.Match(m)
+})
+```
+
+**Problem:** Creates temporary `*Message` for every message, every matcher check.
+
+**Fix options:**
+
+1. **Make Matcher work with Attributes directly:**
+   ```go
+   type Matcher interface {
+       Match(msg *Message) bool
+       MatchAttrs(attrs Attributes) bool  // Add this
+   }
+   ```
+
+2. **Create AttributesMatcher type:**
+   ```go
+   type AttributesMatcher interface {
+       MatchAttrs(attrs Attributes) bool
+   }
+   ```
+
+3. **Cache the wrapper (if same attributes)** - complex, not recommended
+
+---
+
+### Issue 8: Handler lookup happens twice for raw messages
+
+**Location:** `createUnmarshalPipe()` line 469, `createHandlerPipe()` line 500
+
+**Current:**
+```go
+// In unmarshal:
+entry, ok := e.handlers[ceType]  // Lookup 1
+instance := entry.handler.NewInput()
+
+// In handler pipe (same message, later):
+entry, ok := e.handlers[ceType]  // Lookup 2 (redundant)
+entry.handler.Handle(ctx, msg)
+```
+
+**Fix:** Store handler reference in message context or a field:
+```go
+// In unmarshal:
+entry, ok := e.handlers[ceType]
+msg.handler = entry.handler  // Cache it
+
+// In handler pipe:
+msg.handler.Handle(ctx, msg)  // No lookup
+```
+
+Minor optimization - only matters for high throughput.
+
+---
+
+### Issue 9: pipe.Apply could compose pipelines
+
+**Available but unused:**
+```go
+pipeline := pipe.Apply(pipeA, pipeB)  // Composes two pipes
+```
+
+**Current architecture prevents this** because merger sits between unmarshal and handler. But with simplified architecture, could potentially use.
+
+---
+
 ## Summary Table
 
 | Current | Simplified | Reason |
@@ -195,6 +319,9 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 | Store output/input configs | Direct calls to components | No storage needed |
 | Forwarding goroutines | None | Return component channels directly |
 | Before/after Start() logic | None | Always same path |
+| N loopback outputs + goroutines | 1 output with match.Any | All feed same merger |
+| `&Message{Attributes}` per match | MatchAttrs(Attributes) | Avoid allocation |
+| Double handler lookup | Cache handler in message | Minor optimization |
 
 ---
 
@@ -206,13 +333,19 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 3. Remove `typedOutputs`, `rawOutputs`, `typedInputs`, `rawInputs` storage
 4. Simplify `Start()` to just wire and start components
 
-### Phase 2: Simplify Primitives
-5. Replace `channel.Process` with `channel.Filter` for matchers
-6. Replace `pipe.ProcessPipe` with `channel.Process` for marshal/unmarshal
+### Phase 2: Simplify Loopbacks
+5. Combine loopback matchers with `match.Any`
+6. Single distributor output for all loopbacks
+7. Direct feed to typedMerger (no forwarding)
 
-### Phase 3: Configuration
-7. Add BufferSize to EngineConfig
-8. Create helper for raw error handling
+### Phase 3: Simplify Primitives
+8. Replace `channel.Process` with `channel.Filter` for matchers
+9. Replace `pipe.ProcessPipe` with `channel.Process` for marshal/unmarshal
+
+### Phase 4: Configuration & Cleanup
+10. Add BufferSize to EngineConfig
+11. Create helper for raw error handling
+12. Add `MatchAttrs(Attributes)` to Matcher interface (optional)
 
 ---
 
@@ -228,7 +361,8 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 
 - [ ] Distributor and mergers created in `NewEngine()`
 - [ ] `AddOutput()`/`AddInput()` call components directly, no storage
-- [ ] No forwarding goroutines
+- [ ] No forwarding goroutines for outputs
+- [ ] Loopbacks use single distributor output with combined matcher
 - [ ] `channel.Filter` used for input matchers
 - [ ] `channel.Process` used for marshal/unmarshal
 - [ ] Buffer sizes configurable via EngineConfig
