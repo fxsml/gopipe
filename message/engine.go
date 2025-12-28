@@ -200,11 +200,23 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 	e.ctx = ctx
 	e.mu.Unlock()
 
-	// 1. Create loopback channel for feedback
-	var loopbackIn chan *Message
+	// 1. Set up loopback: combine matchers with OR, single output, direct feed to merger
 	if len(e.loopbacks) > 0 {
-		loopbackIn = make(chan *Message, 100)
-		e.typedMerger.AddInput(loopbackIn)
+		matchers := make([]Matcher, len(e.loopbacks))
+		for i, lb := range e.loopbacks {
+			matchers[i] = lb.config.Matcher
+		}
+
+		loopbackCh, _ := e.distributor.AddOutput(func(msg *Message) bool {
+			// Any matcher matches (OR logic)
+			for _, m := range matchers {
+				if m != nil && m.Match(msg) {
+					return true
+				}
+			}
+			return false
+		})
+		e.typedMerger.AddInput(loopbackCh)
 	}
 
 	// 2. Set up raw input path if any raw inputs were added
@@ -237,26 +249,7 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		return nil, err
 	}
 
-	// 5. Add loopback outputs first (first-match-wins)
-	for _, lb := range e.loopbacks {
-		lbMatcher := lb.config.Matcher
-		loopbackCh, _ := e.distributor.AddOutput(func(msg *Message) bool {
-			return lbMatcher != nil && lbMatcher.Match(msg)
-		})
-
-		// Feed loopback messages back to typed merger
-		go func(ch <-chan *Message) {
-			for msg := range ch {
-				select {
-				case loopbackIn <- msg:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}(loopbackCh)
-	}
-
-	// 6. Add typed outputs (forwarding needed due to ordering constraints)
+	// 5. Add typed outputs (forwarding needed due to ordering constraints)
 	for _, output := range e.typedOutputs {
 		outMatcher := output.config.Matcher
 		msgCh, _ := e.distributor.AddOutput(func(msg *Message) bool {
@@ -276,7 +269,7 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		}(output.ch, msgCh)
 	}
 
-	// 7. Set up raw output infrastructure (single marshal pipe → raw distributor)
+	// 6. Set up raw output infrastructure (single marshal pipe → raw distributor)
 	if len(e.rawOutputs) > 0 {
 		// Add catch-all for raw-bound messages (after loopbacks and typed outputs)
 		rawBound, _ := e.distributor.AddOutput(func(msg *Message) bool {
@@ -320,20 +313,17 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		e.rawDistributor.Distribute(ctx, marshaled)
 	}
 
-	// 8. Start distributor
+	// 7. Start distributor
 	distributeDone, err := e.distributor.Distribute(ctx, handled)
 	if err != nil {
 		return nil, err
 	}
 
-	// 9. Wait for completion (either distributor finishes or context cancelled)
+	// 8. Wait for completion (either distributor finishes or context cancelled)
 	go func() {
 		select {
 		case <-distributeDone:
 		case <-ctx.Done():
-		}
-		if loopbackIn != nil {
-			close(loopbackIn)
 		}
 		close(e.done)
 	}()
