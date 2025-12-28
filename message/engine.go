@@ -34,8 +34,6 @@ type Engine struct {
 	typedOutputs []typedOutputEntry
 	// Raw outputs (from Distributor → Marshal → RawDistributor)
 	rawOutputs []rawOutputEntry
-	// Loopbacks (from Distributor back to TypedMerger)
-	loopbacks []loopbackEntry
 
 	mu             sync.Mutex
 	started        bool
@@ -56,10 +54,6 @@ type typedOutputEntry struct {
 type rawOutputEntry struct {
 	ch     chan *RawMessage
 	config RawOutputConfig
-}
-
-type loopbackEntry struct {
-	config LoopbackConfig
 }
 
 // NewEngine creates a new message engine.
@@ -187,11 +181,11 @@ func (e *Engine) AddRawOutput(cfg RawOutputConfig) <-chan *RawMessage {
 
 // AddLoopback registers internal message re-processing.
 // Loopback messages are fed back to the TypedMerger without marshal/unmarshal.
+// Ordering follows call order: call AddLoopback before AddOutput if loopback
+// should have priority when matchers overlap.
 func (e *Engine) AddLoopback(cfg LoopbackConfig) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.loopbacks = append(e.loopbacks, loopbackEntry{config: cfg})
-	return nil
+	ch := e.AddOutput(OutputConfig{Matcher: cfg.Matcher})
+	return e.AddInput(ch, InputConfig{})
 }
 
 // Start begins processing messages. Returns a done channel.
@@ -205,26 +199,7 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 	e.ctx = ctx
 	e.mu.Unlock()
 
-	// 1. Set up loopback: combine matchers with OR, single output, direct feed to merger
-	if len(e.loopbacks) > 0 {
-		matchers := make([]Matcher, len(e.loopbacks))
-		for i, lb := range e.loopbacks {
-			matchers[i] = lb.config.Matcher
-		}
-
-		loopbackCh, _ := e.distributor.AddOutput(func(msg *Message) bool {
-			// Any matcher matches (OR logic)
-			for _, m := range matchers {
-				if m != nil && m.Match(msg.Attributes) {
-					return true
-				}
-			}
-			return false
-		})
-		e.typedMerger.AddInput(loopbackCh)
-	}
-
-	// 2. Set up raw input path if any raw inputs were added
+	// 1. Set up raw input path if any raw inputs were added
 	if e.hasRawInputs {
 		// Merge raw inputs
 		rawMerged, err := e.rawMerger.Merge(ctx)
@@ -236,19 +211,19 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		e.typedMerger.AddInput(e.unmarshal(rawMerged))
 	}
 
-	// 3. Start typed merger
+	// 2. Start typed merger
 	typedMerged, err := e.typedMerger.Merge(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// 4. Route messages to handlers
+	// 3. Route messages to handlers
 	handled, err := e.router.Pipe(ctx, typedMerged)
 	if err != nil {
 		return nil, err
 	}
 
-	// 5. Add typed outputs (forwarding needed due to ordering constraints)
+	// 4. Add typed outputs (forwarding needed due to pre-Start channel returns)
 	for _, output := range e.typedOutputs {
 		outMatcher := output.config.Matcher
 		msgCh, _ := e.distributor.AddOutput(func(msg *Message) bool {
@@ -268,9 +243,9 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		}(output.ch, msgCh)
 	}
 
-	// 6. Set up raw output infrastructure (single marshal → raw distributor)
+	// 5. Set up raw output infrastructure (single marshal → raw distributor)
 	if len(e.rawOutputs) > 0 {
-		// Add catch-all for raw-bound messages (after loopbacks and typed outputs)
+		// Add catch-all for raw-bound messages (after typed outputs)
 		rawBound, _ := e.distributor.AddOutput(func(msg *Message) bool {
 			return true // catch all remaining
 		})
@@ -310,13 +285,13 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		e.rawDistributor.Distribute(ctx, marshaled)
 	}
 
-	// 7. Start distributor
+	// 6. Start distributor
 	distributeDone, err := e.distributor.Distribute(ctx, handled)
 	if err != nil {
 		return nil, err
 	}
 
-	// 8. Wait for completion (either distributor finishes or context cancelled)
+	// 7. Wait for completion (either distributor finishes or context cancelled)
 	go func() {
 		select {
 		case <-distributeDone:
