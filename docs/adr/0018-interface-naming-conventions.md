@@ -56,3 +56,7 @@ type Engine interface {
 ## Links
 
 - Related: ADR 0015-0017 (processor simplification series)
+
+## Updates
+
+**2025-12-28:** Added `Merger.AddInput()` rename and `Distributor` interface for symmetric API.
