@@ -8,20 +8,7 @@ import (
 )
 
 // Distributor routes messages from a single input to multiple output channels.
-// It is the inverse of Merger: one input → many outputs.
-//
-// Key features:
-//   - First-match-wins routing with optional matcher functions
-//   - Dynamic AddOutput() during runtime (concurrent-safe)
-//   - NoMatchHandler for unmatched messages
-//   - Graceful shutdown with configurable timeout
-//
-// Example:
-//
-//	dist := pipe.NewDistributor[int](pipe.DistributorConfig[int]{Buffer: 10})
-//	evens, _ := dist.AddOutput(func(v int) bool { return v%2 == 0 })
-//	odds, _ := dist.AddOutput(func(v int) bool { return v%2 != 0 })
-//	done, _ := dist.Distribute(ctx, input)
+// Inverse of Merger. First-match-wins routing. Supports dynamic AddOutput() after Distribute().
 type Distributor[T any] struct {
 	mu        sync.RWMutex
 	wg        sync.WaitGroup
@@ -40,18 +27,12 @@ type outputEntry[T any] struct {
 
 // DistributorConfig configures Distributor behavior.
 type DistributorConfig[T any] struct {
-	// Buffer size for output channels
-	Buffer int
-	// ShutdownTimeout is the max time to wait for outputs to drain.
-	// If 0, waits indefinitely for clean shutdown.
+	Buffer          int
 	ShutdownTimeout time.Duration
-	// NoMatchHandler is called when no output matches a message.
-	// If nil, unmatched messages are silently dropped.
-	NoMatchHandler func(T)
+	NoMatchHandler  func(T)
 }
 
-// NewDistributor creates a new Distributor instance.
-// Add output channels with AddOutput(), then call Distribute() exactly once.
+// NewDistributor creates a new Distributor.
 func NewDistributor[T any](config DistributorConfig[T]) *Distributor[T] {
 	return &Distributor[T]{
 		done:      make(chan struct{}),
@@ -61,10 +42,7 @@ func NewDistributor[T any](config DistributorConfig[T]) *Distributor[T] {
 	}
 }
 
-// AddOutput registers an output channel with an optional matcher.
-// If matcher is nil, the output matches all messages.
-// Returns the output channel which closes when the distributor stops.
-// Safe to call concurrently and after Distribute() has been called.
+// AddOutput registers an output with a matcher. Safe to call after Distribute().
 func (d *Distributor[T]) AddOutput(matcher func(T) bool) (<-chan T, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -84,11 +62,7 @@ func (d *Distributor[T]) AddOutput(matcher func(T) bool) (<-chan T, error) {
 	return ch, nil
 }
 
-// Distribute begins routing messages from input to outputs.
-// Messages are sent to the first output whose matcher returns true.
-// Returns a channel that closes when input processing completes.
-// Output channels close when the context is cancelled and input is drained.
-// Returns ErrAlreadyStarted if called multiple times.
+// Distribute starts routing input to outputs. Returns done channel.
 func (d *Distributor[T]) Distribute(ctx context.Context, input <-chan T) (<-chan struct{}, error) {
 	d.mu.Lock()
 	if d.started {
