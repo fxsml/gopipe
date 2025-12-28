@@ -172,27 +172,108 @@ type Handler interface {
 
 4. **Complex AddInput/AddOutput after Start** - Dynamic add requires checking `started` state and either storing for later or immediately wiring to merger/distributor.
 
-### Proposed Simplification
+### Proposed Simplification: Two-Merger Architecture
 
 Current architecture:
 ```
 Input₁ → Cancel → Filter → Unmarshal₁ ─┐
-Input₂ → Cancel → Filter → Unmarshal₂ ─┼→ Merger[*Message] → Handler → Distributor → Marshal → Output
-Input₃ → Cancel → Filter → Unmarshal₃ ─┘
+Input₂ → Cancel → Filter → Unmarshal₂ ─┼→ Merger[*Message] → Handler → Distributor ─┬→ Marshal → Output
+Input₃ → Cancel → Filter → Unmarshal₃ ─┘                          ↑                 └→ Loopback
+                                                                  │                     (typed)
+                                                         Loopback ┘
 ```
 
-Simplified architecture:
+**Problem:** Single `Merger[*RawMessage] → Unmarshal` breaks loopback. Loopback feeds `*Message` (typed) back, but the merger expects `*RawMessage`. Options:
+- Marshal loopback messages (wasteful, defeats the purpose)
+- Use two mergers (proposed below)
+
+Simplified architecture with two mergers:
 ```
-Input₁ → Filter₁ ─┐
-Input₂ → Filter₂ ─┼→ Merger[*RawMessage] → Unmarshal → Handler → Distributor → Marshal → Output
-Input₃ → Filter₃ ─┘
+RawInput₁ ─┐
+RawInput₂ ─┼→ RawMerger[*RawMessage] → Unmarshal ─┐
+RawInput₃ ─┘                                      │
+                                                  ↓
+TypedInput ─────────────────────────→ TypedMerger[*Message] → Handler → Distributor
+                                           ↑                                │
+                                           └─────── Loopback (typed) ───────┤
+                                                                            ↓
+                                                                     ┌──────┴──────┐
+                                                              TypedOutput     Marshal → RawOutput
 ```
 
 Benefits:
-- One unmarshal pipe instead of per-input
+- Single unmarshal pipe (shared by all raw inputs)
+- Single marshal pipe (shared by all raw outputs)
+- Loopback is clean - just another typed input to TypedMerger
+- TypedInput bypasses unmarshaling entirely (for internal use, testing)
+- TypedOutput bypasses marshaling entirely (for internal routing)
 - Remove channel.Cancel (pipes handle ctx)
-- Merger operates on `*RawMessage` (simpler type flow)
-- AddInput just adds to merger directly
+
+### Proposed API Change: AddInput/AddRawInput
+
+**Current API:**
+```go
+AddInput(ch <-chan *RawMessage, cfg InputConfig) error
+AddOutput(cfg OutputConfig) <-chan *RawMessage
+```
+
+**Proposed API:**
+```go
+// Typed API (primary, for internal use)
+AddInput(ch <-chan *Message, cfg InputConfig) error      // → TypedMerger
+AddOutput(cfg OutputConfig) <-chan *Message              // ← Distributor (no marshal)
+
+// Raw API (for broker integration)
+AddRawInput(ch <-chan *RawMessage, cfg RawInputConfig) error   // → RawMerger → Unmarshal
+AddRawOutput(cfg RawOutputConfig) <-chan *RawMessage           // ← Distributor → Marshal
+```
+
+**Benefits:**
+- Primary API works with typed messages (what most internal code uses)
+- Raw variants explicit for broker integration (Kafka, NATS, etc.)
+- Clear separation: typed = internal, raw = external boundary
+- Enables testing with typed messages directly (no marshal/unmarshal)
+- Loopback is just a special case of typed routing
+- Individual configs for each (raw might need marshaler overrides)
+
+**Config structure:**
+```go
+// InputConfig for typed inputs
+type InputConfig struct {
+    Name    string
+    Matcher Matcher
+}
+
+// RawInputConfig for raw inputs
+type RawInputConfig struct {
+    Name      string
+    Matcher   Matcher
+    Marshaler Marshaler  // optional, overrides engine default
+}
+
+// OutputConfig for typed outputs
+type OutputConfig struct {
+    Name    string
+    Matcher Matcher
+}
+
+// RawOutputConfig for raw outputs
+type RawOutputConfig struct {
+    Name      string
+    Matcher   Matcher
+    Marshaler Marshaler  // optional, overrides engine default
+}
+```
+
+### Implementation Plan
+
+- [ ] Restructure to two-merger architecture (RawMerger + TypedMerger)
+- [ ] Add `AddInput`/`AddOutput` for typed `*Message`
+- [ ] Rename current methods to `AddRawInput`/`AddRawOutput`
+- [ ] Split configs: `InputConfig` vs `RawInputConfig`, `OutputConfig` vs `RawOutputConfig`
+- [ ] Remove ctx from Engine struct, pass through function calls
+- [ ] Remove channel.Cancel (pipes handle ctx)
+- [ ] Update loopback to feed into TypedMerger
 
 ### Questions to Resolve
 
@@ -200,17 +281,10 @@ Benefits:
    - Option: Pass ctx to AddInput/AddOutput when called after Start
    - Option: Use internal context derived from Start's ctx
 
-2. Should unmarshal happen before or after merge?
-   - Before: Current approach, per-input pipes
-   - After: Simpler, one pipe, but all inputs must use same marshaler
+2. Should RawInputConfig/RawOutputConfig support per-channel marshaler overrides?
+   - Pro: Flexibility for multi-format systems
+   - Con: Complexity, most use cases have single marshaler
 
 3. Are channel helpers needed or do pipe components suffice?
    - `channel.Process` - still useful for filtering with side effects
    - `channel.Cancel` - redundant if using pipes
-
-### Next Steps
-
-- [ ] Evaluate if single unmarshal pipe (after merge) works for all use cases
-- [ ] Remove ctx from Engine struct, pass through function calls
-- [ ] Simplify AddInput to just add to merger
-- [ ] Consider if channel.Cancel adds value over pipe cancellation
