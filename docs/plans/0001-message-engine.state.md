@@ -515,6 +515,28 @@ Input₃ → Filter₃ ─┘
 
 **Solution:** Two-merger architecture (see Current Design Decisions).
 
+### PipeHandler Interface and Router Extraction
+```go
+// PipeHandler - streaming counterpart to Handler
+type PipeHandler interface {
+    EventType() string
+    NewInput() any
+    Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message, error)
+}
+
+// Router - extracted handler dispatch
+type Router struct { ... }
+func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message, error)
+```
+**Why rejected:**
+1. **Over-engineering** - Solves hypothetical problems, not real ones
+2. **PipeHandler EventType() is awkward** - Router handles multiple types, so `EventType()` returning `"*"` is a hack
+3. **Limited use cases** - For custom streaming, use `AddOutput` → pipe → `AddInput`
+4. **Router reusability unclear** - Who would use Router outside Engine?
+5. **Multiple routers per engine** - No concrete use case identified
+
+**Simpler approach:** Keep `createHandlerPipe()` internal to Engine. If extraction is needed later, revisit with concrete requirements.
+
 ## Idiomaticity Review
 
 | Aspect | Pattern | Idiomatic? |
