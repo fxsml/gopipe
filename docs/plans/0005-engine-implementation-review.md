@@ -271,36 +271,7 @@ type Matcher interface {
 
 ---
 
-### Issue 8: Handler lookup happens twice for raw messages
-
-**Location:** `createUnmarshalPipe()` line 469, `createHandlerPipe()` line 500
-
-**Current:**
-```go
-// In unmarshal:
-entry, ok := e.handlers[ceType]  // Lookup 1
-instance := entry.handler.NewInput()
-
-// In handler pipe (same message, later):
-entry, ok := e.handlers[ceType]  // Lookup 2 (redundant)
-entry.handler.Handle(ctx, msg)
-```
-
-**Fix:** Store handler reference in message context or a field:
-```go
-// In unmarshal:
-entry, ok := e.handlers[ceType]
-msg.handler = entry.handler  // Cache it
-
-// In handler pipe:
-msg.handler.Handle(ctx, msg)  // No lookup
-```
-
-Minor optimization - only matters for high throughput.
-
----
-
-### Issue 9: pipe.Apply could compose pipelines
+### Issue 8: pipe.Apply could compose pipelines
 
 **Available but unused:**
 ```go
@@ -324,7 +295,6 @@ pipeline := pipe.Apply(pipeA, pipeB)  // Composes two pipes
 | Before/after Start() logic | None | Always same path |
 | N loopback outputs + goroutines | 1 output with match.Any | All feed same merger |
 | `Matcher.Match(*Message)` | `Matcher.Match(Attributes)` | All matchers only use attrs |
-| Double handler lookup | Cache handler in message | Minor optimization |
 
 ---
 
