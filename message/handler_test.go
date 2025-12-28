@@ -18,8 +18,8 @@ type TestEvent struct {
 
 func TestNewHandler(t *testing.T) {
 	t.Run("derives event type from Go type", func(t *testing.T) {
-		h := NewHandler(
-			func(ctx context.Context, msg *TypedMessage[TestCommand]) ([]*Message, error) {
+		h := NewHandler[TestCommand](
+			func(ctx context.Context, msg *Message) ([]*Message, error) {
 				return nil, nil
 			},
 			KebabNaming,
@@ -31,8 +31,8 @@ func TestNewHandler(t *testing.T) {
 	})
 
 	t.Run("NewInput creates typed instance", func(t *testing.T) {
-		h := NewHandler(
-			func(ctx context.Context, msg *TypedMessage[TestCommand]) ([]*Message, error) {
+		h := NewHandler[TestCommand](
+			func(ctx context.Context, msg *Message) ([]*Message, error) {
 				return nil, nil
 			},
 			KebabNaming,
@@ -46,10 +46,11 @@ func TestNewHandler(t *testing.T) {
 
 	t.Run("Handle processes typed message", func(t *testing.T) {
 		var received TestCommand
-		h := NewHandler(
-			func(ctx context.Context, msg *TypedMessage[TestCommand]) ([]*Message, error) {
-				received = msg.Data
-				return []*Message{New[any](TestEvent{ID: msg.Data.ID, Status: "done"}, nil)}, nil
+		h := NewHandler[TestCommand](
+			func(ctx context.Context, msg *Message) ([]*Message, error) {
+				cmd := msg.Data.(*TestCommand)
+				received = *cmd
+				return []*Message{New[any](TestEvent{ID: cmd.ID, Status: "done"}, nil)}, nil
 			},
 			KebabNaming,
 		)
