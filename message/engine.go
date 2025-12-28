@@ -18,13 +18,19 @@ type EngineConfig struct {
 	ErrorHandler ErrorHandler
 }
 
+// handlerEntry holds a handler and its configuration.
+type handlerEntry struct {
+	handler Handler
+	config  HandlerConfig
+}
+
 // Engine orchestrates message flow between inputs, handlers, and outputs.
 // Uses two mergers: RawMerger for raw inputs (broker integration) and
 // TypedMerger for typed inputs, loopback, and internal routing.
 type Engine struct {
 	marshaler    Marshaler
 	errorHandler ErrorHandler
-	handlers     map[string]Handler
+	handlers     map[string]handlerEntry
 
 	// Typed inputs (go directly to TypedMerger)
 	typedInputs []typedInputEntry
@@ -81,16 +87,17 @@ func NewEngine(cfg EngineConfig) *Engine {
 	return &Engine{
 		marshaler:    cfg.Marshaler,
 		errorHandler: eh,
-		handlers:     make(map[string]Handler),
+		handlers:     make(map[string]handlerEntry),
 		done:         make(chan struct{}),
 	}
 }
 
 // AddHandler registers a handler for its CE type.
+// The optional Matcher in HandlerConfig is applied after type matching.
 func (e *Engine) AddHandler(h Handler, cfg HandlerConfig) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.handlers[h.EventType()] = h
+	e.handlers[h.EventType()] = handlerEntry{handler: h, config: cfg}
 	return nil
 }
 
@@ -412,12 +419,12 @@ func (e *Engine) createUnmarshalPipe() *pipe.ProcessPipe[*RawMessage, *Message] 
 		func(ctx context.Context, raw *RawMessage) ([]*Message, error) {
 			ceType, _ := raw.Attributes["type"].(string)
 
-			handler, ok := e.handlers[ceType]
+			entry, ok := e.handlers[ceType]
 			if !ok {
 				return nil, ErrNoHandler
 			}
 
-			instance := handler.NewInput()
+			instance := entry.handler.NewInput()
 			if err := e.marshaler.Unmarshal(raw.Data, instance); err != nil {
 				return nil, err
 			}
@@ -443,12 +450,17 @@ func (e *Engine) createHandlerPipe() *pipe.ProcessPipe[*Message, *Message] {
 		func(ctx context.Context, msg *Message) ([]*Message, error) {
 			ceType, _ := msg.Attributes["type"].(string)
 
-			handler, ok := e.handlers[ceType]
+			entry, ok := e.handlers[ceType]
 			if !ok {
 				return nil, ErrNoHandler
 			}
 
-			outputs, err := handler.Handle(ctx, msg)
+			// Apply handler matcher after type matching
+			if entry.config.Matcher != nil && !entry.config.Matcher.Match(msg) {
+				return nil, ErrHandlerRejected
+			}
+
+			outputs, err := entry.handler.Handle(ctx, msg)
 			if err != nil {
 				return nil, err
 			}

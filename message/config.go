@@ -36,7 +36,8 @@ type LoopbackConfig struct {
 
 // HandlerConfig configures a handler registration.
 type HandlerConfig struct {
-	Name string // required, handler name for logging/metrics
+	Name    string  // required, handler name for logging/metrics
+	Matcher Matcher // optional, applied after type matching
 }
 
 // CommandHandlerConfig configures a command handler.

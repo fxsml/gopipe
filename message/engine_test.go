@@ -710,3 +710,71 @@ func TestEngine_MixedIO(t *testing.T) {
 	}
 	mu.Unlock()
 }
+
+// TestEngine_HandlerMatcher tests that handler matcher is applied after type matching.
+func TestEngine_HandlerMatcher(t *testing.T) {
+	var processedCount int
+	var rejectedCount int
+	var mu sync.Mutex
+
+	engine := NewEngine(EngineConfig{
+		Marshaler: NewJSONMarshaler(),
+		ErrorHandler: func(msg *Message, err error) {
+			mu.Lock()
+			if err == ErrHandlerRejected {
+				rejectedCount++
+			}
+			mu.Unlock()
+		},
+	})
+
+	handler := NewCommandHandler(
+		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+			mu.Lock()
+			processedCount++
+			mu.Unlock()
+			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
+		},
+		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+	)
+
+	// Register handler with a matcher that only accepts messages from /allowed source
+	engine.AddHandler(handler, HandlerConfig{
+		Name:    "test",
+		Matcher: &sourceMatcher{allowed: "/allowed"},
+	})
+
+	input := make(chan *RawMessage, 10)
+	engine.AddRawInput(input, RawInputConfig{})
+	engine.AddRawOutput(RawOutputConfig{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	engine.Start(ctx)
+
+	data, _ := json.Marshal(TestCommand{ID: "1"})
+
+	// Send message from allowed source - should be processed
+	input <- &RawMessage{
+		Data:       data,
+		Attributes: Attributes{"type": "test.command", "source": "/allowed"},
+	}
+
+	// Send message from rejected source - should be rejected by handler matcher
+	input <- &RawMessage{
+		Data:       data,
+		Attributes: Attributes{"type": "test.command", "source": "/rejected"},
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	if processedCount != 1 {
+		t.Errorf("expected 1 processed, got %d", processedCount)
+	}
+	if rejectedCount != 1 {
+		t.Errorf("expected 1 rejected by handler matcher, got %d", rejectedCount)
+	}
+	mu.Unlock()
+}

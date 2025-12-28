@@ -14,4 +14,7 @@ var (
 
 	// ErrNoHandler is returned when no handler exists for a CE type.
 	ErrNoHandler = errors.New("no handler for CE type")
+
+	// ErrHandlerRejected is returned when a message is rejected by handler matcher.
+	ErrHandlerRejected = errors.New("message rejected by handler matcher")
 )
