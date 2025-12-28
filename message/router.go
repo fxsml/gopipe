@@ -99,7 +99,7 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 		return nil, ErrNoHandler
 	}
 
-	if entry.config.Matcher != nil && !entry.config.Matcher.Match(msg) {
+	if entry.config.Matcher != nil && !entry.config.Matcher.Match(msg.Attributes) {
 		return nil, ErrHandlerRejected
 	}
 

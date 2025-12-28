@@ -13,10 +13,7 @@ func Types(patterns ...string) message.Matcher {
 	return &typesMatcher{patterns: patterns}
 }
 
-func (m *typesMatcher) Match(msg *message.Message) bool {
-	if msg == nil {
-		return false
-	}
-	ceType := getAttr(msg.Attributes, "type")
+func (m *typesMatcher) Match(attrs message.Attributes) bool {
+	ceType := getAttr(attrs, "type")
 	return LikeAny(m.patterns, ceType)
 }
