@@ -159,3 +159,58 @@ type Handler interface {
     Handle(ctx context.Context, msg *Message) ([]*Message, error)
 }
 ```
+
+## TODO: Architecture Rethink
+
+### Current Issues
+
+1. **Context stored in Engine struct** - Storing `ctx context.Context` in the Engine struct is bad Go idiom. Context should flow through function calls, not be stored in structs.
+
+2. **Per-input unmarshal pipes** - Each input creates its own unmarshal pipe. This duplicates logic and complicates AddInput.
+
+3. **Unnecessary channel.Cancel wrapper** - Inputs are wrapped with `channel.Cancel` but pipes already handle context cancellation internally.
+
+4. **Complex AddInput/AddOutput after Start** - Dynamic add requires checking `started` state and either storing for later or immediately wiring to merger/distributor.
+
+### Proposed Simplification
+
+Current architecture:
+```
+Input₁ → Cancel → Filter → Unmarshal₁ ─┐
+Input₂ → Cancel → Filter → Unmarshal₂ ─┼→ Merger[*Message] → Handler → Distributor → Marshal → Output
+Input₃ → Cancel → Filter → Unmarshal₃ ─┘
+```
+
+Simplified architecture:
+```
+Input₁ → Filter₁ ─┐
+Input₂ → Filter₂ ─┼→ Merger[*RawMessage] → Unmarshal → Handler → Distributor → Marshal → Output
+Input₃ → Filter₃ ─┘
+```
+
+Benefits:
+- One unmarshal pipe instead of per-input
+- Remove channel.Cancel (pipes handle ctx)
+- Merger operates on `*RawMessage` (simpler type flow)
+- AddInput just adds to merger directly
+
+### Questions to Resolve
+
+1. Can we keep dynamic AddInput/AddOutput API without storing ctx in struct?
+   - Option: Pass ctx to AddInput/AddOutput when called after Start
+   - Option: Use internal context derived from Start's ctx
+
+2. Should unmarshal happen before or after merge?
+   - Before: Current approach, per-input pipes
+   - After: Simpler, one pipe, but all inputs must use same marshaler
+
+3. Are channel helpers needed or do pipe components suffice?
+   - `channel.Process` - still useful for filtering with side effects
+   - `channel.Cancel` - redundant if using pipes
+
+### Next Steps
+
+- [ ] Evaluate if single unmarshal pipe (after merge) works for all use cases
+- [ ] Remove ctx from Engine struct, pass through function calls
+- [ ] Simplify AddInput to just add to merger
+- [ ] Consider if channel.Cancel adds value over pipe cancellation
