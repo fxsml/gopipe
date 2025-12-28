@@ -23,13 +23,14 @@ type Handler interface {
 // handler wraps a typed handler function.
 type handler[T any] struct {
 	eventType string
-	fn        func(ctx context.Context, msg *TypedMessage[T]) ([]*Message, error)
+	fn        func(ctx context.Context, msg *Message) ([]*Message, error)
 }
 
 // NewHandler creates a handler from a typed function.
+// The generic type T is used for unmarshaling and event type derivation.
 // NamingStrategy derives EventType from T.
 func NewHandler[T any](
-	fn func(ctx context.Context, msg *TypedMessage[T]) ([]*Message, error),
+	fn func(ctx context.Context, msg *Message) ([]*Message, error),
 	naming NamingStrategy,
 ) Handler {
 	var zero T
@@ -49,18 +50,7 @@ func (h *handler[T]) NewInput() any {
 }
 
 func (h *handler[T]) Handle(ctx context.Context, msg *Message) ([]*Message, error) {
-	typed := &TypedMessage[T]{
-		Attributes: msg.Attributes,
-		a:          msg.a,
-	}
-	if msg.Data != nil {
-		if v, ok := msg.Data.(*T); ok {
-			typed.Data = *v
-		} else if v, ok := msg.Data.(T); ok {
-			typed.Data = v
-		}
-	}
-	return h.fn(ctx, typed)
+	return h.fn(ctx, msg)
 }
 
 // commandHandler wraps a command function with convention-based output.
