@@ -16,6 +16,7 @@ type ErrorHandler func(msg *Message, err error)
 type EngineConfig struct {
 	Marshaler    Marshaler
 	ErrorHandler ErrorHandler
+	BufferSize   int // Channel buffer size (default: 100)
 }
 
 // Engine orchestrates message flow between inputs, handlers, and outputs.
@@ -26,6 +27,7 @@ type EngineConfig struct {
 type Engine struct {
 	marshaler    Marshaler
 	errorHandler ErrorHandler
+	bufferSize   int
 	router       *Router
 
 	// Typed outputs (directly from Distributor, no marshal)
@@ -69,20 +71,26 @@ func NewEngine(cfg EngineConfig) *Engine {
 		}
 	}
 
+	bufferSize := cfg.BufferSize
+	if bufferSize <= 0 {
+		bufferSize = 100
+	}
+
 	e := &Engine{
 		marshaler:    cfg.Marshaler,
 		errorHandler: eh,
-		router:       NewRouter(RouterConfig{ErrorHandler: eh}),
+		bufferSize:   bufferSize,
+		router:       NewRouter(RouterConfig{ErrorHandler: eh, BufferSize: bufferSize}),
 		done:         make(chan struct{}),
 	}
 
 	// Create mergers upfront - AddInput works before Merge()
-	e.typedMerger = pipe.NewMerger[*Message](pipe.MergerConfig{Buffer: 100})
-	e.rawMerger = pipe.NewMerger[*RawMessage](pipe.MergerConfig{Buffer: 100})
+	e.typedMerger = pipe.NewMerger[*Message](pipe.MergerConfig{Buffer: bufferSize})
+	e.rawMerger = pipe.NewMerger[*RawMessage](pipe.MergerConfig{Buffer: bufferSize})
 
 	// Create distributor upfront - AddOutput works before Distribute()
 	e.distributor = pipe.NewDistributor[*Message](pipe.DistributorConfig[*Message]{
-		Buffer: 100,
+		Buffer: bufferSize,
 		NoMatchHandler: func(msg *Message) {
 			e.errorHandler(msg, ErrNoMatchingOutput)
 		},
@@ -131,7 +139,7 @@ func (e *Engine) AddOutput(cfg OutputConfig) <-chan *Message {
 
 	if !e.started {
 		// Before Start: store config and intermediate channel (ordering matters)
-		ch := make(chan *Message, 100)
+		ch := make(chan *Message, e.bufferSize)
 		e.typedOutputs = append(e.typedOutputs, typedOutputEntry{ch: ch, config: cfg})
 		return ch
 	}
@@ -139,7 +147,7 @@ func (e *Engine) AddOutput(cfg OutputConfig) <-chan *Message {
 	// After Start: add directly to distributor, return its channel (no forwarding)
 	outMatcher := cfg.Matcher
 	ch, _ := e.distributor.AddOutput(func(msg *Message) bool {
-		return outMatcher == nil || outMatcher.Match(msg)
+		return outMatcher == nil || outMatcher.Match(msg.Attributes)
 	})
 	return ch
 }
@@ -154,7 +162,7 @@ func (e *Engine) AddRawOutput(cfg RawOutputConfig) <-chan *RawMessage {
 
 	if !e.started {
 		// Before Start: store config and intermediate channel (ordering matters)
-		ch := make(chan *RawMessage, 100)
+		ch := make(chan *RawMessage, e.bufferSize)
 		e.rawOutputs = append(e.rawOutputs, rawOutputEntry{ch: ch, config: cfg})
 		return ch
 	}
@@ -163,15 +171,14 @@ func (e *Engine) AddRawOutput(cfg RawOutputConfig) <-chan *RawMessage {
 	outMatcher := cfg.Matcher
 	if e.rawDistributor != nil {
 		ch, _ := e.rawDistributor.AddOutput(func(msg *RawMessage) bool {
-			m := &Message{Attributes: msg.Attributes}
-			return outMatcher == nil || outMatcher.Match(m)
+			return outMatcher == nil || outMatcher.Match(msg.Attributes)
 		})
 		return ch
 	}
 
 	// No raw distributor (no raw outputs at start) - fall back to per-output marshal
 	msgCh, _ := e.distributor.AddOutput(func(msg *Message) bool {
-		return outMatcher == nil || outMatcher.Match(msg)
+		return outMatcher == nil || outMatcher.Match(msg.Attributes)
 	})
 
 	// Marshal messages for this output
@@ -208,7 +215,7 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		loopbackCh, _ := e.distributor.AddOutput(func(msg *Message) bool {
 			// Any matcher matches (OR logic)
 			for _, m := range matchers {
-				if m != nil && m.Match(msg) {
+				if m != nil && m.Match(msg.Attributes) {
 					return true
 				}
 			}
@@ -245,7 +252,7 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 	for _, output := range e.typedOutputs {
 		outMatcher := output.config.Matcher
 		msgCh, _ := e.distributor.AddOutput(func(msg *Message) bool {
-			return outMatcher == nil || outMatcher.Match(msg)
+			return outMatcher == nil || outMatcher.Match(msg.Attributes)
 		})
 
 		// Forward to output channel
@@ -273,9 +280,9 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 
 		// Create raw distributor
 		e.rawDistributor = pipe.NewDistributor[*RawMessage](pipe.DistributorConfig[*RawMessage]{
-			Buffer: 100,
+			Buffer: e.bufferSize,
 			NoMatchHandler: func(msg *RawMessage) {
-				e.errorHandler(&Message{Attributes: msg.Attributes}, ErrNoMatchingOutput)
+				e.handleRawError(msg.Attributes, ErrNoMatchingOutput)
 			},
 		})
 
@@ -283,8 +290,7 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		for _, output := range e.rawOutputs {
 			outMatcher := output.config.Matcher
 			rawCh, _ := e.rawDistributor.AddOutput(func(msg *RawMessage) bool {
-				m := &Message{Attributes: msg.Attributes}
-				return outMatcher == nil || outMatcher.Match(m)
+				return outMatcher == nil || outMatcher.Match(msg.Attributes)
 			})
 
 			// Forward to output channel
@@ -329,7 +335,7 @@ func (e *Engine) applyTypedInputMatcher(in <-chan *Message, matcher Matcher) <-c
 	}
 
 	return channel.Filter(in, func(msg *Message) bool {
-		if matcher.Match(msg) {
+		if matcher.Match(msg.Attributes) {
 			return true
 		}
 		e.errorHandler(msg, ErrInputRejected)
@@ -344,13 +350,17 @@ func (e *Engine) applyRawInputMatcher(in <-chan *RawMessage, matcher Matcher) <-
 	}
 
 	return channel.Filter(in, func(msg *RawMessage) bool {
-		m := &Message{Attributes: msg.Attributes}
-		if matcher.Match(m) {
+		if matcher.Match(msg.Attributes) {
 			return true
 		}
-		e.errorHandler(m, ErrInputRejected)
+		e.handleRawError(msg.Attributes, ErrInputRejected)
 		return false
 	})
+}
+
+// handleRawError calls errorHandler with a Message wrapper for raw attributes.
+func (e *Engine) handleRawError(attrs Attributes, err error) {
+	e.errorHandler(&Message{Attributes: attrs}, err)
 }
 
 // unmarshal processes raw messages into typed messages.
@@ -360,13 +370,13 @@ func (e *Engine) unmarshal(in <-chan *RawMessage) <-chan *Message {
 
 		entry, ok := e.router.handler(ceType)
 		if !ok {
-			e.errorHandler(&Message{Attributes: raw.Attributes}, ErrNoHandler)
+			e.handleRawError(raw.Attributes, ErrNoHandler)
 			return nil
 		}
 
 		instance := entry.handler.NewInput()
 		if err := e.marshaler.Unmarshal(raw.Data, instance); err != nil {
-			e.errorHandler(&Message{Attributes: raw.Attributes}, err)
+			e.handleRawError(raw.Attributes, err)
 			return nil
 		}
 

@@ -193,8 +193,8 @@ type sourceMatcher struct {
 	allowed string
 }
 
-func (m *sourceMatcher) Match(msg *Message) bool {
-	source, _ := msg.Attributes["source"].(string)
+func (m *sourceMatcher) Match(attrs Attributes) bool {
+	source, _ := attrs["source"].(string)
 	return source == m.allowed
 }
 
@@ -247,8 +247,8 @@ type typeMatcher struct {
 	pattern string
 }
 
-func (m *typeMatcher) Match(msg *Message) bool {
-	t, _ := msg.Attributes["type"].(string)
+func (m *typeMatcher) Match(attrs Attributes) bool {
+	t, _ := attrs["type"].(string)
 	return t == m.pattern
 }
 

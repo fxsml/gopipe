@@ -13,10 +13,7 @@ func Sources(patterns ...string) message.Matcher {
 	return &sourcesMatcher{patterns: patterns}
 }
 
-func (m *sourcesMatcher) Match(msg *message.Message) bool {
-	if msg == nil {
-		return false
-	}
-	source := getAttr(msg.Attributes, "source")
+func (m *sourcesMatcher) Match(attrs message.Attributes) bool {
+	source := getAttr(attrs, "source")
 	return LikeAny(m.patterns, source)
 }

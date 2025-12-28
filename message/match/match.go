@@ -12,9 +12,9 @@ func All(matchers ...message.Matcher) message.Matcher {
 	return &allMatcher{matchers: matchers}
 }
 
-func (m *allMatcher) Match(msg *message.Message) bool {
+func (m *allMatcher) Match(attrs message.Attributes) bool {
 	for _, matcher := range m.matchers {
-		if !matcher.Match(msg) {
+		if !matcher.Match(attrs) {
 			return false
 		}
 	}
@@ -31,9 +31,9 @@ func Any(matchers ...message.Matcher) message.Matcher {
 	return &anyMatcher{matchers: matchers}
 }
 
-func (m *anyMatcher) Match(msg *message.Message) bool {
+func (m *anyMatcher) Match(attrs message.Attributes) bool {
 	for _, matcher := range m.matchers {
-		if matcher.Match(msg) {
+		if matcher.Match(attrs) {
 			return true
 		}
 	}

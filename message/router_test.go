@@ -99,8 +99,8 @@ func TestRouter_HandlerMatcher(t *testing.T) {
 
 	// Add handler with matcher that rejects messages without "allowed" attribute
 	router.AddHandler(handler, HandlerConfig{
-		Matcher: matcherFunc(func(msg *Message) bool {
-			_, ok := msg.Attributes["allowed"]
+		Matcher: matcherFunc(func(attrs Attributes) bool {
+			_, ok := attrs["allowed"]
 			return ok
 		}),
 	})
@@ -334,8 +334,8 @@ func TestRouter_MessageAck(t *testing.T) {
 }
 
 // matcherFunc is a helper for testing
-type matcherFunc func(msg *Message) bool
+type matcherFunc func(attrs Attributes) bool
 
-func (f matcherFunc) Match(msg *Message) bool {
-	return f(msg)
+func (f matcherFunc) Match(attrs Attributes) bool {
+	return f(attrs)
 }
