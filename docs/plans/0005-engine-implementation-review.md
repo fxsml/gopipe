@@ -84,56 +84,75 @@ Same for unmarshal. Returns `nil` on error (0 outputs), `[]*T{result}` on succes
 
 ---
 
-### Issue 3: Unnecessary forwarding in after-start case
+### Issue 3: Unnecessary forwarding - create components in NewEngine()
 
-**Location:** `AddOutput`/`AddRawOutput` after-start case
+**Location:** All of `AddOutput`, `AddRawOutput`, `AddInput`, `AddRawInput`, `Start()`
 
-**Problem:** We create an extra channel and forward when we don't need to:
+**Problem:** Current design creates intermediate channels and forwards:
 ```go
-// Current after-start case - WASTEFUL:
-msgCh, _ := e.distributor.AddOutput(matcher)  // Distributor creates channel
-ch := make(chan *Message, 100)                 // We create ANOTHER channel
-go func() { forward msgCh → ch }()             // Pointless forwarding
-return ch
+// Current flow - OVERCOMPLICATED:
+NewEngine()     → (nothing created)
+AddOutput()     → create ch, store config
+Start()         → create distributor, call distributor.AddOutput(), forward to stored ch
 ```
 
-`distributor.AddOutput()` already returns a usable channel. Why create another and forward?
+**Key insight:** `Distributor.AddOutput()` and `Merger.AddInput()` work **before** `Distribute()`/`Merge()` is called. They just store the entry and return.
 
-**Analysis:**
-
-| Case | Forwarding Needed? | Reason |
-|------|-------------------|--------|
-| AddOutput **after** Start | **No** | Distributor exists, return its channel directly |
-| AddOutput **before** Start | Yes | Must return channel before distributor exists |
-| Start() wiring | Yes | Channel already returned to user, must connect |
-| Loopbacks | Yes | Multiple sources → single merger input |
-
-**Fix for after-start case - eliminate forwarding entirely:**
+**Simpler design - create components in NewEngine():**
 ```go
-func (e *Engine) AddOutput(cfg OutputConfig) <-chan *Message {
-    e.mu.Lock()
-    defer e.mu.Unlock()
+// Simplified flow:
+NewEngine()     → create distributor, create mergers
+AddOutput()     → call distributor.AddOutput(), return its channel directly
+AddInput()      → call merger.AddInput() directly
+Start()         → call merger.Merge(), distributor.Distribute()
+```
 
-    if e.started {
-        // Return distributor's channel directly - no forwarding!
-        ch, _ := e.distributor.AddOutput(func(msg *Message) bool {
-            return cfg.Matcher == nil || cfg.Matcher.Match(msg)
-        })
-        return ch
+**No intermediate channels. No forwarding. No before/after complexity.**
+
+**Implementation:**
+```go
+func NewEngine(cfg EngineConfig) *Engine {
+    e := &Engine{
+        marshaler:    cfg.Marshaler,
+        errorHandler: cfg.ErrorHandler,
     }
 
-    // Before start - must create channel now, connect later in Start()
-    ch := make(chan *Message, 100)
-    e.typedOutputs = append(e.typedOutputs, typedOutputEntry{ch: ch, config: cfg})
+    // Create distributor upfront
+    e.distributor = pipe.NewDistributor[*Message](pipe.DistributorConfig[*Message]{
+        Buffer: 100,
+        NoMatchHandler: func(msg *Message) {
+            e.errorHandler(msg, ErrNoMatchingOutput)
+        },
+    })
+
+    // Create mergers upfront
+    e.typedMerger = pipe.NewMerger[*Message](pipe.MergerConfig{Buffer: 100})
+    e.rawMerger = pipe.NewMerger[*RawMessage](pipe.MergerConfig{Buffer: 100})
+
+    return e
+}
+
+func (e *Engine) AddOutput(cfg OutputConfig) <-chan *Message {
+    ch, _ := e.distributor.AddOutput(func(msg *Message) bool {
+        return cfg.Matcher == nil || cfg.Matcher.Match(msg)
+    })
     return ch
+}
+
+func (e *Engine) AddInput(ch <-chan *Message, cfg InputConfig) error {
+    filtered := e.applyTypedInputMatcher(ch, cfg.Matcher)
+    _, err := e.typedMerger.AddInput(filtered)
+    return err
 }
 ```
 
-Same fix applies to `AddRawOutput` after-start case.
+**Benefits:**
+- Eliminates `typedOutputs`, `rawOutputs`, `typedInputs`, `rawInputs` storage
+- Eliminates all forwarding goroutines
+- Eliminates before/after Start() complexity
+- `Start()` just wires the pipeline and calls `Merge()`/`Distribute()`
 
-**For before-start case:** Forwarding is unavoidable with current API design. Alternative designs would be breaking changes.
-
-**For loopbacks in Start():** Could use `channel.Merge` instead of multiple forwarding goroutines, but current approach works.
+**For rawDistributor:** Create lazily on first `AddRawOutput()` call, or always create in `NewEngine()`.
 
 ---
 
@@ -165,30 +184,35 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 
 ---
 
-## Semantic Correctness Table
+## Summary Table
 
-| Function | Current | Correct | Reason |
-|----------|---------|---------|--------|
-| `applyTypedInputMatcher` | channel.Process | channel.Filter | Filtering with error side effect |
-| `applyRawInputMatcher` | channel.Process | channel.Filter | Filtering with error side effect |
-| `createMarshalPipe` | pipe.ProcessPipe | channel.Process | 1:0/1 mapping, no pipe needed |
-| `createUnmarshalPipe` | pipe.ProcessPipe | channel.Process | 1:0/1 mapping, no pipe needed |
-| `createHandlerPipe` | pipe.ProcessPipe | pipe.ProcessPipe | 1:N correct (handler returns multiple) |
-| AddOutput after-start | create ch + forward | return distributor ch | No forwarding needed |
-| AddRawOutput after-start | create ch + forward | return distributor ch | No forwarding needed |
+| Current | Simplified | Reason |
+|---------|------------|--------|
+| `channel.Process` for matchers | `channel.Filter` | Filtering with error side effect |
+| `pipe.ProcessPipe` for marshal | `channel.Process` | 1:0/1 mapping, no pipe config needed |
+| Create distributor in Start() | Create in NewEngine() | AddOutput() works before Distribute() |
+| Create mergers in Start() | Create in NewEngine() | AddInput() works before Merge() |
+| Store output/input configs | Direct calls to components | No storage needed |
+| Forwarding goroutines | None | Return component channels directly |
+| Before/after Start() logic | None | Always same path |
 
 ---
 
 ## Implementation Order
 
-### Phase 1: Quick Wins (Low Risk)
-1. Replace `channel.Process` with `channel.Filter` for matchers
-2. Eliminate forwarding in AddOutput/AddRawOutput after-start case
-3. Add BufferSize to EngineConfig
-4. Create helper for raw error handling
+### Phase 1: Simplify Engine Structure (High Impact)
+1. Create distributor and mergers in `NewEngine()`
+2. `AddOutput()`/`AddInput()` call components directly
+3. Remove `typedOutputs`, `rawOutputs`, `typedInputs`, `rawInputs` storage
+4. Simplify `Start()` to just wire and start components
 
-### Phase 2: Simplify Marshal/Unmarshal
-5. Replace `pipe.ProcessPipe` with `channel.Process` for marshal/unmarshal
+### Phase 2: Simplify Primitives
+5. Replace `channel.Process` with `channel.Filter` for matchers
+6. Replace `pipe.ProcessPipe` with `channel.Process` for marshal/unmarshal
+
+### Phase 3: Configuration
+7. Add BufferSize to EngineConfig
+8. Create helper for raw error handling
 
 ---
 
@@ -202,9 +226,10 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 
 ## Acceptance Criteria
 
+- [ ] Distributor and mergers created in `NewEngine()`
+- [ ] `AddOutput()`/`AddInput()` call components directly, no storage
+- [ ] No forwarding goroutines
 - [ ] `channel.Filter` used for input matchers
 - [ ] `channel.Process` used for marshal/unmarshal
-- [ ] No forwarding goroutines in AddOutput/AddRawOutput after-start case
 - [ ] Buffer sizes configurable via EngineConfig
-- [ ] Error helper reduces code duplication
 - [ ] `make test && make build && make vet` passes
