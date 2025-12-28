@@ -1,6 +1,6 @@
 # Plan 0005: Engine Implementation Fixes
 
-**Status:** Proposed
+**Status:** Completed
 **Related ADRs:** -
 **Depends On:** [Plan 0001](0001-message-engine.md)
 
