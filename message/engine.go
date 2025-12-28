@@ -174,10 +174,8 @@ func (e *Engine) AddRawOutput(cfg RawOutputConfig) <-chan *RawMessage {
 		return outMatcher == nil || outMatcher.Match(msg)
 	})
 
-	// Start marshal pipe for this output
-	marshalPipe := e.createMarshalPipe()
-	rawCh, _ := marshalPipe.Pipe(e.ctx, msgCh)
-	return rawCh
+	// Marshal messages for this output
+	return e.marshal(msgCh)
 }
 
 // AddLoopback registers internal message re-processing.
@@ -228,13 +226,7 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		}
 
 		// Unmarshal raw messages and feed to typed merger
-		unmarshalPipe := e.createUnmarshalPipe()
-		unmarshaled, err := unmarshalPipe.Pipe(ctx, rawMerged)
-		if err != nil {
-			return nil, err
-		}
-
-		e.typedMerger.AddInput(unmarshaled)
+		e.typedMerger.AddInput(e.unmarshal(rawMerged))
 	}
 
 	// 3. Start typed merger
@@ -269,16 +261,15 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		}(output.ch, msgCh)
 	}
 
-	// 6. Set up raw output infrastructure (single marshal pipe → raw distributor)
+	// 6. Set up raw output infrastructure (single marshal → raw distributor)
 	if len(e.rawOutputs) > 0 {
 		// Add catch-all for raw-bound messages (after loopbacks and typed outputs)
 		rawBound, _ := e.distributor.AddOutput(func(msg *Message) bool {
 			return true // catch all remaining
 		})
 
-		// Create ONE marshal pipe (shared by all raw outputs)
-		marshalPipe := e.createMarshalPipe()
-		marshaled, _ := marshalPipe.Pipe(ctx, rawBound)
+		// Marshal messages (shared by all raw outputs)
+		marshaled := e.marshal(rawBound)
 
 		// Create raw distributor
 		e.rawDistributor = pipe.NewDistributor[*RawMessage](pipe.DistributorConfig[*RawMessage]{
@@ -337,12 +328,12 @@ func (e *Engine) applyTypedInputMatcher(in <-chan *Message, matcher Matcher) <-c
 		return in
 	}
 
-	return channel.Process(in, func(msg *Message) []*Message {
+	return channel.Filter(in, func(msg *Message) bool {
 		if matcher.Match(msg) {
-			return []*Message{msg}
+			return true
 		}
 		e.errorHandler(msg, ErrInputRejected)
-		return nil
+		return false
 	})
 }
 
@@ -352,71 +343,58 @@ func (e *Engine) applyRawInputMatcher(in <-chan *RawMessage, matcher Matcher) <-
 		return in
 	}
 
-	return channel.Process(in, func(msg *RawMessage) []*RawMessage {
+	return channel.Filter(in, func(msg *RawMessage) bool {
 		m := &Message{Attributes: msg.Attributes}
 		if matcher.Match(m) {
-			return []*RawMessage{msg}
+			return true
 		}
 		e.errorHandler(m, ErrInputRejected)
-		return nil
+		return false
 	})
 }
 
-// createUnmarshalPipe creates a pipe that unmarshals RawMessage to typed Message.
-func (e *Engine) createUnmarshalPipe() *pipe.ProcessPipe[*RawMessage, *Message] {
-	return pipe.NewProcessPipe(
-		func(ctx context.Context, raw *RawMessage) ([]*Message, error) {
-			ceType, _ := raw.Attributes["type"].(string)
+// unmarshal processes raw messages into typed messages.
+func (e *Engine) unmarshal(in <-chan *RawMessage) <-chan *Message {
+	return channel.Process(in, func(raw *RawMessage) []*Message {
+		ceType, _ := raw.Attributes["type"].(string)
 
-			entry, ok := e.router.handler(ceType)
-			if !ok {
-				return nil, ErrNoHandler
-			}
+		entry, ok := e.router.handler(ceType)
+		if !ok {
+			e.errorHandler(&Message{Attributes: raw.Attributes}, ErrNoHandler)
+			return nil
+		}
 
-			instance := entry.handler.NewInput()
-			if err := e.marshaler.Unmarshal(raw.Data, instance); err != nil {
-				return nil, err
-			}
+		instance := entry.handler.NewInput()
+		if err := e.marshaler.Unmarshal(raw.Data, instance); err != nil {
+			e.errorHandler(&Message{Attributes: raw.Attributes}, err)
+			return nil
+		}
 
-			return []*Message{{
-				Data:       instance,
-				Attributes: raw.Attributes,
-				a:          raw.a,
-			}}, nil
-		},
-		pipe.Config{
-			ErrorHandler: func(in any, err error) {
-				raw := in.(*RawMessage)
-				e.errorHandler(&Message{Attributes: raw.Attributes}, err)
-			},
-		},
-	)
+		return []*Message{{
+			Data:       instance,
+			Attributes: raw.Attributes,
+			a:          raw.a,
+		}}
+	})
 }
 
-// createMarshalPipe creates a pipe that marshals Message to RawMessage.
-func (e *Engine) createMarshalPipe() *pipe.ProcessPipe[*Message, *RawMessage] {
-	return pipe.NewProcessPipe(
-		func(ctx context.Context, msg *Message) ([]*RawMessage, error) {
-			data, err := e.marshaler.Marshal(msg.Data)
-			if err != nil {
-				return nil, err
-			}
+// marshal processes typed messages into raw messages.
+func (e *Engine) marshal(in <-chan *Message) <-chan *RawMessage {
+	return channel.Process(in, func(msg *Message) []*RawMessage {
+		data, err := e.marshaler.Marshal(msg.Data)
+		if err != nil {
+			e.errorHandler(msg, err)
+			return nil
+		}
 
-			if msg.Attributes == nil {
-				msg.Attributes = make(Attributes)
-			}
-			msg.Attributes["datacontenttype"] = e.marshaler.DataContentType()
+		if msg.Attributes == nil {
+			msg.Attributes = make(Attributes)
+		}
+		msg.Attributes["datacontenttype"] = e.marshaler.DataContentType()
 
-			return []*RawMessage{{
-				Data:       data,
-				Attributes: msg.Attributes,
-			}}, nil
-		},
-		pipe.Config{
-			ErrorHandler: func(in any, err error) {
-				msg := in.(*Message)
-				e.errorHandler(msg, err)
-			},
-		},
-	)
+		return []*RawMessage{{
+			Data:       data,
+			Attributes: msg.Attributes,
+		}}
+	})
 }
