@@ -18,12 +18,6 @@ type EngineConfig struct {
 	ErrorHandler ErrorHandler
 }
 
-// handlerEntry holds a handler and its configuration.
-type handlerEntry struct {
-	handler Handler
-	config  HandlerConfig
-}
-
 // Engine orchestrates message flow between inputs, handlers, and outputs.
 // Uses two mergers: RawMerger for raw inputs (broker integration) and
 // TypedMerger for typed inputs, loopback, and internal routing.
@@ -32,7 +26,7 @@ type handlerEntry struct {
 type Engine struct {
 	marshaler    Marshaler
 	errorHandler ErrorHandler
-	handlers     map[string]handlerEntry
+	router       *Router
 
 	// Typed inputs (go directly to TypedMerger)
 	typedInputs []typedInputEntry
@@ -90,7 +84,7 @@ func NewEngine(cfg EngineConfig) *Engine {
 	return &Engine{
 		marshaler:    cfg.Marshaler,
 		errorHandler: eh,
-		handlers:     make(map[string]handlerEntry),
+		router:       NewRouter(RouterConfig{ErrorHandler: eh}),
 		done:         make(chan struct{}),
 	}
 }
@@ -98,10 +92,7 @@ func NewEngine(cfg EngineConfig) *Engine {
 // AddHandler registers a handler for its CE type.
 // The optional Matcher in HandlerConfig is applied after type matching.
 func (e *Engine) AddHandler(h Handler, cfg HandlerConfig) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.handlers[h.EventType()] = handlerEntry{handler: h, config: cfg}
-	return nil
+	return e.router.AddHandler(h, cfg)
 }
 
 // AddInput registers a typed input channel.
@@ -310,9 +301,8 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		return nil, err
 	}
 
-	// 6. Start handler pipe
-	handlerPipe := e.createHandlerPipe()
-	handled, err := handlerPipe.Pipe(ctx, typedMerged)
+	// 6. Route messages to handlers
+	handled, err := e.router.Pipe(ctx, typedMerged)
 	if err != nil {
 		return nil, err
 	}
@@ -466,7 +456,7 @@ func (e *Engine) createUnmarshalPipe() *pipe.ProcessPipe[*RawMessage, *Message] 
 		func(ctx context.Context, raw *RawMessage) ([]*Message, error) {
 			ceType, _ := raw.Attributes["type"].(string)
 
-			entry, ok := e.handlers[ceType]
+			entry, ok := e.router.handler(ceType)
 			if !ok {
 				return nil, ErrNoHandler
 			}
@@ -486,39 +476,6 @@ func (e *Engine) createUnmarshalPipe() *pipe.ProcessPipe[*RawMessage, *Message] 
 			ErrorHandler: func(in any, err error) {
 				raw := in.(*RawMessage)
 				e.errorHandler(&Message{Attributes: raw.Attributes}, err)
-			},
-		},
-	)
-}
-
-// createHandlerPipe creates a pipe that dispatches messages to handlers.
-func (e *Engine) createHandlerPipe() *pipe.ProcessPipe[*Message, *Message] {
-	return pipe.NewProcessPipe(
-		func(ctx context.Context, msg *Message) ([]*Message, error) {
-			ceType, _ := msg.Attributes["type"].(string)
-
-			entry, ok := e.handlers[ceType]
-			if !ok {
-				return nil, ErrNoHandler
-			}
-
-			// Apply handler matcher after type matching
-			if entry.config.Matcher != nil && !entry.config.Matcher.Match(msg) {
-				return nil, ErrHandlerRejected
-			}
-
-			outputs, err := entry.handler.Handle(ctx, msg)
-			if err != nil {
-				return nil, err
-			}
-
-			msg.Ack()
-			return outputs, nil
-		},
-		pipe.Config{
-			ErrorHandler: func(in any, err error) {
-				msg := in.(*Message)
-				e.errorHandler(msg, err)
 			},
 		},
 	)

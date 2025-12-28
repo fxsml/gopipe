@@ -22,13 +22,18 @@ Extract handler dispatch logic from Engine into a reusable Router component with
 ```go
 // Router dispatches messages to handlers by CE type.
 // Implements Pipe signature for composability.
+// Uses pipe.ProcessPipe internally for middleware, concurrency, and error handling.
 type Router struct {
     handlers     map[string]handlerEntry
     errorHandler ErrorHandler
+    pipeConfig   pipe.Config
 }
 
 type RouterConfig struct {
     ErrorHandler ErrorHandler
+    // PipeConfig allows configuring the underlying ProcessPipe.
+    // Buffer, Concurrency, Timeout, etc. can be set here.
+    PipeConfig pipe.Config
 }
 
 // NewRouter creates a new message router.
@@ -39,6 +44,7 @@ func (r *Router) AddHandler(h Handler, cfg HandlerConfig) error
 
 // Pipe routes messages to handlers and returns outputs.
 // Signature matches pipe.Pipe[*Message, *Message] for composability.
+// Creates a new ProcessPipe on each call, allowing concurrent Pipe() calls.
 func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message, error)
 ```
 
