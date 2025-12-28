@@ -117,18 +117,18 @@ func main() {
 	)
 	engine.AddHandler(completionHandler, message.HandlerConfig{Name: "complete-order"})
 
-	// --- Configure Inputs ---
+	// --- Configure Inputs (Raw I/O for broker integration) ---
 
 	// Input 1: Order commands
 	orderInput := make(chan *message.RawMessage, 10)
-	engine.AddInput(orderInput, message.InputConfig{
+	engine.AddRawInput(orderInput, message.RawInputConfig{
 		Name:    "order-commands",
 		Matcher: match.Types("create.order"),
 	})
 
 	// Input 2: Payment commands
 	paymentInput := make(chan *message.RawMessage, 10)
-	engine.AddInput(paymentInput, message.InputConfig{
+	engine.AddRawInput(paymentInput, message.RawInputConfig{
 		Name:    "payment-commands",
 		Matcher: match.Types("process.payment"),
 	})
@@ -141,16 +141,16 @@ func main() {
 		Matcher: match.Types("order.created"),
 	})
 
-	// --- Configure Outputs ---
+	// --- Configure Outputs (Raw I/O for broker integration) ---
 
 	// Output 1: Order events (order.*)
-	orderOutput := engine.AddOutput(message.OutputConfig{
+	orderOutput := engine.AddRawOutput(message.RawOutputConfig{
 		Name:    "order-events",
 		Matcher: match.Types("order.%"),
 	})
 
 	// Output 2: Payment events (payment.*)
-	paymentOutput := engine.AddOutput(message.OutputConfig{
+	paymentOutput := engine.AddRawOutput(message.RawOutputConfig{
 		Name:    "payment-events",
 		Matcher: match.Types("payment.%"),
 	})

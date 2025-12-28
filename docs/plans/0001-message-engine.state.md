@@ -256,6 +256,69 @@ engine.Use(message.ValidateCE())  // validates required CE attributes
 - `NewHandler`: Takes NamingStrategy, handler creates complete output messages, receives Message[T]
 - `NewCommandHandler`: Takes config with Source + Naming, auto-generates output message attributes, receives cmd directly
 
+### Two-Merger Architecture
+
+Engine uses two mergers to support both raw (broker) and typed (internal) message flows:
+
+```
+RawInput₁ ─┐
+RawInput₂ ─┼→ RawMerger[*RawMessage] → Unmarshal ─┐
+RawInput₃ ─┘                                      │
+                                                  ↓
+TypedInput ─────────────────────────→ TypedMerger[*Message] → Handler → Distributor
+                                           ↑                                │
+                                           └─────── Loopback (typed) ───────┤
+                                                                            ↓
+                                                                     ┌──────┴──────┐
+                                                              TypedOutput     Marshal → RawOutput
+```
+
+**API:**
+```go
+// Typed API (primary, for internal use)
+AddInput(ch <-chan *Message, cfg InputConfig) error      // → TypedMerger
+AddOutput(cfg OutputConfig) <-chan *Message              // ← Distributor (no marshal)
+
+// Raw API (for broker integration)
+AddRawInput(ch <-chan *RawMessage, cfg RawInputConfig) error   // → RawMerger → Unmarshal
+AddRawOutput(cfg RawOutputConfig) <-chan *RawMessage           // ← Distributor → Marshal
+```
+
+**Benefits:**
+- Single unmarshal pipe (shared by all raw inputs)
+- Single marshal pipe (shared by all raw outputs)
+- Loopback is clean - just another typed input to TypedMerger
+- TypedInput bypasses unmarshaling entirely (for internal use, testing)
+- TypedOutput bypasses marshaling entirely (for internal routing)
+- Clear separation: typed = internal, raw = external boundary
+
+**Config structure:**
+```go
+// InputConfig for typed inputs
+type InputConfig struct {
+    Name    string
+    Matcher Matcher
+}
+
+// RawInputConfig for raw inputs
+type RawInputConfig struct {
+    Name      string
+    Matcher   Matcher
+}
+
+// OutputConfig for typed outputs
+type OutputConfig struct {
+    Name    string
+    Matcher Matcher
+}
+
+// RawOutputConfig for raw outputs
+type RawOutputConfig struct {
+    Name      string
+    Matcher   Matcher
+}
+```
+
 ### DataContentType
 
 Engine sets `DataContentType` at marshal boundary (from Marshaler.DataContentType()):
@@ -440,6 +503,17 @@ loopback := engine.AddOutput(OutputConfig{Matcher: ...})
 engine.AddInput(loopback, InputConfig{Name: "loopback"})  // ❌
 ```
 **Why rejected:** Dedicated `AddLoopback()` is cleaner and avoids marshal/unmarshal overhead.
+
+### Single RawMerger Simplification
+```go
+// Proposed simplification:
+Input₁ → Filter₁ ─┐
+Input₂ → Filter₂ ─┼→ Merger[*RawMessage] → Unmarshal → Handler → Distributor → Marshal → Output
+Input₃ → Filter₃ ─┘
+```
+**Why rejected:** Breaks loopback. Loopback feeds `*Message` (typed) back, but the single merger expects `*RawMessage`. Would require wasteful marshal/unmarshal of loopback messages.
+
+**Solution:** Two-merger architecture (see Current Design Decisions).
 
 ## Idiomaticity Review
 

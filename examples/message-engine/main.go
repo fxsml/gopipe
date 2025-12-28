@@ -61,12 +61,12 @@ func main() {
 	)
 	engine.AddHandler(handler, message.HandlerConfig{Name: "process-order"})
 
-	// Create channel for HTTP request/response flow
+	// Create channel for HTTP request/response flow (raw bytes)
 	httpRequests := make(chan *message.RawMessage, 10)
 
-	// Connect channel to engine
-	engine.AddInput(httpRequests, message.InputConfig{Name: "http-input"})
-	output := engine.AddOutput(message.OutputConfig{Name: "http-output"})
+	// Connect channel to engine (raw I/O for HTTP integration)
+	engine.AddRawInput(httpRequests, message.RawInputConfig{Name: "http-input"})
+	output := engine.AddRawOutput(message.RawOutputConfig{Name: "http-output"})
 
 	// Start engine
 	ctx, cancel := context.WithCancel(context.Background())

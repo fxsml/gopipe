@@ -26,10 +26,10 @@ func TestEngine_BasicFlow(t *testing.T) {
 	)
 	engine.AddHandler(handler, HandlerConfig{Name: "test-handler"})
 
-	// Setup channels
+	// Setup channels (raw I/O for broker integration)
 	input := make(chan *RawMessage, 1)
-	engine.AddInput(input, InputConfig{Name: "test-input"})
-	output := engine.AddOutput(OutputConfig{Name: "test-output"})
+	engine.AddRawInput(input, RawInputConfig{Name: "test-input"})
+	output := engine.AddRawOutput(RawOutputConfig{Name: "test-output"})
 
 	// Start engine
 	ctx, cancel := context.WithCancel(context.Background())
@@ -104,8 +104,8 @@ func TestEngine_NoHandler(t *testing.T) {
 	})
 
 	input := make(chan *RawMessage, 1)
-	engine.AddInput(input, InputConfig{})
-	engine.AddOutput(OutputConfig{})
+	engine.AddRawInput(input, RawInputConfig{})
+	engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -153,10 +153,10 @@ func TestEngine_InputMatcher(t *testing.T) {
 
 	// Input matcher that only accepts messages from /allowed source
 	input := make(chan *RawMessage, 10)
-	engine.AddInput(input, InputConfig{
+	engine.AddRawInput(input, RawInputConfig{
 		Matcher: &sourceMatcher{allowed: "/allowed"},
 	})
-	engine.AddOutput(OutputConfig{})
+	engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -212,13 +212,13 @@ func TestEngine_OutputMatcher(t *testing.T) {
 	engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	input := make(chan *RawMessage, 1)
-	engine.AddInput(input, InputConfig{})
+	engine.AddRawInput(input, RawInputConfig{})
 
 	// Create two outputs with different matchers
-	output1 := engine.AddOutput(OutputConfig{
+	output1 := engine.AddRawOutput(RawOutputConfig{
 		Matcher: &typeMatcher{pattern: "test.event"},
 	})
-	output2 := engine.AddOutput(OutputConfig{
+	output2 := engine.AddRawOutput(RawOutputConfig{
 		Matcher: &typeMatcher{pattern: "other.event"},
 	})
 
@@ -273,9 +273,9 @@ func TestEngine_MultipleInputs(t *testing.T) {
 
 	input1 := make(chan *RawMessage, 1)
 	input2 := make(chan *RawMessage, 1)
-	engine.AddInput(input1, InputConfig{Name: "input1"})
-	engine.AddInput(input2, InputConfig{Name: "input2"})
-	engine.AddOutput(OutputConfig{})
+	engine.AddRawInput(input1, RawInputConfig{Name: "input1"})
+	engine.AddRawInput(input2, RawInputConfig{Name: "input2"})
+	engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -320,14 +320,14 @@ func TestEngine_Loopback(t *testing.T) {
 	engine.AddHandler(handler2, HandlerConfig{Name: "handler2"})
 
 	input := make(chan *RawMessage, 1)
-	engine.AddInput(input, InputConfig{})
+	engine.AddRawInput(input, RawInputConfig{})
 
 	// Loopback intermediate events
 	engine.AddLoopback(LoopbackConfig{
 		Matcher: &typeMatcher{pattern: "intermediate.event"},
 	})
 
-	output := engine.AddOutput(OutputConfig{})
+	output := engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -380,8 +380,8 @@ func TestEngine_HandlerError(t *testing.T) {
 	engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	input := make(chan *RawMessage, 1)
-	engine.AddInput(input, InputConfig{})
-	engine.AddOutput(OutputConfig{})
+	engine.AddRawInput(input, RawInputConfig{})
+	engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -415,8 +415,8 @@ func TestEngine_MessageAck(t *testing.T) {
 	engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	input := make(chan *RawMessage, 1)
-	engine.AddInput(input, InputConfig{})
-	output := engine.AddOutput(OutputConfig{})
+	engine.AddRawInput(input, RawInputConfig{})
+	output := engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -454,8 +454,8 @@ func TestEngine_ContextCancellation(t *testing.T) {
 	engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	input := make(chan *RawMessage)
-	engine.AddInput(input, InputConfig{})
-	engine.AddOutput(OutputConfig{})
+	engine.AddRawInput(input, RawInputConfig{})
+	engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -492,8 +492,8 @@ func TestEngine_AddInputAfterStart(t *testing.T) {
 
 	// Add initial input before start
 	input1 := make(chan *RawMessage, 1)
-	engine.AddInput(input1, InputConfig{Name: "input1"})
-	engine.AddOutput(OutputConfig{})
+	engine.AddRawInput(input1, RawInputConfig{Name: "input1"})
+	engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -505,7 +505,7 @@ func TestEngine_AddInputAfterStart(t *testing.T) {
 
 	// Add second input after start
 	input2 := make(chan *RawMessage, 1)
-	err = engine.AddInput(input2, InputConfig{Name: "input2"})
+	err = engine.AddRawInput(input2, RawInputConfig{Name: "input2"})
 	if err != nil {
 		t.Fatalf("failed to add input after start: %v", err)
 	}
@@ -541,10 +541,10 @@ func TestEngine_AddOutputAfterStart(t *testing.T) {
 	engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	input := make(chan *RawMessage, 2)
-	engine.AddInput(input, InputConfig{})
+	engine.AddRawInput(input, RawInputConfig{})
 
 	// Add first output before start - matches only "other.event"
-	output1 := engine.AddOutput(OutputConfig{
+	output1 := engine.AddRawOutput(RawOutputConfig{
 		Matcher: &typeMatcher{pattern: "other.event"},
 	})
 
@@ -558,7 +558,7 @@ func TestEngine_AddOutputAfterStart(t *testing.T) {
 
 	// Add second output after start - matches "test.event"
 	// This output added after Start should receive the message
-	output2 := engine.AddOutput(OutputConfig{
+	output2 := engine.AddRawOutput(RawOutputConfig{
 		Matcher: &typeMatcher{pattern: "test.event"},
 	})
 
@@ -577,4 +577,136 @@ func TestEngine_AddOutputAfterStart(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for output2 (added after start)")
 	}
+}
+
+// TestEngine_TypedIO tests the typed input/output API (AddInput/AddOutput with *Message).
+func TestEngine_TypedIO(t *testing.T) {
+	engine := NewEngine(EngineConfig{
+		Marshaler: NewJSONMarshaler(),
+	})
+
+	handler := NewCommandHandler(
+		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
+		},
+		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+	)
+	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+
+	// Use typed input/output (no marshal/unmarshal)
+	input := make(chan *Message, 1)
+	engine.AddInput(input, InputConfig{Name: "typed-input"})
+	output := engine.AddOutput(OutputConfig{Name: "typed-output"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done, err := engine.Start(ctx)
+	if err != nil {
+		t.Fatalf("failed to start engine: %v", err)
+	}
+
+	// Send typed message (already unmarshaled)
+	input <- &Message{
+		Data:       &TestCommand{ID: "123", Name: "test"},
+		Attributes: Attributes{"type": "test.command"},
+	}
+
+	// Receive typed output (not marshaled)
+	select {
+	case out := <-output:
+		// Handler returns []TestEvent (values), so we receive TestEvent, not *TestEvent
+		event, ok := out.Data.(TestEvent)
+		if !ok {
+			t.Fatalf("expected TestEvent, got %T", out.Data)
+		}
+		if event.ID != "123" || event.Status != "done" {
+			t.Errorf("unexpected event: %+v", event)
+		}
+		if out.Attributes["type"] != "test.event" {
+			t.Errorf("expected type 'test.event', got %v", out.Attributes["type"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for typed output")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for engine to stop")
+	}
+}
+
+// TestEngine_MixedIO tests mixing raw and typed inputs/outputs.
+func TestEngine_MixedIO(t *testing.T) {
+	engine := NewEngine(EngineConfig{
+		Marshaler: NewJSONMarshaler(),
+	})
+
+	var count int
+	var mu sync.Mutex
+
+	handler := NewCommandHandler(
+		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+			mu.Lock()
+			count++
+			mu.Unlock()
+			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
+		},
+		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+	)
+	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+
+	// Mix raw and typed inputs
+	rawInput := make(chan *RawMessage, 1)
+	typedInput := make(chan *Message, 1)
+	engine.AddRawInput(rawInput, RawInputConfig{Name: "raw-input"})
+	engine.AddInput(typedInput, InputConfig{Name: "typed-input"})
+
+	// Mix raw and typed outputs
+	rawOutput := engine.AddRawOutput(RawOutputConfig{
+		Matcher: &typeMatcher{pattern: "test.event"},
+	})
+	typedOutput := engine.AddOutput(OutputConfig{
+		Matcher: &typeMatcher{pattern: "test.event"},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	engine.Start(ctx)
+
+	// Send raw message
+	data, _ := json.Marshal(TestCommand{ID: "1"})
+	rawInput <- &RawMessage{
+		Data:       data,
+		Attributes: Attributes{"type": "test.command"},
+	}
+
+	// Send typed message
+	typedInput <- &Message{
+		Data:       &TestCommand{ID: "2", Name: "test"},
+		Attributes: Attributes{"type": "test.command"},
+	}
+
+	// Wait for both outputs
+	received := 0
+	timeout := time.After(time.Second)
+	for received < 2 {
+		select {
+		case <-rawOutput:
+			received++
+		case <-typedOutput:
+			received++
+		case <-timeout:
+			t.Fatalf("timeout: only received %d of 2 messages", received)
+		}
+	}
+
+	mu.Lock()
+	if count != 2 {
+		t.Errorf("expected 2 messages processed, got %d", count)
+	}
+	mu.Unlock()
 }
