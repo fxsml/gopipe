@@ -470,3 +470,111 @@ func TestEngine_ContextCancellation(t *testing.T) {
 		t.Fatal("engine did not stop after context cancellation")
 	}
 }
+
+func TestEngine_AddInputAfterStart(t *testing.T) {
+	engine := NewEngine(EngineConfig{
+		Marshaler: NewJSONMarshaler(),
+	})
+
+	var count int
+	var mu sync.Mutex
+
+	handler := NewCommandHandler(
+		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+			mu.Lock()
+			count++
+			mu.Unlock()
+			return nil, nil
+		},
+		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+	)
+	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+
+	// Add initial input before start
+	input1 := make(chan *RawMessage, 1)
+	engine.AddInput(input1, InputConfig{Name: "input1"})
+	engine.AddOutput(OutputConfig{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, err := engine.Start(ctx)
+	if err != nil {
+		t.Fatalf("failed to start engine: %v", err)
+	}
+
+	// Add second input after start
+	input2 := make(chan *RawMessage, 1)
+	err = engine.AddInput(input2, InputConfig{Name: "input2"})
+	if err != nil {
+		t.Fatalf("failed to add input after start: %v", err)
+	}
+
+	data, _ := json.Marshal(TestCommand{ID: "1"})
+
+	// Send to first input
+	input1 <- &RawMessage{Data: data, Attributes: Attributes{"type": "test.command"}}
+
+	// Send to second input (added after start)
+	input2 <- &RawMessage{Data: data, Attributes: Attributes{"type": "test.command"}}
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	if count != 2 {
+		t.Errorf("expected 2 messages processed (one from each input), got %d", count)
+	}
+	mu.Unlock()
+}
+
+func TestEngine_AddOutputAfterStart(t *testing.T) {
+	engine := NewEngine(EngineConfig{
+		Marshaler: NewJSONMarshaler(),
+	})
+
+	handler := NewCommandHandler(
+		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
+		},
+		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+	)
+	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+
+	input := make(chan *RawMessage, 2)
+	engine.AddInput(input, InputConfig{})
+
+	// Add first output before start - matches only "other.event"
+	output1 := engine.AddOutput(OutputConfig{
+		Matcher: &typeMatcher{pattern: "other.event"},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, err := engine.Start(ctx)
+	if err != nil {
+		t.Fatalf("failed to start engine: %v", err)
+	}
+
+	// Add second output after start - matches "test.event"
+	// This output added after Start should receive the message
+	output2 := engine.AddOutput(OutputConfig{
+		Matcher: &typeMatcher{pattern: "test.event"},
+	})
+
+	data, _ := json.Marshal(TestCommand{ID: "1"})
+
+	// Send message that produces test.event
+	input <- &RawMessage{Data: data, Attributes: Attributes{"type": "test.command"}}
+
+	// output2 (added after start) should receive the message
+	// since output1 doesn't match "test.event"
+	select {
+	case <-output2:
+		// Expected - output added after start works
+	case <-output1:
+		t.Fatal("output1 should not receive test.event")
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for output2 (added after start)")
+	}
+}

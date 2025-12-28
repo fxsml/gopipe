@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/fxsml/gopipe/channel"
+	"github.com/fxsml/gopipe/pipe"
 )
 
 // ErrorHandler processes engine errors.
@@ -26,9 +27,12 @@ type Engine struct {
 	outputs      []outputEntry
 	loopbacks    []loopbackEntry
 
-	mu      sync.Mutex
-	started bool
-	done    chan struct{}
+	mu          sync.Mutex
+	started     bool
+	done        chan struct{}
+	ctx         context.Context
+	merger      *pipe.Merger[*Message]
+	distributor *pipe.Distributor[*Message]
 }
 
 type inputEntry struct {
@@ -70,19 +74,68 @@ func (e *Engine) AddHandler(h Handler, cfg HandlerConfig) error {
 }
 
 // AddInput registers an input channel.
+// Can be called before or after Start(). Inputs added after Start are
+// immediately connected to the processing pipeline.
 func (e *Engine) AddInput(ch <-chan *RawMessage, cfg InputConfig) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.inputs = append(e.inputs, inputEntry{ch: ch, config: cfg})
-	return nil
+
+	if !e.started {
+		// Store for later processing in Start()
+		e.inputs = append(e.inputs, inputEntry{ch: ch, config: cfg})
+		return nil
+	}
+
+	// Already started - add to merger immediately
+	cancelled := channel.Cancel(e.ctx, ch, func(msg *RawMessage, err error) {
+		// Messages in-flight during cancellation are dropped
+	})
+	filtered := e.applyInputMatcher(cancelled, cfg.Matcher)
+
+	unmarshalPipe := e.createUnmarshalPipe()
+	unmarshaled, _ := unmarshalPipe.Pipe(e.ctx, filtered)
+
+	_, err := e.merger.AddInput(unmarshaled)
+	return err
 }
 
 // AddOutput registers an output and returns the channel to consume from.
+// Can be called before or after Start(). Outputs added after Start are
+// immediately connected to the routing pipeline.
 func (e *Engine) AddOutput(cfg OutputConfig) <-chan *RawMessage {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
 	ch := make(chan *RawMessage, 100)
-	e.outputs = append(e.outputs, outputEntry{ch: ch, config: cfg})
+
+	if !e.started {
+		// Store for later processing in Start()
+		e.outputs = append(e.outputs, outputEntry{ch: ch, config: cfg})
+		return ch
+	}
+
+	// Already started - add to distributor immediately
+	outMatcher := cfg.Matcher
+	msgCh, _ := e.distributor.AddOutput(func(msg *Message) bool {
+		return outMatcher == nil || outMatcher.Match(msg)
+	})
+
+	// Start marshal pipe for this output
+	marshalPipe := e.createMarshalPipe()
+	rawCh, _ := marshalPipe.Pipe(e.ctx, msgCh)
+
+	// Forward to output channel
+	go func() {
+		for raw := range rawCh {
+			select {
+			case ch <- raw:
+			case <-e.ctx.Done():
+				return
+			}
+		}
+		close(ch)
+	}()
+
 	return ch
 }
 
@@ -102,35 +155,107 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		return nil, ErrAlreadyStarted
 	}
 	e.started = true
+	e.ctx = ctx
 	e.mu.Unlock()
 
-	// Build the processing pipeline using channel helpers
-	filteredInputs := make([]<-chan *RawMessage, 0, len(e.inputs))
+	// 1. Create merger for typed messages
+	e.merger = pipe.NewMerger[*Message](pipe.MergerConfig{Buffer: 100})
+
+	// 2. Create loopback channel for feedback (if we have loopbacks)
+	var loopbackIn chan *Message
+	if len(e.loopbacks) > 0 {
+		loopbackIn = make(chan *Message, 100)
+		e.merger.AddInput(loopbackIn)
+	}
+
+	// 3. For each input: filter → unmarshal → add to merger
 	for _, input := range e.inputs {
-		// Use channel.Cancel for context-aware input handling
 		cancelled := channel.Cancel(ctx, input.ch, func(msg *RawMessage, err error) {
 			// Messages in-flight during cancellation are dropped
 		})
-
-		// Use channel.Process for filtering with error callback
-		// Process returns 0 or 1 messages per input (filter semantics)
 		filtered := e.applyInputMatcher(cancelled, input.config.Matcher)
-		filteredInputs = append(filteredInputs, filtered)
+
+		unmarshalPipe := e.createUnmarshalPipe()
+		unmarshaled, _ := unmarshalPipe.Pipe(ctx, filtered)
+
+		e.merger.AddInput(unmarshaled)
 	}
 
-	// Merge all filtered inputs using channel.Merge
-	merged := channel.Merge(filteredInputs...)
+	// 4. Start merger
+	merged, err := e.merger.Merge(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	// Process messages using channel.Sink
-	sinkDone := channel.Sink(merged, func(raw *RawMessage) {
-		e.processMessage(ctx, raw)
+	// 5. Start handler pipe
+	handlerPipe := e.createHandlerPipe()
+	handled, err := handlerPipe.Pipe(ctx, merged)
+	if err != nil {
+		return nil, err
+	}
+
+	// 6. Create distributor for routing
+	e.distributor = pipe.NewDistributor[*Message](pipe.DistributorConfig[*Message]{
+		Buffer: 100,
+		NoMatchHandler: func(msg *Message) {
+			e.errorHandler(msg, ErrNoMatchingOutput)
+		},
 	})
 
-	// Wait for sink to complete and close outputs
+	// 7. Add loopback outputs first (first-match-wins)
+	for _, lb := range e.loopbacks {
+		lbMatcher := lb.config.Matcher
+		loopbackCh, _ := e.distributor.AddOutput(func(msg *Message) bool {
+			return lbMatcher != nil && lbMatcher.Match(msg)
+		})
+
+		// Feed loopback messages back to merger (skip unmarshal/marshal)
+		go func(ch <-chan *Message) {
+			for msg := range ch {
+				select {
+				case loopbackIn <- msg:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}(loopbackCh)
+	}
+
+	// 8. For each output: add to distributor with matcher, then marshal
+	for _, output := range e.outputs {
+		outMatcher := output.config.Matcher
+		msgCh, _ := e.distributor.AddOutput(func(msg *Message) bool {
+			return outMatcher == nil || outMatcher.Match(msg)
+		})
+
+		// Start marshal pipe for this output
+		marshalPipe := e.createMarshalPipe()
+		rawCh, _ := marshalPipe.Pipe(ctx, msgCh)
+
+		// Forward to output channel
+		go func(out chan *RawMessage, rawCh <-chan *RawMessage) {
+			for raw := range rawCh {
+				select {
+				case out <- raw:
+				case <-ctx.Done():
+					return
+				}
+			}
+			close(out)
+		}(output.ch, rawCh)
+	}
+
+	// 9. Start distributor
+	distributeDone, err := e.distributor.Distribute(ctx, handled)
+	if err != nil {
+		return nil, err
+	}
+
+	// 10. Wait for completion
 	go func() {
-		<-sinkDone
-		for _, out := range e.outputs {
-			close(out.ch)
+		<-distributeDone
+		if loopbackIn != nil {
+			close(loopbackIn)
 		}
 		close(e.done)
 	}()
@@ -157,100 +282,89 @@ func (e *Engine) applyInputMatcher(in <-chan *RawMessage, matcher Matcher) <-cha
 	})
 }
 
-func (e *Engine) processMessage(ctx context.Context, raw *RawMessage) {
-	// Get CE type from attributes
-	ceType, _ := raw.Attributes["type"].(string)
+// createUnmarshalPipe creates a pipe that unmarshals RawMessage to typed Message.
+func (e *Engine) createUnmarshalPipe() *pipe.ProcessPipe[*RawMessage, *Message] {
+	return pipe.NewProcessPipe(
+		func(ctx context.Context, raw *RawMessage) ([]*Message, error) {
+			ceType, _ := raw.Attributes["type"].(string)
 
-	// Find handler
-	handler, ok := e.handlers[ceType]
-	if !ok {
-		e.errorHandler(&Message{Attributes: raw.Attributes}, ErrNoHandler)
-		return
-	}
+			handler, ok := e.handlers[ceType]
+			if !ok {
+				return nil, ErrNoHandler
+			}
 
-	// Create instance and unmarshal
-	instance := handler.NewInput()
-	if err := e.marshaler.Unmarshal(raw.Data, instance); err != nil {
-		e.errorHandler(&Message{Attributes: raw.Attributes}, err)
-		return
-	}
+			instance := handler.NewInput()
+			if err := e.marshaler.Unmarshal(raw.Data, instance); err != nil {
+				return nil, err
+			}
 
-	// Create Message with typed data
-	msg := &Message{
-		Data:       instance,
-		Attributes: raw.Attributes,
-		a:          raw.a,
-	}
-
-	// Handle message
-	outputs, err := handler.Handle(ctx, msg)
-	if err != nil {
-		e.errorHandler(msg, err)
-		return
-	}
-
-	// Route outputs
-	for _, out := range outputs {
-		e.routeOutput(ctx, out)
-	}
-
-	// Ack original message
-	raw.Ack()
+			return []*Message{{
+				Data:       instance,
+				Attributes: raw.Attributes,
+				a:          raw.a,
+			}}, nil
+		},
+		pipe.Config{
+			ErrorHandler: func(in any, err error) {
+				raw := in.(*RawMessage)
+				e.errorHandler(&Message{Attributes: raw.Attributes}, err)
+			},
+		},
+	)
 }
 
-func (e *Engine) routeOutput(ctx context.Context, msg *Message) {
-	// Check loopbacks first
-	for _, lb := range e.loopbacks {
-		if lb.config.Matcher != nil && lb.config.Matcher.Match(msg) {
-			// Loopback - reprocess without marshal/unmarshal
-			go func(m *Message) {
-				ceType, _ := m.Attributes["type"].(string)
-				handler, ok := e.handlers[ceType]
-				if !ok {
-					e.errorHandler(m, ErrNoHandler)
-					return
-				}
-				outputs, err := handler.Handle(ctx, m)
-				if err != nil {
-					e.errorHandler(m, err)
-					return
-				}
-				for _, out := range outputs {
-					e.routeOutput(ctx, out)
-				}
-			}(msg)
-			return
-		}
-	}
+// createHandlerPipe creates a pipe that dispatches messages to handlers.
+func (e *Engine) createHandlerPipe() *pipe.ProcessPipe[*Message, *Message] {
+	return pipe.NewProcessPipe(
+		func(ctx context.Context, msg *Message) ([]*Message, error) {
+			ceType, _ := msg.Attributes["type"].(string)
 
-	// Marshal for output
-	data, err := e.marshaler.Marshal(msg.Data)
-	if err != nil {
-		e.errorHandler(msg, err)
-		return
-	}
-
-	// Set DataContentType
-	if msg.Attributes == nil {
-		msg.Attributes = make(Attributes)
-	}
-	msg.Attributes["datacontenttype"] = e.marshaler.DataContentType()
-
-	raw := &RawMessage{
-		Data:       data,
-		Attributes: msg.Attributes,
-	}
-
-	// Find matching output
-	for _, out := range e.outputs {
-		if out.config.Matcher == nil || out.config.Matcher.Match(msg) {
-			select {
-			case out.ch <- raw:
-			case <-ctx.Done():
+			handler, ok := e.handlers[ceType]
+			if !ok {
+				return nil, ErrNoHandler
 			}
-			return
-		}
-	}
 
-	e.errorHandler(msg, ErrNoMatchingOutput)
+			outputs, err := handler.Handle(ctx, msg)
+			if err != nil {
+				return nil, err
+			}
+
+			msg.Ack()
+			return outputs, nil
+		},
+		pipe.Config{
+			ErrorHandler: func(in any, err error) {
+				msg := in.(*Message)
+				e.errorHandler(msg, err)
+			},
+		},
+	)
+}
+
+// createMarshalPipe creates a pipe that marshals Message to RawMessage.
+func (e *Engine) createMarshalPipe() *pipe.ProcessPipe[*Message, *RawMessage] {
+	return pipe.NewProcessPipe(
+		func(ctx context.Context, msg *Message) ([]*RawMessage, error) {
+			data, err := e.marshaler.Marshal(msg.Data)
+			if err != nil {
+				return nil, err
+			}
+
+			if msg.Attributes == nil {
+				msg.Attributes = make(Attributes)
+			}
+			msg.Attributes["datacontenttype"] = e.marshaler.DataContentType()
+
+			return []*RawMessage{{
+				Data:       data,
+				Attributes: msg.Attributes,
+			}}, nil
+		},
+		pipe.Config{
+			ErrorHandler: func(in any, err error) {
+				msg := in.(*Message)
+				e.errorHandler(msg, err)
+			},
+		},
+	)
 }

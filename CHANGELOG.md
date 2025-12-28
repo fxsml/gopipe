@@ -14,9 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `NoMatchHandler` callback for unmatched messages
   - Graceful shutdown with configurable timeout
   - Consistent API with `Merger` (inverse operation: one input → many outputs)
+- **message**: `Engine.AddInput()` and `Engine.AddOutput()` now support dynamic addition after Start()
+- **message**: Added `message/README.md` documentation
 
 ### Changed
 - **pipe**: `Merger.Add()` renamed to `Merger.AddInput()` for symmetry with `Distributor.AddOutput()`
+- **message**: `Engine` refactored to use `pipe.Merger` and `pipe.Distributor` internally
+  - Input pipeline: unmarshal pipe → Merger → handler pipe
+  - Output pipeline: Distributor → marshal pipe
+  - Loopback feeds back to Merger (skips marshal/unmarshal)
 
 ## [0.11.0] - Upcoming
 
