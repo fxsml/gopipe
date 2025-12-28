@@ -21,15 +21,15 @@ type Router struct {
 	mu           sync.RWMutex
 	handlers     map[string]handlerEntry
 	errorHandler ErrorHandler
-	pipeConfig   pipe.Config
+	bufferSize   int
+	concurrency  int
 }
 
 // RouterConfig configures the message router.
 type RouterConfig struct {
 	ErrorHandler ErrorHandler
-	// PipeConfig allows configuring the underlying ProcessPipe.
-	// Buffer, Concurrency, Timeout, etc. can be set here.
-	PipeConfig pipe.Config
+	BufferSize   int // Output channel buffer size (default: 100)
+	Concurrency  int // Number of concurrent handler invocations (default: 1)
 }
 
 // NewRouter creates a new message router.
@@ -41,17 +41,21 @@ func NewRouter(cfg RouterConfig) *Router {
 		}
 	}
 
-	// Set up pipe error handler to delegate to router's error handler
-	pipeConfig := cfg.PipeConfig
-	pipeConfig.ErrorHandler = func(in any, err error) {
-		msg := in.(*Message)
-		eh(msg, err)
+	bufferSize := cfg.BufferSize
+	if bufferSize <= 0 {
+		bufferSize = 100
+	}
+
+	concurrency := cfg.Concurrency
+	if concurrency <= 0 {
+		concurrency = 1
 	}
 
 	return &Router{
 		handlers:     make(map[string]handlerEntry),
 		errorHandler: eh,
-		pipeConfig:   pipeConfig,
+		bufferSize:   bufferSize,
+		concurrency:  concurrency,
 	}
 }
 
@@ -67,7 +71,15 @@ func (r *Router) AddHandler(h Handler, cfg HandlerConfig) error {
 // Pipe routes messages to handlers and returns outputs.
 // Signature matches pipe.Pipe[*Message, *Message] for composability.
 func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message, error) {
-	p := pipe.NewProcessPipe(r.process, r.pipeConfig)
+	cfg := pipe.Config{
+		BufferSize:  r.bufferSize,
+		Concurrency: r.concurrency,
+		ErrorHandler: func(in any, err error) {
+			msg := in.(*Message)
+			r.errorHandler(msg, err)
+		},
+	}
+	p := pipe.NewProcessPipe(r.process, cfg)
 	return p.Pipe(ctx, in)
 }
 
