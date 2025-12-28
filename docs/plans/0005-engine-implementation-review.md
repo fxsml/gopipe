@@ -233,38 +233,41 @@ if len(e.loopbacks) > 0 {
 
 ---
 
-### Issue 7: Raw distributor matcher creates garbage on every check
+### Issue 7: Matcher interface should use Attributes, not Message
 
-**Location:** `Start()` line 389-391, `AddRawOutput()` line 200-202
+**Location:** `matcher.go`, `match/*.go`, all matcher call sites in `engine.go`
 
 **Current:**
 ```go
-rawCh, _ := e.rawDistributor.AddOutput(func(msg *RawMessage) bool {
-    m := &Message{Attributes: msg.Attributes}  // Allocates on EVERY match check
-    return outMatcher == nil || outMatcher.Match(m)
-})
+type Matcher interface {
+    Match(msg *Message) bool
+}
 ```
 
-**Problem:** Creates temporary `*Message` for every message, every matcher check.
+**Problem:**
+- All existing matchers (Types, Sources, All, Any) only access `msg.Attributes`, never `msg.Data`
+- Raw message matching requires creating garbage: `&Message{Attributes: msg.Attributes}`
+- Interface is dishonest about what matchers actually need
 
-**Fix options:**
+**Fix:** Change Matcher to use Attributes directly:
+```go
+type Matcher interface {
+    Match(attrs Attributes) bool
+}
+```
 
-1. **Make Matcher work with Attributes directly:**
-   ```go
-   type Matcher interface {
-       Match(msg *Message) bool
-       MatchAttrs(attrs Attributes) bool  // Add this
-   }
-   ```
+**Benefits:**
+1. Eliminates allocation in raw distributor matching
+2. Honest API - reflects what matchers actually need
+3. Works for both Message and RawMessage (both have Attributes)
+4. Simpler caller code: `matcher.Match(msg.Attributes)` vs wrapper creation
 
-2. **Create AttributesMatcher type:**
-   ```go
-   type AttributesMatcher interface {
-       MatchAttrs(attrs Attributes) bool
-   }
-   ```
-
-3. **Cache the wrapper (if same attributes)** - complex, not recommended
+**Migration:**
+1. Update `Matcher` interface in `matcher.go`
+2. Update `types.go`, `sources.go` signatures
+3. Update `match.go` (All/Any) signatures
+4. Update all call sites in `engine.go`
+5. Update tests
 
 ---
 
@@ -320,7 +323,7 @@ pipeline := pipe.Apply(pipeA, pipeB)  // Composes two pipes
 | Forwarding goroutines | None | Return component channels directly |
 | Before/after Start() logic | None | Always same path |
 | N loopback outputs + goroutines | 1 output with match.Any | All feed same merger |
-| `&Message{Attributes}` per match | MatchAttrs(Attributes) | Avoid allocation |
+| `Matcher.Match(*Message)` | `Matcher.Match(Attributes)` | All matchers only use attrs |
 | Double handler lookup | Cache handler in message | Minor optimization |
 
 ---
@@ -345,7 +348,7 @@ pipeline := pipe.Apply(pipeA, pipeB)  // Composes two pipes
 ### Phase 4: Configuration & Cleanup
 10. Add BufferSize to EngineConfig
 11. Create helper for raw error handling
-12. Add `MatchAttrs(Attributes)` to Matcher interface (optional)
+12. Change `Matcher.Match(*Message)` to `Matcher.Match(Attributes)`
 
 ---
 
@@ -366,4 +369,5 @@ pipeline := pipe.Apply(pipeA, pipeB)  // Composes two pipes
 - [ ] `channel.Filter` used for input matchers
 - [ ] `channel.Process` used for marshal/unmarshal
 - [ ] Buffer sizes configurable via EngineConfig
+- [ ] `Matcher.Match(Attributes)` - interface uses Attributes directly
 - [ ] `make test && make build && make vet` passes
