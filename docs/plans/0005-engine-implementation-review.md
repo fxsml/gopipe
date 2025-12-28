@@ -29,68 +29,58 @@ return channel.Process(in, func(msg *Message) []*Message {
 - This is filtering with side effects (error handler call)
 - Semantically incorrect
 
-**Fix:** Use `pipe.NewFilterPipe` which supports error handling:
+**Fix:** Use `channel.Filter` with direct error handler call:
 ```go
 func (e *Engine) applyTypedInputMatcher(in <-chan *Message, matcher Matcher) <-chan *Message {
     if matcher == nil {
         return in
     }
-    p := pipe.NewFilterPipe(
-        func(ctx context.Context, msg *Message) (bool, error) {
-            if matcher.Match(msg) {
-                return true, nil
-            }
-            return false, ErrInputRejected
-        },
-        pipe.Config{
-            ErrorHandler: func(in any, err error) {
-                e.errorHandler(in.(*Message), err)
-            },
-        },
-    )
-    out, _ := p.Pipe(context.Background(), in)
-    return out
+    return channel.Filter(in, func(msg *Message) bool {
+        if matcher.Match(msg) {
+            return true
+        }
+        e.errorHandler(msg, ErrInputRejected)
+        return false
+    })
 }
 ```
 
+This is simpler than pipe.NewFilterPipe - no context, no pipe config, just a filter with side effects.
+
 ---
 
-### Issue 2: ProcessPipe used where TransformPipe is appropriate
+### Issue 2: ProcessPipe used where simpler approach works
 
 **Location:** `engine.go` - `createMarshalPipe`, `createUnmarshalPipe`
 
 **Problem:**
-- These pipes always return exactly 1 output on success
-- `ProcessPipe` (1:N) is semantically incorrect for 1:1 transforms
+- These use `ProcessPipe` which requires context and pipe configuration
+- The pipe package adds complexity not needed here
 
-**Fix:** Use `pipe.NewTransformPipe`:
+**Fix:** Use `channel.Process` with direct error handler call:
 ```go
-func (e *Engine) createMarshalPipe() *pipe.ProcessPipe[*Message, *RawMessage] {
-    return pipe.NewTransformPipe(
-        func(ctx context.Context, msg *Message) (*RawMessage, error) {
+func (e *Engine) createMarshalFunc() func(<-chan *Message) <-chan *RawMessage {
+    return func(in <-chan *Message) <-chan *RawMessage {
+        return channel.Process(in, func(msg *Message) []*RawMessage {
             data, err := e.marshaler.Marshal(msg.Data)
             if err != nil {
-                return nil, err
+                e.errorHandler(msg, err)
+                return nil
             }
             if msg.Attributes == nil {
                 msg.Attributes = make(Attributes)
             }
             msg.Attributes["datacontenttype"] = e.marshaler.DataContentType()
-            return &RawMessage{
+            return []*RawMessage{{
                 Data:       data,
                 Attributes: msg.Attributes,
-            }, nil
-        },
-        pipe.Config{
-            ErrorHandler: func(in any, err error) {
-                e.errorHandler(in.(*Message), err)
-            },
-        },
-    )
+            }}
+        })
+    }
 }
 ```
 
-Same for `createUnmarshalPipe()`.
+Same for unmarshal. Returns `nil` on error (0 outputs), `[]*T{result}` on success (1 output).
 
 ---
 
@@ -98,7 +88,7 @@ Same for `createUnmarshalPipe()`.
 
 **Location:** Multiple places in `Start()` and `AddOutput`/`AddRawOutput`
 
-**Problem:** Boilerplate repeated 7+ times:
+**Problem:** Boilerplate repeated for forwarding with context cancellation:
 ```go
 go func(out chan *Message, msgCh <-chan *Message) {
     for msg := range msgCh {
@@ -112,21 +102,40 @@ go func(out chan *Message, msgCh <-chan *Message) {
 }(output.ch, msgCh)
 ```
 
-**Fix:** Create helper function:
-```go
-func forward[T any](ctx context.Context, from <-chan T, to chan T) {
-    go func() {
-        defer close(to)
-        for msg := range from {
-            select {
-            case to <- msg:
-            case <-ctx.Done():
-                return
-            }
-        }
-    }()
-}
-```
+**Analysis:**
+
+This pattern exists because:
+1. `AddOutput` creates output channel before `Start` (returns channel to caller)
+2. `Start` creates data source (distributor subscriber)
+3. Need to bridge them
+
+**Existing utilities that could help:**
+
+1. **Loopback channels**: Use `channel.Merge` instead of multiple forwarding goroutines
+   ```go
+   loopbackChannels := make([]<-chan *Message, 0, len(e.loopbacks))
+   for _, loopback := range e.loopbacks {
+       ch := e.typedDistributor.Subscribe(ctx)
+       ch = channel.Filter(ch, loopback.config.Matcher.Match)
+       loopbackChannels = append(loopbackChannels, ch)
+   }
+   loopbackMerged := channel.Merge(loopbackChannels...)
+   e.typedMerger.Add(loopbackMerged)
+   ```
+
+2. **Context cancellation**: Use `channel.Cancel` for context-aware forwarding
+   ```go
+   msgCh = channel.Cancel(ctx, msgCh, func(msg *Message, err error) {
+       // Optional: handle in-flight messages on cancellation
+   })
+   ```
+
+3. **Output forwarding**: The forwarding from subscriber to pre-created output.ch is inherent to the API design. Options:
+   - Keep forwarding (simplest)
+   - Change API so AddOutput returns channel created during Start (breaking change)
+   - Use a channel wrapper/proxy pattern (adds complexity)
+
+**Recommendation:** Use `channel.Merge` for loopbacks, `channel.Cancel` where context awareness is needed, accept forwarding for outputs as inherent to API design.
 
 ---
 
@@ -162,24 +171,27 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 
 | Function | Current | Correct | Reason |
 |----------|---------|---------|--------|
-| `applyTypedInputMatcher` | channel.Process | pipe.NewFilterPipe | Filtering with error handler |
-| `applyRawInputMatcher` | channel.Process | pipe.NewFilterPipe | Filtering with error handler |
-| `createMarshalPipe` | pipe.NewProcessPipe | pipe.NewTransformPipe | 1:1 transform |
-| `createUnmarshalPipe` | pipe.NewProcessPipe | pipe.NewTransformPipe | 1:1 transform |
-| `createHandlerPipe` | pipe.NewProcessPipe | pipe.NewProcessPipe | 1:N correct (handler can return multiple) |
+| `applyTypedInputMatcher` | channel.Process | channel.Filter | Filtering with error side effect |
+| `applyRawInputMatcher` | channel.Process | channel.Filter | Filtering with error side effect |
+| `createMarshalPipe` | pipe.ProcessPipe | channel.Process | 1:0/1 mapping, no pipe needed |
+| `createUnmarshalPipe` | pipe.ProcessPipe | channel.Process | 1:0/1 mapping, no pipe needed |
+| `createHandlerPipe` | pipe.ProcessPipe | pipe.ProcessPipe | 1:N correct (handler returns multiple) |
+| loopback forwarding | manual goroutines | channel.Merge | Multiple sources → single channel |
 
 ---
 
 ## Implementation Order
 
 ### Phase 1: Quick Wins (Low Risk)
-1. Replace `ProcessPipe` with `TransformPipe` for marshal/unmarshal
-2. Create forwarding helper function
-3. Add BufferSize to EngineConfig
+1. Replace `channel.Process` with `channel.Filter` for matchers
+2. Add BufferSize to EngineConfig
+3. Create helper for raw error handling
 
-### Phase 2: Filter Refactor (Medium Risk)
-4. Replace `channel.Process` with `pipe.NewFilterPipe` for matchers
-5. Create helper for raw error handling
+### Phase 2: Simplify Marshal/Unmarshal
+4. Replace `pipe.ProcessPipe` with `channel.Process` for marshal/unmarshal
+
+### Phase 3: Loopback Refactor
+5. Replace loopback forwarding goroutines with `channel.Merge`
 
 ---
 
@@ -193,8 +205,9 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 
 ## Acceptance Criteria
 
-- [ ] No `channel.Process` used for filtering
-- [ ] `TransformPipe` used for 1:1 transforms (marshal/unmarshal)
-- [ ] Forwarding helper reduces code duplication
+- [ ] `channel.Filter` used for input matchers (simpler than pipe)
+- [ ] `channel.Process` used for marshal/unmarshal (simpler than pipe)
+- [ ] `channel.Merge` used for loopback (eliminates forwarding goroutines)
 - [ ] Buffer sizes configurable via EngineConfig
+- [ ] Error helper reduces code duplication
 - [ ] `make test && make build && make vet` passes
