@@ -84,58 +84,56 @@ Same for unmarshal. Returns `nil` on error (0 outputs), `[]*T{result}` on succes
 
 ---
 
-### Issue 3: Manual forwarding goroutines
+### Issue 3: Unnecessary forwarding in after-start case
 
-**Location:** Multiple places in `Start()` and `AddOutput`/`AddRawOutput`
+**Location:** `AddOutput`/`AddRawOutput` after-start case
 
-**Problem:** Boilerplate repeated for forwarding with context cancellation:
+**Problem:** We create an extra channel and forward when we don't need to:
 ```go
-go func(out chan *Message, msgCh <-chan *Message) {
-    for msg := range msgCh {
-        select {
-        case out <- msg:
-        case <-ctx.Done():
-            return
-        }
-    }
-    close(out)
-}(output.ch, msgCh)
+// Current after-start case - WASTEFUL:
+msgCh, _ := e.distributor.AddOutput(matcher)  // Distributor creates channel
+ch := make(chan *Message, 100)                 // We create ANOTHER channel
+go func() { forward msgCh → ch }()             // Pointless forwarding
+return ch
 ```
+
+`distributor.AddOutput()` already returns a usable channel. Why create another and forward?
 
 **Analysis:**
 
-This pattern exists because:
-1. `AddOutput` creates output channel before `Start` (returns channel to caller)
-2. `Start` creates data source (distributor subscriber)
-3. Need to bridge them
+| Case | Forwarding Needed? | Reason |
+|------|-------------------|--------|
+| AddOutput **after** Start | **No** | Distributor exists, return its channel directly |
+| AddOutput **before** Start | Yes | Must return channel before distributor exists |
+| Start() wiring | Yes | Channel already returned to user, must connect |
+| Loopbacks | Yes | Multiple sources → single merger input |
 
-**Existing utilities that could help:**
+**Fix for after-start case - eliminate forwarding entirely:**
+```go
+func (e *Engine) AddOutput(cfg OutputConfig) <-chan *Message {
+    e.mu.Lock()
+    defer e.mu.Unlock()
 
-1. **Loopback channels**: Use `channel.Merge` instead of multiple forwarding goroutines
-   ```go
-   loopbackChannels := make([]<-chan *Message, 0, len(e.loopbacks))
-   for _, loopback := range e.loopbacks {
-       ch := e.typedDistributor.Subscribe(ctx)
-       ch = channel.Filter(ch, loopback.config.Matcher.Match)
-       loopbackChannels = append(loopbackChannels, ch)
-   }
-   loopbackMerged := channel.Merge(loopbackChannels...)
-   e.typedMerger.Add(loopbackMerged)
-   ```
+    if e.started {
+        // Return distributor's channel directly - no forwarding!
+        ch, _ := e.distributor.AddOutput(func(msg *Message) bool {
+            return cfg.Matcher == nil || cfg.Matcher.Match(msg)
+        })
+        return ch
+    }
 
-2. **Context cancellation**: Use `channel.Cancel` for context-aware forwarding
-   ```go
-   msgCh = channel.Cancel(ctx, msgCh, func(msg *Message, err error) {
-       // Optional: handle in-flight messages on cancellation
-   })
-   ```
+    // Before start - must create channel now, connect later in Start()
+    ch := make(chan *Message, 100)
+    e.typedOutputs = append(e.typedOutputs, typedOutputEntry{ch: ch, config: cfg})
+    return ch
+}
+```
 
-3. **Output forwarding**: The forwarding from subscriber to pre-created output.ch is inherent to the API design. Options:
-   - Keep forwarding (simplest)
-   - Change API so AddOutput returns channel created during Start (breaking change)
-   - Use a channel wrapper/proxy pattern (adds complexity)
+Same fix applies to `AddRawOutput` after-start case.
 
-**Recommendation:** Use `channel.Merge` for loopbacks, `channel.Cancel` where context awareness is needed, accept forwarding for outputs as inherent to API design.
+**For before-start case:** Forwarding is unavoidable with current API design. Alternative designs would be breaking changes.
+
+**For loopbacks in Start():** Could use `channel.Merge` instead of multiple forwarding goroutines, but current approach works.
 
 ---
 
@@ -176,7 +174,8 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 | `createMarshalPipe` | pipe.ProcessPipe | channel.Process | 1:0/1 mapping, no pipe needed |
 | `createUnmarshalPipe` | pipe.ProcessPipe | channel.Process | 1:0/1 mapping, no pipe needed |
 | `createHandlerPipe` | pipe.ProcessPipe | pipe.ProcessPipe | 1:N correct (handler returns multiple) |
-| loopback forwarding | manual goroutines | channel.Merge | Multiple sources → single channel |
+| AddOutput after-start | create ch + forward | return distributor ch | No forwarding needed |
+| AddRawOutput after-start | create ch + forward | return distributor ch | No forwarding needed |
 
 ---
 
@@ -184,14 +183,12 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 
 ### Phase 1: Quick Wins (Low Risk)
 1. Replace `channel.Process` with `channel.Filter` for matchers
-2. Add BufferSize to EngineConfig
-3. Create helper for raw error handling
+2. Eliminate forwarding in AddOutput/AddRawOutput after-start case
+3. Add BufferSize to EngineConfig
+4. Create helper for raw error handling
 
 ### Phase 2: Simplify Marshal/Unmarshal
-4. Replace `pipe.ProcessPipe` with `channel.Process` for marshal/unmarshal
-
-### Phase 3: Loopback Refactor
-5. Replace loopback forwarding goroutines with `channel.Merge`
+5. Replace `pipe.ProcessPipe` with `channel.Process` for marshal/unmarshal
 
 ---
 
@@ -205,9 +202,9 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 
 ## Acceptance Criteria
 
-- [ ] `channel.Filter` used for input matchers (simpler than pipe)
-- [ ] `channel.Process` used for marshal/unmarshal (simpler than pipe)
-- [ ] `channel.Merge` used for loopback (eliminates forwarding goroutines)
+- [ ] `channel.Filter` used for input matchers
+- [ ] `channel.Process` used for marshal/unmarshal
+- [ ] No forwarding goroutines in AddOutput/AddRawOutput after-start case
 - [ ] Buffer sizes configurable via EngineConfig
 - [ ] Error helper reduces code duplication
 - [ ] `make test && make build && make vet` passes
