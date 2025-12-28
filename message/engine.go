@@ -27,6 +27,8 @@ type handlerEntry struct {
 // Engine orchestrates message flow between inputs, handlers, and outputs.
 // Uses two mergers: RawMerger for raw inputs (broker integration) and
 // TypedMerger for typed inputs, loopback, and internal routing.
+// Uses two distributors: typed Distributor for loopbacks and typed outputs,
+// and rawDistributor for raw outputs (after single marshal pipe).
 type Engine struct {
 	marshaler    Marshaler
 	errorHandler ErrorHandler
@@ -38,18 +40,19 @@ type Engine struct {
 	rawInputs []rawInputEntry
 	// Typed outputs (directly from Distributor, no marshal)
 	typedOutputs []typedOutputEntry
-	// Raw outputs (from Distributor → Marshal)
+	// Raw outputs (from Distributor → Marshal → RawDistributor)
 	rawOutputs []rawOutputEntry
 	// Loopbacks (from Distributor back to TypedMerger)
 	loopbacks []loopbackEntry
 
-	mu          sync.Mutex
-	started     bool
-	done        chan struct{}
-	ctx         context.Context
-	rawMerger   *pipe.Merger[*RawMessage]
-	typedMerger *pipe.Merger[*Message]
-	distributor *pipe.Distributor[*Message]
+	mu             sync.Mutex
+	started        bool
+	done           chan struct{}
+	ctx            context.Context
+	rawMerger      *pipe.Merger[*RawMessage]
+	typedMerger    *pipe.Merger[*Message]
+	distributor    *pipe.Distributor[*Message]
+	rawDistributor *pipe.Distributor[*RawMessage]
 }
 
 type typedInputEntry struct {
@@ -190,7 +193,31 @@ func (e *Engine) AddRawOutput(cfg RawOutputConfig) <-chan *RawMessage {
 		return ch
 	}
 
-	// Already started - add to distributor immediately
+	// Already started
+	if e.rawDistributor != nil {
+		// Raw distributor exists - add to it (shares single marshal pipe)
+		outMatcher := cfg.Matcher
+		rawCh, _ := e.rawDistributor.AddOutput(func(msg *RawMessage) bool {
+			m := &Message{Attributes: msg.Attributes}
+			return outMatcher == nil || outMatcher.Match(m)
+		})
+
+		// Forward to output channel
+		go func() {
+			for raw := range rawCh {
+				select {
+				case ch <- raw:
+				case <-e.ctx.Done():
+					return
+				}
+			}
+			close(ch)
+		}()
+
+		return ch
+	}
+
+	// No raw distributor (no raw outputs at start) - fall back to per-output marshal
 	outMatcher := cfg.Matcher
 	msgCh, _ := e.distributor.AddOutput(func(msg *Message) bool {
 		return outMatcher == nil || outMatcher.Match(msg)
@@ -337,28 +364,48 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		}(output.ch, msgCh)
 	}
 
-	// 10. Add raw outputs (with marshal)
-	for _, output := range e.rawOutputs {
-		outMatcher := output.config.Matcher
-		msgCh, _ := e.distributor.AddOutput(func(msg *Message) bool {
-			return outMatcher == nil || outMatcher.Match(msg)
+	// 10. Set up raw output infrastructure (single marshal pipe → raw distributor)
+	if len(e.rawOutputs) > 0 {
+		// Add catch-all for raw-bound messages (after loopbacks and typed outputs)
+		rawBound, _ := e.distributor.AddOutput(func(msg *Message) bool {
+			return true // catch all remaining
 		})
 
-		// Start marshal pipe for this output
+		// Create ONE marshal pipe (shared by all raw outputs)
 		marshalPipe := e.createMarshalPipe()
-		rawCh, _ := marshalPipe.Pipe(ctx, msgCh)
+		marshaled, _ := marshalPipe.Pipe(ctx, rawBound)
 
-		// Forward to output channel
-		go func(out chan *RawMessage, rawCh <-chan *RawMessage) {
-			for raw := range rawCh {
-				select {
-				case out <- raw:
-				case <-ctx.Done():
-					return
+		// Create raw distributor
+		e.rawDistributor = pipe.NewDistributor[*RawMessage](pipe.DistributorConfig[*RawMessage]{
+			Buffer: 100,
+			NoMatchHandler: func(msg *RawMessage) {
+				e.errorHandler(&Message{Attributes: msg.Attributes}, ErrNoMatchingOutput)
+			},
+		})
+
+		// Add each raw output to raw distributor
+		for _, output := range e.rawOutputs {
+			outMatcher := output.config.Matcher
+			rawCh, _ := e.rawDistributor.AddOutput(func(msg *RawMessage) bool {
+				m := &Message{Attributes: msg.Attributes}
+				return outMatcher == nil || outMatcher.Match(m)
+			})
+
+			// Forward to output channel
+			go func(out chan *RawMessage, rawCh <-chan *RawMessage) {
+				for raw := range rawCh {
+					select {
+					case out <- raw:
+					case <-ctx.Done():
+						return
+					}
 				}
-			}
-			close(out)
-		}(output.ch, rawCh)
+				close(out)
+			}(output.ch, rawCh)
+		}
+
+		// Start raw distributor
+		e.rawDistributor.Distribute(ctx, marshaled)
 	}
 
 	// 11. Start distributor
