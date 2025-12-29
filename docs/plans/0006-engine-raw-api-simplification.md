@@ -128,7 +128,7 @@ func (e *Engine) AddOutput(cfg OutputConfig) <-chan *Message {
 
 ```
 Engine struct:
-├── typedMerger   *pipe.Merger[*Message]
+├── merger        *pipe.Merger[*Message]      // renamed from typedMerger
 ├── distributor   *pipe.Distributor[*Message]
 ├── router        *Router
 ├── marshaler     Marshaler
@@ -136,13 +136,16 @@ Engine struct:
 └── bufferSize    int
 ```
 
+Note: `typedMerger` renamed to `merger` since there's only one merger after simplification.
+Also: `e.done` field removed - return distributor's done channel directly (see below).
+
 **Simplified flows:**
 ```
-AddInput:     typed ch → typedMerger
-AddRawInput:  raw ch → filter → unmarshal → typedMerger  (convenience)
+AddInput:     typed ch → merger
+AddRawInput:  raw ch → filter → unmarshal → merger  (convenience)
 AddOutput:    distributor → typed ch
-AddRawOutput: distributor → marshal → raw ch             (convenience)
-AddLoopback:  distributor → typedMerger                  (convenience)
+AddRawOutput: distributor → marshal → raw ch        (convenience)
+AddLoopback:  distributor → merger                  (convenience)
 ```
 
 ## Start() Simplification
@@ -182,7 +185,7 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 }
 ```
 
-**After (~25 lines):**
+**After (~15 lines):**
 ```go
 func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
     e.mu.Lock()
@@ -193,36 +196,28 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
     e.started = true
     e.mu.Unlock()
 
-    // 1. Start typed merger
-    typedMerged, err := e.typedMerger.Merge(ctx)
+    // 1. Start merger
+    merged, err := e.merger.Merge(ctx)
     if err != nil {
         return nil, err
     }
 
     // 2. Route messages to handlers
-    handled, err := e.router.Pipe(ctx, typedMerged)
+    handled, err := e.router.Pipe(ctx, merged)
     if err != nil {
         return nil, err
     }
 
-    // 3. Start distributor
-    distributeDone, err := e.distributor.Distribute(ctx, handled)
-    if err != nil {
-        return nil, err
-    }
-
-    // 4. Wait for completion
-    go func() {
-        select {
-        case <-distributeDone:
-        case <-ctx.Done():
-        }
-        close(e.done)
-    }()
-
-    return e.done, nil
+    // 3. Start distributor and return its done channel directly
+    return e.distributor.Distribute(ctx, handled)
 }
 ```
+
+**Why return distributor's done channel directly:**
+- The upstream pipeline (merger, router) closes channels on context cancellation
+- This propagates to distributor's input, closing its done channel
+- The wrapper goroutine was redundant - distributor already handles this
+- Removes need for `e.done` field entirely
 
 ## What Gets Removed
 
@@ -233,11 +228,20 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 | `typedOutputs` array + struct | ~10 | Storing pre-Start outputs |
 | `rawOutputs` array + struct | ~10 | Storing pre-Start raw outputs |
 | `hasRawInputs` flag | - | Tracking raw input usage |
+| `done` channel field | - | Wrapper for distributor's done |
+| `ctx` field | - | Stored context (no longer needed) |
 | Forwarding goroutines in Start() | ~30 | Forwarding to stored channels |
 | Raw output infrastructure in Start() | ~25 | rawDistributor setup |
 | Raw input handling in Start() | ~8 | rawMerger → unmarshal |
+| Done wrapper goroutine in Start() | ~7 | Wrapper for ctx.Done() |
 
-**Total:** ~80+ lines removed, ~5 lines added
+**Total:** ~90+ lines removed, ~5 lines added
+
+## What Gets Renamed
+
+| Before | After | Reason |
+|--------|-------|--------|
+| `typedMerger` | `merger` | Only one merger after simplification |
 
 ## Trade-offs
 
@@ -279,6 +283,9 @@ Impact: Positive. Parallelizes unmarshal work across inputs.
 - [ ] `rawDistributor` removed from Engine
 - [ ] `typedOutputs`, `rawOutputs` arrays removed
 - [ ] `hasRawInputs` flag removed
-- [ ] `Start()` reduced to ~25 lines
+- [ ] `done` channel field removed - return distributor's done directly
+- [ ] `ctx` field removed
+- [ ] `typedMerger` renamed to `merger`
+- [ ] `Start()` reduced to ~15 lines
 - [ ] No forwarding goroutines
 - [ ] `make test && make build && make vet` passes
