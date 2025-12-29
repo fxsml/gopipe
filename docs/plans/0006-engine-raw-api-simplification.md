@@ -1,6 +1,6 @@
 # Plan 0006: Engine Raw API Simplification
 
-**Status:** Proposed
+**Status:** Completed
 **Related ADRs:** -
 **Depends On:** [Plan 0005](0005-engine-implementation-review.md)
 
@@ -276,16 +276,22 @@ Impact: Positive. Parallelizes unmarshal work across inputs.
 
 ## Acceptance Criteria
 
-- [ ] `AddOutput` adds directly to distributor, no storage
-- [ ] `AddRawOutput` is convenience wrapper: `e.marshal(e.AddOutput(...))`
-- [ ] `AddRawInput` is convenience wrapper: `e.AddInput(e.unmarshal(...))`
-- [ ] `rawMerger` removed from Engine
-- [ ] `rawDistributor` removed from Engine
-- [ ] `typedOutputs`, `rawOutputs` arrays removed
-- [ ] `hasRawInputs` flag removed
-- [ ] `done` channel field removed - return distributor's done directly
-- [ ] `ctx` field removed
-- [ ] `typedMerger` renamed to `merger`
-- [ ] `Start()` reduced to ~15 lines
-- [ ] No forwarding goroutines
-- [ ] `make test && make build && make vet` passes
+- [x] `AddOutput` adds directly to distributor, no storage
+- [x] `AddRawOutput` is convenience wrapper: `e.marshal(e.AddOutput(...))`
+- [x] `AddRawInput` is convenience wrapper: `e.AddInput(e.unmarshal(...))`
+- [x] `rawMerger` removed from Engine
+- [x] `rawDistributor` removed from Engine
+- [x] `typedOutputs`, `rawOutputs` arrays removed
+- [x] `hasRawInputs` flag removed
+- [x] `done` channel field removed - return distributor's done directly
+- [x] `ctx` field removed
+- [x] `typedMerger` renamed to `merger`
+- [x] `Start()` reduced to ~15 lines
+- [x] No forwarding goroutines
+- [x] `make test && make build && make vet` passes
+
+## Implementation Notes
+
+- Added `ShutdownTimeout: 100ms` to merger config to ensure clean shutdown on context cancellation
+- Without ShutdownTimeout, merger waits indefinitely for input channels to close
+- Net reduction: 175 lines removed, 26 added (-149 lines)
