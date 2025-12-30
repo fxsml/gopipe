@@ -91,6 +91,28 @@ func (r *Router) handler(ceType string) (handlerEntry, bool) {
 	return entry, ok
 }
 
+// Lookup returns the TypeEntry for the given CE type.
+// Implements TypeRegistry.
+func (r *Router) Lookup(ceType string) (TypeEntry, bool) {
+	entry, ok := r.handler(ceType)
+	if !ok {
+		return nil, false
+	}
+	// Handler implements TypeEntry via NewInstance
+	return entry.handler.(TypeEntry), true
+}
+
+// Register adds a TypeEntry to the router.
+// The entry must also implement Handler to be useful for message processing.
+// Implements TypeRegistry.
+func (r *Router) Register(entry TypeEntry) error {
+	h, ok := entry.(Handler)
+	if !ok {
+		return ErrNotAHandler
+	}
+	return r.AddHandler(h, HandlerConfig{})
+}
+
 func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) {
 	ceType, _ := msg.Attributes["type"].(string)
 
@@ -111,3 +133,6 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 	msg.Ack()
 	return outputs, nil
 }
+
+// Verify Router implements TypeRegistry.
+var _ TypeRegistry = (*Router)(nil)

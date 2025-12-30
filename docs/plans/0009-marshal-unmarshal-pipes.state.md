@@ -1,53 +1,327 @@
 # State: Marshal/Unmarshal Pipe Components
 
-**Status:** Analysis
+**Status:** Phase 1 Implemented (In Progress)
 **Related:** Plan 0008 (Release Review)
-
-## Problem Statement
-
-Currently `marshal` and `unmarshal` are private Engine methods. Exposing them as reusable pipe components would:
-1. Allow standalone use (without Engine)
-2. Enable custom pipelines
-3. Support parallelization via pipe.Config.Concurrency
-
-### The Registry Problem
-
-Unmarshal needs to know **which type to unmarshal into**:
-
-```go
-// Current implementation
-func (e *Engine) unmarshal(in <-chan *RawMessage) <-chan *Message {
-    return channel.Process(in, func(raw *RawMessage) []*Message {
-        ceType := raw.Attributes["type"].(string)
-
-        // Registry lookup - needs handler map
-        entry, ok := e.router.handler(ceType)
-        if !ok {
-            return nil // ErrNoHandler
-        }
-
-        instance := entry.handler.NewInput() // Creates typed instance
-        e.marshaler.Unmarshal(raw.Data, instance)
-        // ...
-    })
-}
-```
-
-The question: How to decouple this from the Router/Engine?
 
 ---
 
-## Option 1: TypeRegistry Interface
+## Part 1: Handler Interface Simplification
 
-Separate the type-to-factory mapping from handlers:
+### Current Handler Interface
 
 ```go
-// TypeRegistry maps CE types to factory functions.
-type TypeRegistry interface {
-    // NewInstance creates a new instance for the given CE type.
-    // Returns nil if type is not registered.
-    NewInstance(ceType string) any
+type Handler interface {
+    EventType() string                                           // Registration concern
+    NewInput() any                                               // Unmarshaling concern
+    Handle(ctx context.Context, msg *Message) ([]*Message, error) // Processing concern
 }
+```
+
+**Problem:** Three concerns mixed in one interface:
+1. **Registration** - What CE type to handle
+2. **Unmarshaling** - How to create typed instance
+3. **Processing** - What to do with the message
+
+### Proposed Separation
+
+```go
+// TypeEntry handles registration and unmarshaling concerns.
+// Used by TypeRegistry and Router for type lookup and instance creation.
+type TypeEntry interface {
+    EventType() string   // What CE type this handles
+    NewInstance() any    // Factory for unmarshaling (renamed from NewInput)
+}
+
+// Handler handles processing concern only.
+// Simpler interface - just processes messages.
+type Handler interface {
+    Handle(ctx context.Context, msg *Message) ([]*Message, error)
+}
+
+// TypeRegistry maps CE types to TypeEntry.
+type TypeRegistry interface {
+    Lookup(ceType string) (TypeEntry, bool)
+    Register(entry TypeEntry) error
+}
+```
+
+### RegistryHandler - Combines Both
+
+For convenience, a combined interface for the common case:
+
+```go
+// RegistryHandler combines TypeEntry and Handler.
+// Equivalent to current Handler interface.
+type RegistryHandler interface {
+    TypeEntry
+    Handler
+}
+
+// Verify commandHandler implements RegistryHandler
+var _ RegistryHandler = (*commandHandler[any, any])(nil)
+```
+
+---
+
+## Implications Analysis
+
+### 1. Router Changes
+
+**Current:**
+```go
+func (r *Router) AddHandler(h Handler, cfg HandlerConfig) error {
+    r.handlers[h.EventType()] = handlerEntry{handler: h, config: cfg}
+}
+```
+
+**New Options:**
+
+**Option A: Keep AddHandler for RegistryHandler**
+```go
+// For types that implement both TypeEntry and Handler
+func (r *Router) AddHandler(h RegistryHandler, cfg HandlerConfig) error {
+    r.Register(h)  // TypeEntry part
+    r.handlers[h.EventType()] = handlerEntry{handler: h, config: cfg}
+}
+```
+
+**Option B: Separate registration**
+```go
+// Register type info and handler separately
+func (r *Router) Register(entry TypeEntry, h Handler, cfg HandlerConfig) error {
+    r.typeRegistry.Register(entry)
+    r.handlers[entry.EventType()] = handlerEntry{handler: h, config: cfg}
+}
+
+// Convenience for RegistryHandler
+func (r *Router) AddHandler(h RegistryHandler, cfg HandlerConfig) error {
+    return r.Register(h, h, cfg)
+}
+```
+
+**Option C: Functional registration**
+```go
+// Most flexible - no interfaces needed for simple cases
+func (r *Router) Handle(
+    eventType string,
+    factory func() any,
+    handler func(context.Context, *Message) ([]*Message, error),
+    cfg HandlerConfig,
+) error
+```
+
+### 2. TypeRegistry Implementation
+
+```go
+// Router implements TypeRegistry
+type Router struct {
+    handlers map[string]handlerEntry
+    types    map[string]TypeEntry  // Separate type registry
+}
+
+func (r *Router) Lookup(ceType string) (TypeEntry, bool) {
+    entry, ok := r.types[ceType]
+    return entry, ok
+}
+
+func (r *Router) Register(entry TypeEntry) error {
+    r.types[entry.EventType()] = entry
+    return nil
+}
+```
+
+### 3. Unmarshal Pipe Uses TypeRegistry
+
+```go
+func NewUnmarshalPipe(
+    registry TypeRegistry,
+    marshaler Marshaler,
+    cfg pipe.Config,
+) *pipe.ProcessPipe[*RawMessage, *Message] {
+    return pipe.NewProcessPipe(func(ctx context.Context, raw *RawMessage) ([]*Message, error) {
+        ceType := raw.Attributes["type"].(string)
+
+        entry, ok := registry.Lookup(ceType)
+        if !ok {
+            return nil, ErrNoHandler
+        }
+
+        instance := entry.NewInstance()
+        if err := marshaler.Unmarshal(raw.Data, instance); err != nil {
+            return nil, err
+        }
+
+        return []*Message{{Data: instance, Attributes: raw.Attributes}}, nil
+    }, cfg)
+}
+```
+
+### 4. Handler Implementations
+
+**NewCommandHandler stays similar but implements RegistryHandler:**
+```go
+type commandHandler[C, E any] struct {
+    eventType string
+    source    string
+    naming    NamingStrategy
+    fn        func(ctx context.Context, cmd C) ([]E, error)
+}
+
+// TypeEntry methods
+func (h *commandHandler[C, E]) EventType() string { return h.eventType }
+func (h *commandHandler[C, E]) NewInstance() any  { return new(C) }
+
+// Handler method
+func (h *commandHandler[C, E]) Handle(ctx context.Context, msg *Message) ([]*Message, error) {
+    // ... same as current
+}
+```
+
+**Simple handler without type info:**
+```go
+// For cases where you just want to handle, not register types
+simpleHandler := message.HandlerFunc(func(ctx context.Context, msg *Message) ([]*Message, error) {
+    // process message
+    return nil, nil
+})
+
+// Register with explicit type info
+router.Register(
+    message.TypeOf[OrderCommand](message.KebabNaming),
+    simpleHandler,
+    message.HandlerConfig{},
+)
+```
+
+---
+
+## Benefits of Separation
+
+### 1. More Modular
+
+```go
+// Reuse same handler for multiple types
+genericLogger := message.HandlerFunc(logMessage)
+
+router.Register(TypeOf[EventA](), genericLogger, cfg)
+router.Register(TypeOf[EventB](), genericLogger, cfg)
+router.Register(TypeOf[EventC](), genericLogger, cfg)
+```
+
+### 2. Type Registration Without Handler
+
+```go
+// Register type for unmarshaling only (validation, logging)
+router.RegisterType(TypeOf[AuditEvent]())
+
+// Later add handler
+router.SetHandler("audit.event", auditHandler, cfg)
+```
+
+### 3. Cleaner Standalone Pipes
+
+```go
+// TypeRegistry can be built without handlers
+registry := message.NewMapRegistry()
+registry.Register(TypeOf[Order]())
+registry.Register(TypeOf[User]())
+
+// UnmarshalPipe works independently
+pipe := message.NewUnmarshalPipe(registry, marshaler, cfg)
+```
+
+### 4. More Idiomatic Go
+
+Single-method interfaces are preferred in Go:
+```go
+type Handler interface {
+    Handle(ctx context.Context, msg *Message) ([]*Message, error)
+}
+
+// Like http.Handler, io.Reader, etc.
+```
+
+### 5. HandlerFunc Pattern
+
+```go
+// Like http.HandlerFunc
+type HandlerFunc func(context.Context, *Message) ([]*Message, error)
+
+func (f HandlerFunc) Handle(ctx context.Context, msg *Message) ([]*Message, error) {
+    return f(ctx, msg)
+}
+```
+
+---
+
+## Helper: TypeOf
+
+Convenience for creating TypeEntry from Go type:
+
+```go
+// TypeOf creates a TypeEntry for a Go type using the given naming strategy.
+func TypeOf[T any](naming NamingStrategy) TypeEntry {
+    return &typeEntry[T]{naming: naming}
+}
+
+type typeEntry[T any] struct {
+    naming NamingStrategy
+}
+
+func (e *typeEntry[T]) EventType() string {
+    var zero T
+    return e.naming.TypeName(reflect.TypeOf(zero))
+}
+
+func (e *typeEntry[T]) NewInstance() any {
+    return new(T)
+}
+
+// Usage
+router.Register(
+    message.TypeOf[OrderCommand](message.KebabNaming),  // TypeEntry
+    orderHandler,                                        // Handler
+    message.HandlerConfig{},
+)
+```
+
+---
+
+## Migration Path
+
+### Phase 1: Add new interfaces (non-breaking)
+- Add `TypeEntry` interface
+- Add `TypeRegistry` interface
+- Add `RegistryHandler` as alias for combined interface
+- Add `HandlerFunc` type
+- Add `TypeOf[T]()` helper
+- Existing code continues to work
+
+### Phase 2: Update Router (non-breaking)
+- Router implements `TypeRegistry`
+- Add `router.Register(TypeEntry, Handler, cfg)` method
+- Keep `router.AddHandler(RegistryHandler, cfg)` for compatibility
+
+### Phase 3: Rename in existing types (breaking)
+- Rename `NewInput()` to `NewInstance()` in Handler implementations
+- Update `Handler` interface to just `Handle()`
+- Update `commandHandler` to implement `RegistryHandler`
+
+---
+
+## Summary
+
+| Aspect | Current | Proposed |
+|--------|---------|----------|
+| Handler interface | 3 methods | 1 method (Handle) |
+| Type registration | Via Handler | Via TypeEntry |
+| Unmarshaling factory | Handler.NewInput() | TypeEntry.NewInstance() |
+| Router registration | AddHandler(Handler) | Register(TypeEntry, Handler) |
+| Standalone unmarshal | Needs Handler | Needs TypeEntry only |
+| Code reuse | Limited | Handler reusable across types |
+| Go idiom alignment | Mixed | Single-method interface |
+
+**Recommendation:** Proceed with this separation. It leads to more modular, idiomatic code and cleanly solves the registry problem for standalone pipes.
 
 // UnmarshalPipe creates a pipe that unmarshals RawMessage to Message.
 func NewUnmarshalPipe(
@@ -398,3 +672,78 @@ func (e *Engine) unmarshal(in <-chan *RawMessage) <-chan *Message {
 3. Provide `MapRegistry` for standalone use
 4. Use `pipe.ProcessPipe` for parallelization support
 5. Engine uses public pipes internally
+
+---
+
+## Implementation Status
+
+### Phase 1: Completed ✅
+
+**Date:** 2025-12-30
+
+Added the following non-breaking changes:
+
+#### New Types in `message/registry.go`
+
+```go
+// TypeEntry - Type information for CE message handling
+type TypeEntry interface {
+    EventType() string   // CE type this handles
+    NewInstance() any    // Factory for unmarshaling
+}
+
+// TypeRegistry - Maps CE types to TypeEntry
+type TypeRegistry interface {
+    Lookup(ceType string) (TypeEntry, bool)
+    Register(entry TypeEntry) error
+}
+
+// RegistryHandler - Combines TypeEntry and Handler
+type RegistryHandler interface {
+    TypeEntry
+    Handler
+}
+
+// HandlerFunc - Adapter for functions (like http.HandlerFunc)
+type HandlerFunc func(ctx context.Context, msg *Message) ([]*Message, error)
+
+// TypeOf[T] - Creates TypeEntry from Go type
+func TypeOf[T any](naming NamingStrategy) TypeEntry
+
+// MapRegistry - Simple map-based TypeRegistry
+type MapRegistry map[string]func() any
+```
+
+#### Handler Updates
+
+- Added `NewInstance()` method to `handler[T]` and `commandHandler[C, E]`
+- Handlers now implement both `Handler` and `TypeEntry` interfaces
+- Existing `NewInput()` method retained for backward compatibility
+
+#### Router Updates
+
+- `Router` now implements `TypeRegistry` interface
+- Added `Lookup(ceType string) (TypeEntry, bool)` method
+- Added `Register(entry TypeEntry) error` method
+
+#### New Error
+
+- `ErrNotAHandler` - Returned when `Router.Register` is called with a TypeEntry that doesn't implement Handler
+
+#### Tests
+
+- Added `message/registry_test.go` with tests for:
+  - `TypeOf[T]` helper
+  - `MapRegistry` implementation
+  - `HandlerFunc` adapter
+  - `Router` as `TypeRegistry`
+  - Handler `TypeEntry` compliance
+
+### Remaining Phases
+
+**Phase 2: Update Router API (non-breaking)** - Not yet started
+- Add `router.Register(TypeEntry, Handler, cfg)` method variant
+
+**Phase 3: Rename in existing types (breaking)** - Not yet started
+- Rename `NewInput()` to `NewInstance()` in Handler interface
+- Update `Handler` interface to just `Handle()`
