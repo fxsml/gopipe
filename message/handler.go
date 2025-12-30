@@ -49,11 +49,6 @@ func (h *handler[T]) NewInput() any {
 	return new(T)
 }
 
-// NewInstance implements TypeEntry. Returns the same as NewInput.
-func (h *handler[T]) NewInstance() any {
-	return new(T)
-}
-
 func (h *handler[T]) Handle(ctx context.Context, msg *Message) ([]*Message, error) {
 	return h.fn(ctx, msg)
 }
@@ -87,11 +82,6 @@ func (h *commandHandler[C, E]) EventType() string {
 }
 
 func (h *commandHandler[C, E]) NewInput() any {
-	return new(C)
-}
-
-// NewInstance implements TypeEntry. Returns the same as NewInput.
-func (h *commandHandler[C, E]) NewInstance() any {
 	return new(C)
 }
 
@@ -139,11 +129,8 @@ func newUUID() string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
 }
 
-// Verify handlers implement both Handler and TypeEntry (making them RegistryHandlers).
+// Verify handlers implement Handler.
 var (
-	_ Handler   = (*handler[any])(nil)
-	_ TypeEntry = (*handler[any])(nil)
-
-	_ Handler   = (*commandHandler[any, any])(nil)
-	_ TypeEntry = (*commandHandler[any, any])(nil)
+	_ Handler = (*handler[any])(nil)
+	_ Handler = (*commandHandler[any, any])(nil)
 )

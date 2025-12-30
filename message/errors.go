@@ -18,7 +18,6 @@ var (
 	// ErrHandlerRejected is returned when a message is rejected by handler matcher.
 	ErrHandlerRejected = errors.New("message rejected by handler matcher")
 
-	// ErrNotAHandler is returned when Register is called with a TypeEntry that
-	// doesn't also implement Handler.
-	ErrNotAHandler = errors.New("type entry does not implement Handler")
+	// ErrUnknownType is returned when unmarshaling a message with unknown CE type.
+	ErrUnknownType = errors.New("unknown CE type")
 )
