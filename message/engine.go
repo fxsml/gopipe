@@ -191,46 +191,24 @@ func (e *Engine) handleRawError(attrs Attributes, err error) {
 
 // unmarshal processes raw messages into typed messages.
 func (e *Engine) unmarshal(in <-chan *RawMessage) <-chan *Message {
-	return channel.Process(in, func(raw *RawMessage) []*Message {
-		ceType, _ := raw.Attributes["type"].(string)
-
-		entry, ok := e.router.handler(ceType)
-		if !ok {
-			e.handleRawError(raw.Attributes, ErrNoHandler)
-			return nil
-		}
-
-		instance := entry.handler.NewInput()
-		if err := e.marshaler.Unmarshal(raw.Data, instance); err != nil {
+	p := NewUnmarshalPipe(e.router, e.marshaler, pipe.Config{
+		ErrorHandler: func(in any, err error) {
+			raw := in.(*RawMessage)
 			e.handleRawError(raw.Attributes, err)
-			return nil
-		}
-
-		return []*Message{{
-			Data:       instance,
-			Attributes: raw.Attributes,
-			a:          raw.a,
-		}}
+		},
 	})
+	out, _ := p.Pipe(context.Background(), in)
+	return out
 }
 
 // marshal processes typed messages into raw messages.
 func (e *Engine) marshal(in <-chan *Message) <-chan *RawMessage {
-	return channel.Process(in, func(msg *Message) []*RawMessage {
-		data, err := e.marshaler.Marshal(msg.Data)
-		if err != nil {
+	p := NewMarshalPipe(e.marshaler, pipe.Config{
+		ErrorHandler: func(in any, err error) {
+			msg := in.(*Message)
 			e.errorHandler(msg, err)
-			return nil
-		}
-
-		if msg.Attributes == nil {
-			msg.Attributes = make(Attributes)
-		}
-		msg.Attributes["datacontenttype"] = e.marshaler.DataContentType()
-
-		return []*RawMessage{{
-			Data:       data,
-			Attributes: msg.Attributes,
-		}}
+		},
 	})
+	out, _ := p.Pipe(context.Background(), in)
+	return out
 }

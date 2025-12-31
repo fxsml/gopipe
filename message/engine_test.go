@@ -119,8 +119,8 @@ func TestEngine_NoHandler(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	if lastErr != ErrNoHandler {
-		t.Errorf("expected ErrNoHandler, got %v", lastErr)
+	if lastErr != ErrUnknownType {
+		t.Errorf("expected ErrUnknownType, got %v", lastErr)
 	}
 }
 
