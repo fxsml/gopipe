@@ -177,7 +177,7 @@ func TestNewCommandHandler(t *testing.T) {
 			},
 		}
 
-		h.Handle(context.Background(), msg)
+		_, _ = h.Handle(context.Background(), msg)
 
 		if ctxAttrs["id"] != "123" {
 			t.Errorf("expected id '123' in context, got %v", ctxAttrs["id"])

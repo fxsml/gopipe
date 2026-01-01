@@ -20,7 +20,7 @@ func TestRouter_BasicRouting(t *testing.T) {
 		}, nil
 	}, KebabNaming)
 
-	router.AddHandler(handler, HandlerConfig{})
+	_ = router.AddHandler(handler, HandlerConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -98,7 +98,7 @@ func TestRouter_HandlerMatcher(t *testing.T) {
 	}, KebabNaming)
 
 	// Add handler with matcher that rejects messages without "allowed" attribute
-	router.AddHandler(handler, HandlerConfig{
+	_ = router.AddHandler(handler, HandlerConfig{
 		Matcher: matcherFunc(func(attrs Attributes) bool {
 			_, ok := attrs["allowed"]
 			return ok
@@ -151,7 +151,7 @@ func TestRouter_HandlerError(t *testing.T) {
 		return nil, testErr
 	}, KebabNaming)
 
-	router.AddHandler(handler, HandlerConfig{})
+	_ = router.AddHandler(handler, HandlerConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -186,7 +186,7 @@ func TestRouter_MultipleOutputs(t *testing.T) {
 		}, nil
 	}, KebabNaming)
 
-	router.AddHandler(handler, HandlerConfig{})
+	_ = router.AddHandler(handler, HandlerConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -217,7 +217,7 @@ func TestRouter_ContextCancellation(t *testing.T) {
 		return []*Message{{Data: msg.Data, Attributes: msg.Attributes}}, nil
 	}, KebabNaming)
 
-	router.AddHandler(handler, HandlerConfig{})
+	_ = router.AddHandler(handler, HandlerConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -274,7 +274,7 @@ func TestRouter_Standalone(t *testing.T) {
 		}, nil
 	}, KebabNaming)
 
-	router.AddHandler(handler, HandlerConfig{})
+	_ = router.AddHandler(handler, HandlerConfig{})
 
 	ctx := context.Background()
 	in := make(chan *Message, 1)
@@ -306,7 +306,7 @@ func TestRouter_MessageAck(t *testing.T) {
 		return []*Message{{Data: msg.Data, Attributes: msg.Attributes}}, nil
 	}, KebabNaming)
 
-	router.AddHandler(handler, HandlerConfig{})
+	_ = router.AddHandler(handler, HandlerConfig{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
