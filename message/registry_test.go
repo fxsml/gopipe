@@ -48,7 +48,7 @@ func TestRouter_TypeRegistry(t *testing.T) {
 			},
 			KebabNaming,
 		)
-		router.AddHandler(handler, HandlerConfig{})
+		_ = router.AddHandler(handler, HandlerConfig{})
 
 		instance := router.NewInstance("test.order")
 		if instance == nil {

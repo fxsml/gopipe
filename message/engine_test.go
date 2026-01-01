@@ -24,11 +24,11 @@ func TestEngine_BasicFlow(t *testing.T) {
 			Naming: KebabNaming,
 		},
 	)
-	engine.AddHandler(handler, HandlerConfig{Name: "test-handler"})
+	_ = engine.AddHandler(handler, HandlerConfig{Name: "test-handler"})
 
 	// Setup channels (raw I/O for broker integration)
 	input := make(chan *RawMessage, 1)
-	engine.AddRawInput(input, RawInputConfig{Name: "test-input"})
+	_ = engine.AddRawInput(input, RawInputConfig{Name: "test-input"})
 	output := engine.AddRawOutput(RawOutputConfig{Name: "test-output"})
 
 	// Start engine
@@ -104,13 +104,13 @@ func TestEngine_NoHandler(t *testing.T) {
 	})
 
 	input := make(chan *RawMessage, 1)
-	engine.AddRawInput(input, RawInputConfig{})
-	engine.AddRawOutput(RawOutputConfig{})
+	_ = engine.AddRawInput(input, RawInputConfig{})
+	_ = engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	engine.Start(ctx)
+	_, _ = engine.Start(ctx)
 
 	input <- &RawMessage{
 		Data:       []byte(`{}`),
@@ -149,19 +149,19 @@ func TestEngine_InputMatcher(t *testing.T) {
 		},
 		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
 	)
-	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+	_ = engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	// Input matcher that only accepts messages from /allowed source
 	input := make(chan *RawMessage, 10)
-	engine.AddRawInput(input, RawInputConfig{
+	_ = engine.AddRawInput(input, RawInputConfig{
 		Matcher: &sourceMatcher{allowed: "/allowed"},
 	})
-	engine.AddRawOutput(RawOutputConfig{})
+	_ = engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	engine.Start(ctx)
+	_, _ = engine.Start(ctx)
 
 	data, _ := json.Marshal(TestCommand{ID: "1"})
 
@@ -209,10 +209,10 @@ func TestEngine_OutputMatcher(t *testing.T) {
 		},
 		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
 	)
-	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+	_ = engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	input := make(chan *RawMessage, 1)
-	engine.AddRawInput(input, RawInputConfig{})
+	_ = engine.AddRawInput(input, RawInputConfig{})
 
 	// Create two outputs with different matchers
 	output1 := engine.AddRawOutput(RawOutputConfig{
@@ -225,7 +225,7 @@ func TestEngine_OutputMatcher(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	engine.Start(ctx)
+	_, _ = engine.Start(ctx)
 
 	data, _ := json.Marshal(TestCommand{ID: "1"})
 	input <- &RawMessage{
@@ -269,18 +269,18 @@ func TestEngine_MultipleInputs(t *testing.T) {
 		},
 		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
 	)
-	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+	_ = engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	input1 := make(chan *RawMessage, 1)
 	input2 := make(chan *RawMessage, 1)
-	engine.AddRawInput(input1, RawInputConfig{Name: "input1"})
-	engine.AddRawInput(input2, RawInputConfig{Name: "input2"})
-	engine.AddRawOutput(RawOutputConfig{})
+	_ = engine.AddRawInput(input1, RawInputConfig{Name: "input1"})
+	_ = engine.AddRawInput(input2, RawInputConfig{Name: "input2"})
+	_ = engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	engine.Start(ctx)
+	_, _ = engine.Start(ctx)
 
 	data, _ := json.Marshal(TestCommand{ID: "1"})
 
@@ -308,7 +308,7 @@ func TestEngine_Loopback(t *testing.T) {
 		},
 		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
 	)
-	engine.AddHandler(handler1, HandlerConfig{Name: "handler1"})
+	_ = engine.AddHandler(handler1, HandlerConfig{Name: "handler1"})
 
 	// Second handler processes intermediate event
 	handler2 := NewCommandHandler(
@@ -317,13 +317,13 @@ func TestEngine_Loopback(t *testing.T) {
 		},
 		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
 	)
-	engine.AddHandler(handler2, HandlerConfig{Name: "handler2"})
+	_ = engine.AddHandler(handler2, HandlerConfig{Name: "handler2"})
 
 	input := make(chan *RawMessage, 1)
-	engine.AddRawInput(input, RawInputConfig{})
+	_ = engine.AddRawInput(input, RawInputConfig{})
 
 	// Loopback intermediate events
-	engine.AddLoopback(LoopbackConfig{
+	_ = engine.AddLoopback(LoopbackConfig{
 		Matcher: &typeMatcher{pattern: "intermediate.event"},
 	})
 
@@ -332,7 +332,7 @@ func TestEngine_Loopback(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	engine.Start(ctx)
+	_, _ = engine.Start(ctx)
 
 	data, _ := json.Marshal(TestCommand{ID: "123"})
 	input <- &RawMessage{
@@ -346,7 +346,7 @@ func TestEngine_Loopback(t *testing.T) {
 			t.Errorf("expected final event type, got %v", out.Attributes["type"])
 		}
 		var event TestEvent
-		json.Unmarshal(out.Data, &event)
+		_ = json.Unmarshal(out.Data, &event)
 		if event.Status != "final" {
 			t.Errorf("expected status 'final', got %s", event.Status)
 		}
@@ -377,16 +377,16 @@ func TestEngine_HandlerError(t *testing.T) {
 		},
 		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
 	)
-	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+	_ = engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	input := make(chan *RawMessage, 1)
-	engine.AddRawInput(input, RawInputConfig{})
-	engine.AddRawOutput(RawOutputConfig{})
+	_ = engine.AddRawInput(input, RawInputConfig{})
+	_ = engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	engine.Start(ctx)
+	_, _ = engine.Start(ctx)
 
 	data, _ := json.Marshal(TestCommand{ID: "1"})
 	input <- &RawMessage{
@@ -412,16 +412,16 @@ func TestEngine_MessageAck(t *testing.T) {
 		},
 		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
 	)
-	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+	_ = engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	input := make(chan *RawMessage, 1)
-	engine.AddRawInput(input, RawInputConfig{})
+	_ = engine.AddRawInput(input, RawInputConfig{})
 	output := engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	engine.Start(ctx)
+	_, _ = engine.Start(ctx)
 
 	acked := false
 	data, _ := json.Marshal(TestCommand{ID: "1"})
@@ -451,11 +451,11 @@ func TestEngine_ContextCancellation(t *testing.T) {
 		},
 		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
 	)
-	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+	_ = engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	input := make(chan *RawMessage)
-	engine.AddRawInput(input, RawInputConfig{})
-	engine.AddRawOutput(RawOutputConfig{})
+	_ = engine.AddRawInput(input, RawInputConfig{})
+	_ = engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -488,12 +488,12 @@ func TestEngine_AddInputAfterStart(t *testing.T) {
 		},
 		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
 	)
-	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+	_ = engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	// Add initial input before start
 	input1 := make(chan *RawMessage, 1)
-	engine.AddRawInput(input1, RawInputConfig{Name: "input1"})
-	engine.AddRawOutput(RawOutputConfig{})
+	_ = engine.AddRawInput(input1, RawInputConfig{Name: "input1"})
+	_ = engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -538,10 +538,10 @@ func TestEngine_AddOutputAfterStart(t *testing.T) {
 		},
 		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
 	)
-	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+	_ = engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	input := make(chan *RawMessage, 2)
-	engine.AddRawInput(input, RawInputConfig{})
+	_ = engine.AddRawInput(input, RawInputConfig{})
 
 	// Add first output before start - matches only "other.event"
 	output1 := engine.AddRawOutput(RawOutputConfig{
@@ -591,11 +591,11 @@ func TestEngine_TypedIO(t *testing.T) {
 		},
 		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
 	)
-	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+	_ = engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	// Use typed input/output (no marshal/unmarshal)
 	input := make(chan *Message, 1)
-	engine.AddInput(input, InputConfig{Name: "typed-input"})
+	_ = engine.AddInput(input, InputConfig{Name: "typed-input"})
 	output := engine.AddOutput(OutputConfig{Name: "typed-output"})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -656,13 +656,13 @@ func TestEngine_MixedIO(t *testing.T) {
 		},
 		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
 	)
-	engine.AddHandler(handler, HandlerConfig{Name: "test"})
+	_ = engine.AddHandler(handler, HandlerConfig{Name: "test"})
 
 	// Mix raw and typed inputs
 	rawInput := make(chan *RawMessage, 1)
 	typedInput := make(chan *Message, 1)
-	engine.AddRawInput(rawInput, RawInputConfig{Name: "raw-input"})
-	engine.AddInput(typedInput, InputConfig{Name: "typed-input"})
+	_ = engine.AddRawInput(rawInput, RawInputConfig{Name: "raw-input"})
+	_ = engine.AddInput(typedInput, InputConfig{Name: "typed-input"})
 
 	// Mix raw and typed outputs
 	rawOutput := engine.AddRawOutput(RawOutputConfig{
@@ -675,7 +675,7 @@ func TestEngine_MixedIO(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	engine.Start(ctx)
+	_, _ = engine.Start(ctx)
 
 	// Send raw message
 	data, _ := json.Marshal(TestCommand{ID: "1"})
@@ -739,19 +739,19 @@ func TestEngine_HandlerMatcher(t *testing.T) {
 	)
 
 	// Register handler with a matcher that only accepts messages from /allowed source
-	engine.AddHandler(handler, HandlerConfig{
+	_ = engine.AddHandler(handler, HandlerConfig{
 		Name:    "test",
 		Matcher: &sourceMatcher{allowed: "/allowed"},
 	})
 
 	input := make(chan *RawMessage, 10)
-	engine.AddRawInput(input, RawInputConfig{})
-	engine.AddRawOutput(RawOutputConfig{})
+	_ = engine.AddRawInput(input, RawInputConfig{})
+	_ = engine.AddRawOutput(RawOutputConfig{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	engine.Start(ctx)
+	_, _ = engine.Start(ctx)
 
 	data, _ := json.Marshal(TestCommand{ID: "1"})
 

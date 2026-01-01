@@ -341,7 +341,7 @@ func TestParseRawMessage(t *testing.T) {
 		})
 
 		var buf bytes.Buffer
-		original.WriteTo(&buf)
+		_, _ = original.WriteTo(&buf)
 
 		parsed, err := ParseRawMessage(&buf)
 		if err != nil {
