@@ -144,20 +144,64 @@ Making Handler implement TypeRegistry would:
 
 The current design is simple: one handler handles one type. Router composes handlers into a TypeRegistry. This composition is cleaner than forcing Handler to be a TypeRegistry.
 
-## Alternative Consideration
+### Option D: Rename TypeRegistry to InputRegistry
 
-If naming consistency is important, consider renaming in the opposite direction:
+Keep Handler unchanged, rename the registry for consistency:
 
 ```go
-type TypeRegistry interface {
+// Handler unchanged
+type Handler interface {
+    EventType() string
+    NewInput() any
+    Handle(ctx context.Context, msg *Message) ([]*Message, error)
+}
+
+// Renamed from TypeRegistry
+type InputRegistry interface {
     NewInput(ceType string) any  // Renamed from NewInstance
 }
 ```
 
-This emphasizes both create "input for unmarshaling" while keeping the parameter difference that reflects lookup vs intrinsic knowledge.
+**Pros:**
+- Consistent naming: both use `NewInput`
+- `InputRegistry` is more descriptive than `TypeRegistry`
+- No change to Handler interface (less breaking)
+- Signature difference preserved (intrinsic vs lookup)
+- Clear purpose: registry creates inputs for unmarshaling
+
+**Cons:**
+- Breaking change for `TypeRegistry` users
+- `FactoryMap` and `Router` need updated interface name
+
+**Naming alternatives:**
+- `InputRegistry` - concise, clear ✓
+- `InputTypeRegistry` - verbose, "type" is redundant
+- `UnmarshalRegistry` - too implementation-specific
 
 ## Decision
 
-**Keep current design (Option C).** The signature difference is intentional and meaningful. The naming difference (`NewInput` vs `NewInstance`) is acceptable given the different abstraction levels.
+**Option D: Rename TypeRegistry to InputRegistry.**
 
-If any change is made, prefer renaming `TypeRegistry.NewInstance` to `TypeRegistry.NewInput` for semantic consistency ("input for unmarshaling").
+This provides naming consistency (`NewInput` everywhere) while preserving the meaningful signature difference. The registry name becomes more descriptive of its purpose.
+
+## Implementation
+
+```
+[ ] Rename TypeRegistry to InputRegistry in registry.go
+[ ] Rename NewInstance to NewInput in InputRegistry interface
+[ ] Update FactoryMap to implement InputRegistry.NewInput
+[ ] Update Router to implement InputRegistry.NewInput
+[ ] Update pipes.go parameter type
+[ ] Update engine.go references
+[ ] Update tests
+[ ] Run make test && make build && make vet
+```
+
+## Files to Modify
+
+1. `message/registry.go` - Interface rename
+2. `message/router.go` - Method rename, interface assertion
+3. `message/pipes.go` - Parameter type
+4. `message/engine.go` - Any references
+5. `message/registry_test.go` - Test updates
+6. `message/pipes_test.go` - Test updates
