@@ -91,9 +91,9 @@ func (r *Router) handler(ceType string) (handlerEntry, bool) {
 	return entry, ok
 }
 
-// NewInstance creates a typed instance for unmarshaling.
-// Implements TypeRegistry.
-func (r *Router) NewInstance(ceType string) any {
+// NewInput creates a typed instance for unmarshaling.
+// Implements InputRegistry.
+func (r *Router) NewInput(ceType string) any {
 	entry, ok := r.handler(ceType)
 	if !ok {
 		return nil
@@ -122,5 +122,5 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 	return outputs, nil
 }
 
-// Verify Router implements TypeRegistry.
-var _ TypeRegistry = (*Router)(nil)
+// Verify Router implements InputRegistry.
+var _ InputRegistry = (*Router)(nil)

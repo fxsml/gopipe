@@ -9,11 +9,11 @@ import (
 // NewUnmarshalPipe creates a pipe that unmarshals RawMessage to Message.
 // Uses registry to create typed instances for unmarshaling.
 // Returns error via cfg.ErrorHandler if type not in registry or unmarshal fails.
-func NewUnmarshalPipe(registry TypeRegistry, marshaler Marshaler, cfg pipe.Config) *pipe.ProcessPipe[*RawMessage, *Message] {
+func NewUnmarshalPipe(registry InputRegistry, marshaler Marshaler, cfg pipe.Config) *pipe.ProcessPipe[*RawMessage, *Message] {
 	return pipe.NewProcessPipe(func(ctx context.Context, raw *RawMessage) ([]*Message, error) {
 		ceType, _ := raw.Attributes["type"].(string)
 
-		instance := registry.NewInstance(ceType)
+		instance := registry.NewInput(ceType)
 		if instance == nil {
 			return nil, ErrUnknownType
 		}

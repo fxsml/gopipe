@@ -10,37 +10,37 @@ type TestOrder struct {
 }
 
 func TestFactoryMap(t *testing.T) {
-	t.Run("NewInstance returns instance for registered type", func(t *testing.T) {
+	t.Run("NewInput returns instance for registered type", func(t *testing.T) {
 		registry := FactoryMap{
 			"test.order": func() any { return &TestOrder{} },
 		}
 
-		instance := registry.NewInstance("test.order")
+		instance := registry.NewInput("test.order")
 		if instance == nil {
-			t.Fatal("NewInstance() returned nil for registered type")
+			t.Fatal("NewInput() returned nil for registered type")
 		}
 
 		order, ok := instance.(*TestOrder)
 		if !ok {
-			t.Fatalf("NewInstance() returned %T, want *TestOrder", instance)
+			t.Fatalf("NewInput() returned %T, want *TestOrder", instance)
 		}
 		if order.ID != "" {
 			t.Errorf("order.ID = %q, want empty", order.ID)
 		}
 	})
 
-	t.Run("NewInstance returns nil for unknown type", func(t *testing.T) {
+	t.Run("NewInput returns nil for unknown type", func(t *testing.T) {
 		registry := FactoryMap{}
 
-		instance := registry.NewInstance("unknown.type")
+		instance := registry.NewInput("unknown.type")
 		if instance != nil {
-			t.Errorf("NewInstance() = %v, want nil", instance)
+			t.Errorf("NewInput() = %v, want nil", instance)
 		}
 	})
 }
 
-func TestRouter_TypeRegistry(t *testing.T) {
-	t.Run("NewInstance returns instance for registered handler", func(t *testing.T) {
+func TestRouter_InputRegistry(t *testing.T) {
+	t.Run("NewInput returns instance for registered handler", func(t *testing.T) {
 		router := NewRouter(RouterConfig{})
 		handler := NewHandler[TestOrder](
 			func(ctx context.Context, msg *Message) ([]*Message, error) {
@@ -50,26 +50,26 @@ func TestRouter_TypeRegistry(t *testing.T) {
 		)
 		_ = router.AddHandler(handler, HandlerConfig{})
 
-		instance := router.NewInstance("test.order")
+		instance := router.NewInput("test.order")
 		if instance == nil {
-			t.Fatal("NewInstance() returned nil for registered handler")
+			t.Fatal("NewInput() returned nil for registered handler")
 		}
 
 		order, ok := instance.(*TestOrder)
 		if !ok {
-			t.Fatalf("NewInstance() returned %T, want *TestOrder", instance)
+			t.Fatalf("NewInput() returned %T, want *TestOrder", instance)
 		}
 		if order.ID != "" {
 			t.Errorf("order.ID = %q, want empty", order.ID)
 		}
 	})
 
-	t.Run("NewInstance returns nil for unknown type", func(t *testing.T) {
+	t.Run("NewInput returns nil for unknown type", func(t *testing.T) {
 		router := NewRouter(RouterConfig{})
 
-		instance := router.NewInstance("unknown.type")
+		instance := router.NewInput("unknown.type")
 		if instance != nil {
-			t.Errorf("NewInstance() = %v, want nil", instance)
+			t.Errorf("NewInput() = %v, want nil", instance)
 		}
 	})
 }

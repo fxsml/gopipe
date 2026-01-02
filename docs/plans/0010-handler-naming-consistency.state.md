@@ -1,6 +1,6 @@
 # Plan 0010: Handler Naming Consistency
 
-**Status:** Draft
+**Status:** Implemented
 **Created:** 2026-01-02
 
 ## Problem
@@ -187,14 +187,13 @@ This provides naming consistency (`NewInput` everywhere) while preserving the me
 ## Implementation
 
 ```
-[ ] Rename TypeRegistry to InputRegistry in registry.go
-[ ] Rename NewInstance to NewInput in InputRegistry interface
-[ ] Update FactoryMap to implement InputRegistry.NewInput
-[ ] Update Router to implement InputRegistry.NewInput
-[ ] Update pipes.go parameter type
-[ ] Update engine.go references
-[ ] Update tests
-[ ] Run make test && make build && make vet
+[x] Rename TypeRegistry to InputRegistry in registry.go
+[x] Rename NewInstance to NewInput in InputRegistry interface
+[x] Update FactoryMap to implement InputRegistry.NewInput
+[x] Update Router to implement InputRegistry.NewInput
+[x] Update pipes.go parameter type
+[x] Update tests
+[x] Run make test && make build && make vet
 ```
 
 ## Files to Modify
