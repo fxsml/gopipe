@@ -15,5 +15,5 @@ func Types(patterns ...string) message.Matcher {
 
 func (m *typesMatcher) Match(attrs message.Attributes) bool {
 	ceType := getAttr(attrs, "type")
-	return LikeAny(m.patterns, ceType)
+	return likeAny(m.patterns, ceType)
 }

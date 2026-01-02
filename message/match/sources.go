@@ -15,5 +15,5 @@ func Sources(patterns ...string) message.Matcher {
 
 func (m *sourcesMatcher) Match(attrs message.Attributes) bool {
 	source := getAttr(attrs, "source")
-	return LikeAny(m.patterns, source)
+	return likeAny(m.patterns, source)
 }

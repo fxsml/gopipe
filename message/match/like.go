@@ -38,8 +38,8 @@ func likeMatch(pattern, value string) bool {
 	return pi == pLen
 }
 
-// LikeAny returns true if value matches any of the patterns.
-func LikeAny(patterns []string, value string) bool {
+// likeAny returns true if value matches any of the patterns.
+func likeAny(patterns []string, value string) bool {
 	for _, p := range patterns {
 		if Like(p, value) {
 			return true
