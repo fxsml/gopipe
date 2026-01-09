@@ -7,63 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2025-01-09
+
 ### Breaking Changes
 
-#### Interface Naming Conventions (ADR 0018)
-- **pipe**: `Pipe.Start()` renamed to `Pipe.Pipe()`
-- **pipe**: `FanIn` renamed to `Merger`, `FanInConfig` to `MergerConfig`
-- **pipe**: `FanIn.Start()` renamed to `Merger.Merge()`
-- **message**: All `Start()` methods renamed to `Pipe()` for pipe implementations
-- See: [docs/adr/0018-interface-naming-conventions.md](docs/adr/0018-interface-naming-conventions.md)
+#### Message Package Redesign
 
-#### Processor API Simplification (ADR 0015-0017)
-- **pipe**: Remove builder pattern, use direct struct configuration
-- **pipe**: `Start()` now returns `(<-chan Out, error)` instead of `<-chan Out`
-- **pipe**: `ApplyMiddleware()` now returns `error` instead of `*Pipe`
-- **pipe**: `Generate()` now returns `(<-chan Out, error)`
-- **pipe**: Remove cancel callback from `ProcessFunc` signature
-- **pipe**: Move middleware to `pipe/middleware` subpackage
-- **message**: `Subscriber.Subscribe()` now returns `(<-chan *Message, error)`
-- **message**: `Publisher.Publish()` now returns `(<-chan struct{}, error)`
-- **message**: `Router.Start()` now returns `(<-chan *Message, error)`
-- **message/broker**: `ChannelBroker.Subscribe()` now returns `(<-chan *Message, error)`
-- See: [docs/adr/0015-remove-cancel-path.md](docs/adr/0015-remove-cancel-path.md)
-- See: [docs/adr/0016-processor-config-struct.md](docs/adr/0016-processor-config-struct.md)
-- See: [docs/adr/0017-middleware-for-processfunc.md](docs/adr/0017-middleware-for-processfunc.md)
+Complete redesign of the `message` package for simplicity and native CloudEvents support.
+
+**Removed:**
+- `Sender`, `Receiver` interfaces
+- `Subscriber`, `Publisher` structs
+- Old `Router`, `Handler`, `Pipe`, `Generator` types
+- Old `Middleware` type
+- `broker/` subpackage (`ChannelBroker`, `HTTPBroker`, `IOBroker`)
+- `cqrs/` subpackage
+- `multiplex/` subpackage
+- `cloudevents/` subpackage
+
+**Added:**
+- `Engine` — orchestrates message flow between inputs, handlers, and outputs
+- `Router` — type-based handler routing with middleware support
+- `Handler` interface — self-describing with `EventType()`, `NewInput()`, `Handle()`
+- `NewHandler[T]` — generic handler factory
+- `NewCommandHandler[C, E]` — command/event handler factory
+- `Marshaler` interface with `JSONMarshaler` implementation
+- `match/` subpackage — `Types()`, `Sources()`, `All()`, `Any()` matchers
+- `middleware/` subpackage — `CorrelationID()` middleware
+- `plugin/` subpackage — `Loopback`, `ProcessLoopback`, `BatchLoopback`
+
+**Kept:**
+- `Message` (alias for `TypedMessage[any]`)
+- `RawMessage` (alias for `TypedMessage[[]byte]`)
+- `TypedMessage[T]` with `Data`, `Attributes`, `Ack()`, `Nack()`
+- `Attributes` map type
+- `Acking` for acknowledgment coordination
+
+#### API Simplification
+
+- **message**: `Add*` methods now take direct parameters instead of config structs
+  - `AddHandler(name, matcher, handler)` — was `AddHandler(AddHandlerConfig{})`
+  - `AddInput(name, matcher, ch)` — was `AddInput(AddInputConfig{})`
+  - `AddRawInput(name, matcher, ch)` — was `AddRawInput(AddRawInputConfig{})`
+  - `AddOutput(name, matcher)` — was `AddOutput(AddOutputConfig{})`
+  - `AddRawOutput(name, matcher)` — was `AddRawOutput(AddRawOutputConfig{})`
+- **message**: `NewAcking(ack, nack)` simplified — removed `expectedCount` parameter
+- **message**: Added `NewSharedAcking(ack, nack, expectedCount)` for multi-message acknowledgment
+- **message**: Constructors simplified to `New()`, `NewTyped()`, `NewRaw()`
+- **pipe**: `Merger.Add()` renamed to `Merger.AddInput()` for symmetry with `Distributor`
+- **pipe**: `ApplyMiddleware()` renamed to `Use()` for Go convention
 
 ### Added
 
-#### Processor Simplification ADRs
-- ADR 0015: Remove cancel path from ProcessFunc
-- ADR 0016: Processor config struct pattern
-- ADR 0017: Middleware for ProcessFunc
-- ADR 0018: Interface naming conventions (`<Verb>er.<Verb>()` pattern)
-- ADR template documentation moved to `docs/procedures/adr.md`
-
-#### Error Handling
-- `pipe.ErrAlreadyStarted` - Sentinel error for duplicate Start/Generate calls
-- `message.ErrAlreadyStarted` - Sentinel error for duplicate Router.Start calls
-- `broker.ErrBrokerClosed` - Sentinel error for closed broker operations
-
-#### Go Workspaces Modularization
-- ADR 0014: Decision to split gopipe into channel, pipe, and message modules
-- Examples module (`examples/go.mod`) added as non-versioned workspace member
-- See: [docs/adr/0014-go-workspaces-modularization.md](docs/adr/0014-go-workspaces-modularization.md)
-
-#### UUID Generation
-- `message.NewID()` - Zero-dependency RFC 4122 UUID v4 generator
-- `message.DefaultIDGenerator` - Configurable ID generator variable
-- `message.IDGenerator` type for dependency injection
-- Same signature as `github.com/google/uuid.NewString()` for easy migration
-- See: [docs/plans/uuid-integration.md](docs/plans/uuid-integration.md)
-
-## [0.10.1] - 2025-12-17
+- **pipe**: `Distributor` for one-to-many message routing with matcher-based output selection
+  - First-match-wins routing with optional matcher functions (nil matches all)
+  - Dynamic `AddOutput()` during runtime (concurrent-safe)
+  - `NoMatchHandler` callback for unmatched messages
+  - Graceful shutdown with configurable timeout
+- **message**: `Engine.AddInput()` and `Engine.AddOutput()` support dynamic addition after `Start()`
+- **message**: `Plugin` mechanism for reusable engine configuration
+- **message**: `Use()` method for middleware registration on Engine and Router
+- **docs**: `AGENTS.md` for AI coding agent guidance (merged from `CLAUDE.md`)
+- **docs**: `doc.go` files for channel, pipe, and message packages
+- **examples**: Learning path with 5 numbered examples (01-05)
 
 ### Fixed
 
-- **ChannelBroker.Receive**: Changed from polling with hard-coded 100ms timeout to blocking by default until a message arrives. Added `ReceiveTimeout` config option for optional timeout behavior.
+- **message**: `Copy()` now clones `Attributes` map to avoid shared reference bugs
+- **message**: Removed unused `ErrNoMatchingOutput` error
+- **pipe**: Improved shutdown semantics for `Merger` and `Distributor`
 
-## [0.10.0] - 2025-12-12
+### Changed
+
+- **docs**: Corrected architecture documentation — Engine uses single merger
+- **docs**: Clarified loopback is a plugin (`plugin.Loopback`), not built into Engine
+- **docs**: Improved main README with quick start examples and learning path
+- **examples**: Removed broken/complex examples, kept 5 essential ones
+- **examples**: Fixed message example to use current API
+
+## [0.10.1] - 2024-12-17
+
+### Fixed
+
+- **message/broker**: `ChannelBroker.Receive` changed from polling with hard-coded 100ms timeout to blocking by default. Added `ReceiveTimeout` config option for optional timeout behavior.
+
+## [0.10.0] - 2024-12-12
 
 Major pub/sub implementation with CloudEvents support, CQRS handlers, and message routing.
 
@@ -164,51 +192,3 @@ Major pub/sub implementation with CloudEvents support, CQRS handlers, and messag
 - Accessor methods for `Data` and `Attributes`
 - Thread-safe property access mechanisms
 - "Noisy" properties (complex property getters)
-
-### Proposed (Not Yet Implemented)
-
-These features are documented but not implemented:
-- **Saga Coordinator**: Multi-step workflow orchestration (ADR 0007)
-- **Compensating Saga**: Rollback for failed workflows (ADR 0008)
-- **Transactional Outbox**: Reliable event publishing (ADR 0009)
-
-## Migration Guide
-
-See [docs/features/02-message-core-refactor.md](docs/features/02-message-core-refactor.md) for detailed migration instructions.
-
-### Quick Migration Examples
-
-```go
-// Old code
-msg := message.New(data,
-    message.WithID("123"),
-    message.WithSubject("orders"),
-)
-payload := msg.Data()
-attrs := msg.Attributes()
-
-// New code
-msg := &message.Message{
-    Data: data,
-    Attributes: message.Attributes{
-        message.AttrID: "123",
-        message.AttrSubject: "orders",
-    },
-}
-payload := msg.Data
-attrs := msg.Attributes
-```
-
-## Integration Order
-
-Features should be integrated in this dependency order:
-
-1. Channel GroupBy (prerequisite)
-2. Message Core Refactor (foundation)
-3. Message Pub/Sub (with CloudEvents)
-4. Message Router
-5. Message CQRS
-6. Message Multiplex
-7. Middleware Package
-
-See [docs/features/README.md](docs/features/README.md) for complete integration guide.

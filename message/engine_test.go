@@ -98,10 +98,13 @@ func TestEngine_AlreadyStarted(t *testing.T) {
 
 func TestEngine_NoHandler(t *testing.T) {
 	var lastErr error
+	var mu sync.Mutex
 	engine := NewEngine(EngineConfig{
 		Marshaler: NewJSONMarshaler(),
 		ErrorHandler: func(msg *Message, err error) {
+			mu.Lock()
 			lastErr = err
+			mu.Unlock()
 		},
 	})
 
@@ -121,6 +124,8 @@ func TestEngine_NoHandler(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
+	mu.Lock()
+	defer mu.Unlock()
 	if lastErr != ErrUnknownType {
 		t.Errorf("expected ErrUnknownType, got %v", lastErr)
 	}
@@ -357,12 +362,15 @@ type IntermediateEvent struct {
 
 func TestEngine_HandlerError(t *testing.T) {
 	var lastErr error
+	var mu sync.Mutex
 	testErr := errors.New("handler failed")
 
 	engine := NewEngine(EngineConfig{
 		Marshaler: NewJSONMarshaler(),
 		ErrorHandler: func(msg *Message, err error) {
+			mu.Lock()
 			lastErr = err
+			mu.Unlock()
 		},
 	})
 
@@ -391,6 +399,8 @@ func TestEngine_HandlerError(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
+	mu.Lock()
+	defer mu.Unlock()
 	if lastErr != testErr {
 		t.Errorf("expected handler error, got %v", lastErr)
 	}

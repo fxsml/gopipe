@@ -31,7 +31,7 @@ func main() {
 			BufferSize:  10,
 		},
 	)
-	if err := p.ApplyMiddleware(middleware.Recover[string, int]()); err != nil {
+	if err := p.Use(middleware.Recover[string, int]()); err != nil {
 		panic(err)
 	}
 
