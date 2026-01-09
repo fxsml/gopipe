@@ -16,7 +16,11 @@ make vet    # No issues
 // GroupBy aggregates items from the input channel by key, emitting batches
 // when size or time limits are reached.
 //
-// For usage examples and patterns, see docs/features/01-channel-groupby.md.
+// Example:
+//
+//	groups := channel.GroupBy(orders, func(o Order) string {
+//	    return o.CustomerID
+//	}, channel.GroupByConfig{MaxSize: 10})
 func GroupBy[K comparable, V any](
     in <-chan V,
     keyFunc func(V) K,
@@ -27,18 +31,14 @@ func GroupBy[K comparable, V any](
 ### DON'T
 
 ```go
-// GroupBy aggregates items. Example usage:
-//
-//    grouped := GroupBy(msgs, func(m Msg) string {
-//        return m.Topic
-//    }, GroupByConfig{MaxBatchSize: 100})
+// GroupBy aggregates items.  // Too brief, no context
 func GroupBy[K comparable, V any](...) <-chan Group[K, V]
 ```
 
 ### Guidelines
 
-1. **Precise and concise** - No example implementations in godoc
-2. **Link to docs** - Reference feature documentation for examples
+1. **Precise and concise** - Explain what it does, not how it works internally
+2. **Include examples** - Brief usage examples in godoc when helpful
 3. **First sentence** - Starts with function name, describes what it does
 4. **Parameters** - Document non-obvious parameters
 

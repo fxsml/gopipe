@@ -2,132 +2,95 @@
 
 ## Intent
 
-Separate read and write operations into different models, enabling independent scaling, optimization, and evolution of each side.
-
-## Structure
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    CQRS Architecture                         │
-│                                                              │
-│  Write Side                         Read Side               │
-│  ──────────                         ─────────               │
-│                                                              │
-│  ┌─────────┐     ┌─────────────┐     ┌─────────────┐       │
-│  │ Command │────►│  Command    │────►│   Event     │       │
-│  │         │     │  Handler    │     │   Store     │       │
-│  └─────────┘     └─────────────┘     └──────┬──────┘       │
-│                                              │               │
-│                                              ▼               │
-│                                       ┌─────────────┐       │
-│  ┌─────────┐     ┌─────────────┐     │ Projection  │       │
-│  │  Query  │◄────│   Query     │◄────│             │       │
-│  │         │     │   Handler   │     └─────────────┘       │
-│  └─────────┘     └─────────────┘            │               │
-│                                              ▼               │
-│                                       ┌─────────────┐       │
-│                                       │ Read Model  │       │
-│                                       │ (optimized) │       │
-│                                       └─────────────┘       │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## Participants
-
-| Component | Role |
-|-----------|------|
-| **Command** | Request to perform an action (imperative: "CreateOrder") |
-| **Command Handler** | Validates and executes commands, emits events |
-| **Event** | Fact about what happened (past tense: "OrderCreated") |
-| **Event Store** | Persists events (optional, for event sourcing) |
-| **Projection** | Transforms events into read models |
-| **Query Handler** | Retrieves data from read models |
-| **Read Model** | Optimized data structure for queries |
+Separate command handling (writes) from query handling (reads) using typed message handlers.
 
 ## When to Use
 
-**Good fit:**
-- Complex domain logic requiring different read/write models
-- Different scaling needs for reads vs writes
+- Complex domain logic requiring command/event separation
+- Event-driven architectures with CloudEvents
 - Audit trail requirements
-- Event sourcing architecture
-- Multiple read model representations needed
 
-**Poor fit:**
-- Simple CRUD applications
-- Strong consistency requirements everywhere
-- Small team with simple domain
-
-## Implementation in goengine
+## Implementation
 
 ### Command Handler
 
+The `NewCommandHandler` receives typed commands and returns typed events:
+
 ```go
-// CommandHandler processes commands and returns events
-handler := cqrs.NewCommandHandler(
+// Define command and event types
+type CreateOrder struct {
+    OrderID string  `json:"order_id"`
+    Amount  float64 `json:"amount"`
+}
+
+type OrderCreated struct {
+    OrderID string `json:"order_id"`
+    Status  string `json:"status"`
+}
+
+// Create handler: Command -> Events
+handler := message.NewCommandHandler(
     func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
-        // Validate
         if cmd.Amount <= 0 {
             return nil, errors.New("invalid amount")
         }
-
-        // Execute business logic
-        order := createOrder(cmd)
-
-        // Return events
         return []OrderCreated{{
-            OrderID:   order.ID,
-            Amount:    cmd.Amount,
-            CreatedAt: time.Now(),
+            OrderID: cmd.OrderID,
+            Status:  "created",
         }}, nil
+    },
+    message.CommandHandlerConfig{
+        Source: "/orders",
+        Naming: message.KebabNaming, // CreateOrder -> "create.order"
     },
 )
 ```
 
 ### Event Handler
 
+For event handlers (side effects only), use `NewHandler` with the `*Message` API:
+
 ```go
-// EventHandler reacts to events
-handler := cqrs.NewEventHandler(
-    func(ctx context.Context, evt OrderCreated) error {
-        // Update read model
-        return readModel.AddOrder(evt)
+handler := message.NewHandler[OrderCreated](
+    func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+        evt := msg.Data.(*OrderCreated)
+        // Update read model, send notifications, etc.
+        log.Printf("Order %s created", evt.OrderID)
+        return nil, nil // No output messages
     },
+    message.KebabNaming,
 )
 ```
 
-### Router Integration
+### Engine Integration
 
 ```go
-// Wire handlers with router
-router := message.NewRouter()
-router.AddHandler(createOrderHandler)
-router.AddHandler(cancelOrderHandler)
+engine := message.NewEngine(message.EngineConfig{
+    Marshaler: message.NewJSONMarshaler(),
+})
 
-// Process commands
-events := router.Start(ctx, commands)
+engine.AddHandler("create-order", nil, createOrderHandler)
+engine.AddHandler("order-projection", nil, orderCreatedHandler)
+
+input := make(chan *message.RawMessage)
+engine.AddRawInput("commands", nil, input)
+output, _ := engine.AddRawOutput("events", nil)
+
+done, _ := engine.Start(ctx)
 ```
 
 ## Naming Conventions
 
 | Type | Convention | Examples |
 |------|------------|----------|
-| Command | Imperative verb + noun | CreateOrder, CancelPayment, UpdateProfile |
-| Event | Noun + past participle | OrderCreated, PaymentCancelled, ProfileUpdated |
-| Query | Get/List/Find + noun | GetOrder, ListOrders, FindOrdersByCustomer |
-
-## Related Patterns
-
-- [Saga](saga.md) - Coordinates multiple commands across services
-- [Outbox](outbox.md) - Reliable event publishing
-- [Event Sourcing](event-sourcing.md) - Store state as event sequence
+| Command | Imperative verb + noun | CreateOrder, CancelPayment |
+| Event | Noun + past participle | OrderCreated, PaymentCancelled |
 
 ## Related ADRs
 
-- [ADR 0006: CQRS Implementation](../adr/IMP-0006-cqrs-implementation.md)
-- [ADR 0007: Saga Coordinator Pattern](../goengine/adr/PRO-0007-saga-coordinator.md)
+- [ADR 0011: CQRS Implementation](../adr/0011-cqrs-implementation.md)
+- [ADR 0020: Message Engine Architecture](../adr/0020-message-engine-architecture.md)
 
 ## Further Reading
 
 - Martin Fowler: [CQRS](https://martinfowler.com/bliki/CQRS.html)
-- Greg Young: [CQRS and Event Sourcing](https://cqrs.files.wordpress.com/2010/11/cqrs_documents.pdf)

@@ -19,7 +19,7 @@ type ProcessFunc[In, Out any] func(context.Context, In) ([]Out, error)
 type Middleware[In, Out any] func(ProcessFunc[In, Out]) ProcessFunc[In, Out]
 ```
 
-Pipes store middleware and apply them at `Start` time. `ApplyMiddleware` can be called multiple times; middleware executes in the order added.
+Pipes store middleware and apply them at `Start` time. `Use` can be called multiple times; middleware executes in the order added.
 
 Example middleware - context:
 
@@ -52,7 +52,7 @@ Usage:
 ```go
 // Create pipe and apply middleware
 p := pipe.NewTransformPipe(myHandler, pipe.Config{})
-err := p.ApplyMiddleware(middleware.Context[int, string](middleware.ContextConfig{
+err := p.Use(middleware.Context[int, string](middleware.ContextConfig{
     Timeout:     5 * time.Second,
     Propagation: true,
 }))
@@ -82,4 +82,4 @@ out, err := p.Start(ctx, input)
 
 ## Updates
 
-**2025-12-22:** Fixed `ProcessFunc` signature to `([]Out, error)`. Updated usage to show `ApplyMiddleware` returning error. Added note about middleware storage and execution order. Updated Consequences format to match ADR template.
+**2025-12-22:** Fixed `ProcessFunc` signature to `([]Out, error)`. Updated usage to show `Use` returning error. Added note about middleware storage and execution order. Updated Consequences format to match ADR template.

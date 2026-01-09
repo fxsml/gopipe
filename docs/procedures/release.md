@@ -2,6 +2,15 @@
 
 This document outlines the procedures for releasing new versions of gopipe.
 
+## Quick Start
+
+```bash
+# Release develop to main with tags (Claude-assisted)
+make release VERSION=v0.11.0
+```
+
+**See also:** [Feature Branch Release](feature-release.md) for merging large feature branches to develop with history cleanup.
+
 ## Version Numbering
 
 This project uses [Semantic Versioning](https://semver.org/):
@@ -55,11 +64,16 @@ After PR is approved and merged:
 git checkout main
 git pull origin main
 
-# Tag the release
+# Tag all modules (see "Multi-Module Tagging" section for details)
+git tag channel/vX.Y.Z
+git tag pipe/vX.Y.Z
+git tag message/vX.Y.Z
+git tag examples/vX.Y.Z  # Optional
+git push origin channel/vX.Y.Z pipe/vX.Y.Z message/vX.Y.Z
+
+# Create GitHub release (uses unprefixed tag for release page)
 git tag vX.Y.Z
 git push origin vX.Y.Z
-
-# Create GitHub release
 gh release create vX.Y.Z --title "vX.Y.Z" --notes "Release notes..."
 
 # Merge back to develop
@@ -128,11 +142,15 @@ EOF
 git checkout main
 git pull origin main
 
-# Tag the release
-git tag vX.Y.Z
-git push origin vX.Y.Z
+# Tag all modules (see "Multi-Module Tagging" section for details)
+git tag channel/vX.Y.Z
+git tag pipe/vX.Y.Z
+git tag message/vX.Y.Z
+git push origin channel/vX.Y.Z pipe/vX.Y.Z message/vX.Y.Z
 
 # Create GitHub release
+git tag vX.Y.Z
+git push origin vX.Y.Z
 gh release create vX.Y.Z --title "vX.Y.Z" --notes "$(cat <<'EOF'
 ## Fixed
 
@@ -180,6 +198,99 @@ Example resolution:
 ...
 ```
 
+## Multi-Module Tagging
+
+This project uses Go workspaces with multiple modules in subdirectories:
+
+```
+gopipe/
+├── channel/     # github.com/fxsml/gopipe/channel
+├── pipe/        # github.com/fxsml/gopipe/pipe
+├── message/     # github.com/fxsml/gopipe/message
+└── examples/    # github.com/fxsml/gopipe/examples
+```
+
+### Tag Format
+
+For Go modules in subdirectories, tags must be **prefixed with the subdirectory path**:
+
+| Module | Tag Format |
+|--------|-----------|
+| channel | `channel/vX.Y.Z` |
+| pipe | `pipe/vX.Y.Z` |
+| message | `message/vX.Y.Z` |
+| examples | `examples/vX.Y.Z` (optional) |
+
+### Creating Multi-Module Tags
+
+When releasing, create tags for all modules **in dependency order**:
+
+```bash
+# Tag all modules (after PR is merged to main)
+git checkout main
+git pull origin main
+
+# Create tags in dependency order (channel first, then pipe, then message)
+git tag channel/vX.Y.Z
+git tag pipe/vX.Y.Z
+git tag message/vX.Y.Z
+git tag examples/vX.Y.Z  # Optional
+
+# Push all tags at once
+git push origin channel/vX.Y.Z pipe/vX.Y.Z message/vX.Y.Z examples/vX.Y.Z
+
+# Or push all tags
+git push origin --tags
+```
+
+### Dependency Order
+
+Modules must be tagged in dependency order because Go resolves dependencies from published tags:
+
+1. **channel** - No internal dependencies (tag first)
+2. **pipe** - Depends on channel
+3. **message** - Depends on channel and pipe
+4. **examples** - Depends on all modules (tag last, optional)
+
+### Verifying Tags
+
+After pushing tags, verify modules are accessible:
+
+```bash
+# Clear Go module cache (optional, for testing)
+go clean -modcache
+
+# Verify each module resolves correctly
+go list -m github.com/fxsml/gopipe/channel@vX.Y.Z
+go list -m github.com/fxsml/gopipe/pipe@vX.Y.Z
+go list -m github.com/fxsml/gopipe/message@vX.Y.Z
+```
+
+### GitHub Releases
+
+Create a single GitHub release for the version, documenting all module changes:
+
+```bash
+gh release create vX.Y.Z --title "vX.Y.Z" --notes "$(cat <<'EOF'
+## Modules Released
+
+- `github.com/fxsml/gopipe/channel@vX.Y.Z`
+- `github.com/fxsml/gopipe/pipe@vX.Y.Z`
+- `github.com/fxsml/gopipe/message@vX.Y.Z`
+
+## Changes
+
+(Copy from CHANGELOG.md)
+
+## Full Changelog
+
+https://github.com/fxsml/gopipe/compare/vX.Y.Z-1...vX.Y.Z
+EOF
+)"
+```
+
+**Note:** The `vX.Y.Z` tag (without prefix) is for GitHub releases only. The actual Go module tags have subdirectory prefixes.
+
 ## Pre-Release Checklist
 
 Before any release:
@@ -189,6 +300,8 @@ Before any release:
 - [ ] Vet passes (`make vet`)
 - [ ] CHANGELOG.md updated with version and date
 - [ ] No uncommitted changes (`git status`)
+- [ ] All module go.mod files reference correct versions of internal dependencies
+- [ ] go.work includes all modules
 
 ## GitHub Release Notes
 
