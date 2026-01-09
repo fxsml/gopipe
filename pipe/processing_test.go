@@ -363,3 +363,150 @@ func TestProcessing_MultipleErrors(t *testing.T) {
 		t.Errorf("Expected 3 error handler calls, got %d: %v", len(errorCalls), errorCalls)
 	}
 }
+
+func TestProcessing_ShutdownTimeout_ForcedExit(t *testing.T) {
+	// Test that workers exit after ShutdownTimeout when context is cancelled
+	// and input doesn't close.
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	in := make(chan int) // Never closed
+	process := func(ctx context.Context, v int) ([]int, error) {
+		return []int{v}, nil
+	}
+
+	out := startProcessing(ctx, in, process, Config{
+		ShutdownTimeout: 50 * time.Millisecond,
+	})
+
+	// Cancel context - should trigger forced shutdown after 50ms
+	cancel()
+
+	// Output should close after timeout
+	select {
+	case <-out:
+		// Expected - output closed
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("output channel not closed after shutdown timeout")
+	}
+}
+
+func TestProcessing_ShutdownTimeout_NaturalCompletion(t *testing.T) {
+	// Test that workers exit naturally when input closes, even with ShutdownTimeout set.
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	in := make(chan int, 2)
+	in <- 1
+	in <- 2
+	close(in)
+
+	var results []int
+	var mu sync.Mutex
+
+	process := func(ctx context.Context, v int) ([]int, error) {
+		return []int{v * 2}, nil
+	}
+
+	out := startProcessing(ctx, in, process, Config{
+		ShutdownTimeout: 50 * time.Millisecond,
+	})
+
+	for v := range out {
+		mu.Lock()
+		results = append(results, v)
+		mu.Unlock()
+	}
+
+	if len(results) != 2 {
+		t.Errorf("expected 2 results, got %d", len(results))
+	}
+}
+
+func TestProcessing_ShutdownTimeout_BlockedOnOutput(t *testing.T) {
+	// Test that workers blocked on output write exit after ShutdownTimeout.
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	in := make(chan int, 1)
+	in <- 1
+
+	aboutToWrite := make(chan struct{})
+	process := func(ctx context.Context, v int) ([]int, error) {
+		close(aboutToWrite) // Signal we're about to return (worker will then try to write)
+		return []int{v}, nil
+	}
+
+	// Unbuffered output - worker will block on write if nobody reads
+	out := startProcessing(ctx, in, process, Config{
+		BufferSize:      0,
+		ShutdownTimeout: 50 * time.Millisecond,
+	})
+
+	// Wait for worker to be about to write to output
+	<-aboutToWrite
+
+	// Give worker time to actually enter the blocked write
+	time.Sleep(20 * time.Millisecond)
+
+	// Cancel context - should trigger forced shutdown
+	start := time.Now()
+	cancel()
+
+	// Wait for output to close (don't read from it - keep worker blocked)
+	// Use a separate goroutine to drain and detect close
+	closed := make(chan struct{})
+	go func() {
+		for range out {
+			// Drain any values (shouldn't be any since we never read before)
+		}
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+		elapsed := time.Since(start)
+		if elapsed < 40*time.Millisecond {
+			t.Errorf("output closed too quickly (%v), expected ~50ms timeout", elapsed)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("output channel not closed after shutdown timeout (worker blocked on output)")
+	}
+}
+
+func TestProcessing_NoShutdownTimeout_WaitsIndefinitely(t *testing.T) {
+	// Test that with ShutdownTimeout <= 0, workers wait indefinitely for input to close.
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	in := make(chan int)
+	process := func(ctx context.Context, v int) ([]int, error) {
+		return []int{v}, nil
+	}
+
+	out := startProcessing(ctx, in, process, Config{
+		ShutdownTimeout: 0, // Wait indefinitely
+	})
+
+	// Cancel context
+	cancel()
+
+	// Output should NOT close immediately (workers waiting for input)
+	select {
+	case <-out:
+		t.Fatal("output closed but should wait indefinitely for input")
+	case <-time.After(100 * time.Millisecond):
+		// Expected - still waiting
+	}
+
+	// Now close input - should complete
+	close(in)
+
+	select {
+	case <-out:
+		// Expected - output closed after input closed
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("output not closed after input closed")
+	}
+}

@@ -30,9 +30,14 @@ type Config struct {
 
 	// CleanupTimeout sets the timeout for cleanup operations.
 	CleanupTimeout time.Duration
+
+	// ShutdownTimeout controls shutdown behavior on context cancellation.
+	// If <= 0, waits indefinitely for input to close naturally.
+	// If > 0, waits up to this duration then forces shutdown.
+	ShutdownTimeout time.Duration
 }
 
-func (c Config) withDefaults() Config {
+func (c Config) parse() Config {
 	if c.Concurrency <= 0 {
 		c.Concurrency = 1
 	}
@@ -49,9 +54,10 @@ func (c Config) withDefaults() Config {
 // and returns a channel that will receive the processed outputs.
 //
 // Processing continues until the input channel is closed or the context is canceled.
+// With ShutdownTimeout > 0, workers exit after timeout on context cancellation.
 // The output channel is closed when processing is complete.
 //
-// This function does not apply middleware. Users should call ApplyMiddleware
+// This function does not apply middleware. Users should call Use
 // on the pipe before calling Start to add middleware like retry, logging, etc.
 func startProcessing[In, Out any](
 	ctx context.Context,
@@ -59,28 +65,68 @@ func startProcessing[In, Out any](
 	fn ProcessFunc[In, Out],
 	cfg Config,
 ) <-chan Out {
-	cfg = cfg.withDefaults()
+	cfg = cfg.parse()
 	out := make(chan Out, cfg.BufferSize)
+	done := make(chan struct{})
 
 	var wg sync.WaitGroup
 	wg.Add(cfg.Concurrency)
 	for range cfg.Concurrency {
 		go func() {
 			defer wg.Done()
-			for val := range in {
-				if res, err := fn(ctx, val); err != nil {
-					cfg.ErrorHandler(val, err)
-				} else {
-					for _, r := range res {
-						out <- r
+			for {
+				select {
+				case <-done:
+					return
+				case val, ok := <-in:
+					if !ok {
+						return
+					}
+					if res, err := fn(ctx, val); err != nil {
+						cfg.ErrorHandler(val, err)
+					} else {
+						for i, r := range res {
+							select {
+							case out <- r:
+							case <-done:
+								// Report this and remaining outputs as dropped
+								for _, dropped := range res[i:] {
+									cfg.ErrorHandler(dropped, ErrShutdownDropped)
+								}
+								return
+							}
+						}
 					}
 				}
 			}
 		}()
 	}
 
+	wgDone := make(chan struct{})
 	go func() {
 		wg.Wait()
+		close(wgDone)
+	}()
+
+	go func() {
+		// Wait for either context cancellation or natural completion
+		select {
+		case <-ctx.Done():
+			if cfg.ShutdownTimeout > 0 {
+				// Wait for natural completion or timeout
+				select {
+				case <-wgDone:
+					// Workers finished naturally
+				case <-time.After(cfg.ShutdownTimeout):
+					// Force shutdown after timeout
+					close(done)
+				}
+			}
+			// If timeout <= 0, wait indefinitely for workers to finish naturally
+		case <-wgDone:
+			// Workers finished naturally (input closed)
+		}
+		<-wgDone
 
 		if cfg.CleanupHandler != nil {
 			cleanupCtx := context.Background()
