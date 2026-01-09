@@ -19,7 +19,7 @@ func TestMiddlewareName_CorrelationID(t *testing.T) {
 	engine := message.NewEngine(message.EngineConfig{
 		Logger: logger,
 	})
-	engine.Use(middleware.CorrelationID())
+	_ = engine.Use(middleware.CorrelationID())
 
 	if !strings.Contains(buf.String(), "middleware=CorrelationID") {
 		t.Errorf("expected log to contain 'middleware=CorrelationID', got: %s", buf.String())
@@ -170,15 +170,15 @@ func TestUse_AfterStart(t *testing.T) {
 	handler := message.NewHandler[TestCommand](func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		return nil, nil
 	}, message.KebabNaming)
-	engine.AddHandler("test", nil, handler)
+	_ = engine.AddHandler("test", nil, handler)
 
 	input := make(chan *message.Message)
-	engine.AddInput("input", nil, input)
+	_, _ = engine.AddInput("input", nil, input)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	engine.Start(ctx)
+	_, _ = engine.Start(ctx)
 
 	// Try to add middleware after start
 	err := engine.Use(middleware.CorrelationID())
