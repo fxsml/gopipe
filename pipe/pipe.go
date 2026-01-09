@@ -43,7 +43,7 @@ func Apply[In, Inter, Out any](a Pipe[In, Inter], b Pipe[Inter, Out]) Pipe[In, O
 // NewFilterPipe creates a Pipe that selectively passes through inputs based on a predicate function.
 // If the handle function returns true, the input is passed through; if false, the input is discarded.
 // If the handle function returns an error, processing for that item stops and the error is handled.
-// Use ApplyMiddleware on the returned *ProcessPipe to add middleware.
+// Call Use on the returned *ProcessPipe to add middleware.
 func NewFilterPipe[In any](
 	handle func(context.Context, In) (bool, error),
 	cfg Config,
@@ -64,7 +64,7 @@ func NewFilterPipe[In any](
 // NewProcessPipe creates a Pipe that can transform each input into multiple outputs.
 // Unlike NewTransformPipe, this can produce zero, one, or many outputs for each input.
 // The handle function receives a context and input item, and returns a slice of outputs or an error.
-// Use ApplyMiddleware on the returned *ProcessPipe to add middleware.
+// Call Use on the returned *ProcessPipe to add middleware.
 func NewProcessPipe[In, Out any](
 	handle func(context.Context, In) ([]Out, error),
 	cfg Config,
@@ -78,7 +78,7 @@ func NewProcessPipe[In, Out any](
 // NewTransformPipe creates a Pipe that transforms each input into exactly one output.
 // Unlike NewProcessPipe, this always produces exactly one output for each successful input.
 // The handle function receives a context and input item, and returns a single output or an error.
-// Use ApplyMiddleware on the returned *ProcessPipe to add middleware.
+// Call Use on the returned *ProcessPipe to add middleware.
 func NewTransformPipe[In, Out any](
 	handle func(context.Context, In) (Out, error),
 	cfg Config,
@@ -95,7 +95,7 @@ func NewTransformPipe[In, Out any](
 
 // NewSinkPipe creates a Pipe that applies handle to each value from in.
 // The returned channel is closed after in is closed and all values are processed.
-// Use ApplyMiddleware on the returned *ProcessPipe to add middleware.
+// Call Use on the returned *ProcessPipe to add middleware.
 func NewSinkPipe[In any](
 	handle func(context.Context, In) error,
 	cfg Config,
@@ -129,10 +129,10 @@ func (p *ProcessPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan O
 	return startProcessing(ctx, in, handle, p.cfg), nil
 }
 
-// ApplyMiddleware adds middleware to the processing chain.
+// Use adds middleware to the processing chain.
 // Middleware is applied in the order it is added.
 // Returns ErrAlreadyStarted if the pipe has already been started.
-func (p *ProcessPipe[In, Out]) ApplyMiddleware(mw ...middleware.Middleware[In, Out]) error {
+func (p *ProcessPipe[In, Out]) Use(mw ...middleware.Middleware[In, Out]) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.started {
@@ -161,7 +161,7 @@ type BatchConfig struct {
 // NewBatchPipe creates a Pipe that groups inputs into batches before processing.
 // Each batch is processed as a whole by the handle function, which can return multiple outputs.
 // Batches are created when either maxSize items are collected or maxDuration elapses since the first item.
-// Use ApplyMiddleware on the returned *BatchPipe to add middleware.
+// Call Use on the returned *BatchPipe to add middleware.
 func NewBatchPipe[In, Out any](
 	handle func(context.Context, []In) ([]Out, error),
 	cfg BatchConfig,
@@ -202,10 +202,10 @@ func (p *BatchPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out
 	return startProcessing(ctx, batchChan, handle, p.cfg.Config), nil
 }
 
-// ApplyMiddleware adds middleware to the processing chain.
+// Use adds middleware to the processing chain.
 // Middleware is applied in the order it is added.
 // Returns ErrAlreadyStarted if the pipe has already been started.
-func (p *BatchPipe[In, Out]) ApplyMiddleware(mw ...middleware.Middleware[[]In, Out]) error {
+func (p *BatchPipe[In, Out]) Use(mw ...middleware.Middleware[[]In, Out]) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.started {

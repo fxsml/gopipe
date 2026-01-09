@@ -106,19 +106,19 @@ func TestGeneratePipe_ErrAlreadyStarted(t *testing.T) {
 		}
 	})
 
-	t.Run("ApplyMiddleware_ReturnsErrorAfterGenerate", func(t *testing.T) {
+	t.Run("Use_ReturnsErrorAfterGenerate", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		p := NewGenerator(func(_ context.Context) ([]int, error) {
 			return []int{1}, nil
 		}, Config{})
 
-		// ApplyMiddleware should succeed before Generate
-		err := p.ApplyMiddleware(func(next middleware.ProcessFunc[struct{}, int]) middleware.ProcessFunc[struct{}, int] {
+		// Use should succeed before Generate
+		err := p.Use(func(next middleware.ProcessFunc[struct{}, int]) middleware.ProcessFunc[struct{}, int] {
 			return next
 		})
 		if err != nil {
-			t.Fatalf("Expected no error on ApplyMiddleware before Generate, got %v", err)
+			t.Fatalf("Expected no error on Use before Generate, got %v", err)
 		}
 
 		// Start the generator
@@ -134,8 +134,8 @@ func TestGeneratePipe_ErrAlreadyStarted(t *testing.T) {
 		for range out {
 		}
 
-		// ApplyMiddleware should return ErrAlreadyStarted after Generate
-		err = p.ApplyMiddleware(func(next middleware.ProcessFunc[struct{}, int]) middleware.ProcessFunc[struct{}, int] {
+		// Use should return ErrAlreadyStarted after Generate
+		err = p.Use(func(next middleware.ProcessFunc[struct{}, int]) middleware.ProcessFunc[struct{}, int] {
 			return next
 		})
 		if !errors.Is(err, ErrAlreadyStarted) {

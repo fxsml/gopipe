@@ -40,10 +40,10 @@ func (g *GeneratePipe[Out]) Generate(ctx context.Context) (<-chan Out, error) {
 	}), fn, g.cfg), nil
 }
 
-// ApplyMiddleware adds middleware to the processing chain.
+// Use adds middleware to the processing chain.
 // Middleware is applied in the order it is added.
 // Returns ErrAlreadyStarted if the generator has already been started.
-func (g *GeneratePipe[Out]) ApplyMiddleware(mw ...middleware.Middleware[struct{}, Out]) error {
+func (g *GeneratePipe[Out]) Use(mw ...middleware.Middleware[struct{}, Out]) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.started {
@@ -55,7 +55,7 @@ func (g *GeneratePipe[Out]) ApplyMiddleware(mw ...middleware.Middleware[struct{}
 
 // NewGenerator creates a GeneratePipe that produces values using the provided handle function.
 // The handle function is called repeatedly until context cancellation.
-// Use ApplyMiddleware on the returned *GeneratePipe to add middleware.
+// Call Use on the returned *GeneratePipe to add middleware.
 func NewGenerator[Out any](
 	handle func(context.Context) ([]Out, error),
 	cfg Config,

@@ -81,7 +81,7 @@ func TestSink(t *testing.T) {
 	test.RunSink_EmptyChannel(t, f)
 }
 
-func TestProcessPipe_ApplyMiddleware(t *testing.T) {
+func TestProcessPipe_Use(t *testing.T) {
 	t.Run("NoMiddleware", func(t *testing.T) {
 		in := make(chan string, 1)
 		in <- "test"
@@ -112,7 +112,7 @@ func TestProcessPipe_ApplyMiddleware(t *testing.T) {
 		p := NewProcessPipe(func(_ context.Context, s string) ([]int, error) {
 			return []int{len(s)}, nil
 		}, Config{})
-		if err := p.ApplyMiddleware(func(next middleware.ProcessFunc[string, int]) middleware.ProcessFunc[string, int] {
+		if err := p.Use(func(next middleware.ProcessFunc[string, int]) middleware.ProcessFunc[string, int] {
 			return func(ctx context.Context, s string) ([]int, error) {
 				middlewareCalled = true
 				return next(ctx, s+"!")
@@ -146,7 +146,7 @@ func TestProcessPipe_ApplyMiddleware(t *testing.T) {
 			executionOrder = append(executionOrder, "base:process")
 			return []int{len(s)}, nil
 		}, Config{})
-		if err := p.ApplyMiddleware(
+		if err := p.Use(
 			func(next middleware.ProcessFunc[string, int]) middleware.ProcessFunc[string, int] {
 				return func(ctx context.Context, s string) ([]int, error) {
 					executionOrder = append(executionOrder, "middleware1:before")
@@ -197,20 +197,20 @@ func TestProcessPipe_ApplyMiddleware(t *testing.T) {
 		in <- 5
 		close(in)
 
-		// ApplyMiddleware called multiple times should preserve natural order:
+		// Use called multiple times should preserve natural order:
 		// First middleware applied executes first.
 		// So: (*2) -> (+3) -> base = 5*2+3 = 13
 		p := NewProcessPipe(func(_ context.Context, i int) ([]int, error) {
 			return []int{i}, nil
 		}, Config{})
-		if err := p.ApplyMiddleware(func(next middleware.ProcessFunc[int, int]) middleware.ProcessFunc[int, int] {
+		if err := p.Use(func(next middleware.ProcessFunc[int, int]) middleware.ProcessFunc[int, int] {
 			return func(ctx context.Context, i int) ([]int, error) {
 				return next(ctx, i*2)
 			}
 		}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if err := p.ApplyMiddleware(func(next middleware.ProcessFunc[int, int]) middleware.ProcessFunc[int, int] {
+		if err := p.Use(func(next middleware.ProcessFunc[int, int]) middleware.ProcessFunc[int, int] {
 			return func(ctx context.Context, i int) ([]int, error) {
 				return next(ctx, i+3)
 			}
@@ -252,13 +252,13 @@ func TestProcessPipe_ApplyMiddleware(t *testing.T) {
 			return []int{i}, nil
 		}
 
-		// Test with single variadic call: ApplyMiddleware(mw1, mw2, mw3)
+		// Test with single variadic call: Use(mw1, mw2, mw3)
 		in1 := make(chan int, 1)
 		in1 <- 5
 		close(in1)
 
 		p1 := NewProcessPipe(baseHandler, Config{})
-		if err := p1.ApplyMiddleware(mw1, mw2, mw3); err != nil {
+		if err := p1.Use(mw1, mw2, mw3); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		out1, err := p1.Pipe(context.Background(), in1)
@@ -273,13 +273,13 @@ func TestProcessPipe_ApplyMiddleware(t *testing.T) {
 		close(in2)
 
 		p2 := NewProcessPipe(baseHandler, Config{})
-		if err := p2.ApplyMiddleware(mw1); err != nil {
+		if err := p2.Use(mw1); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if err := p2.ApplyMiddleware(mw2); err != nil {
+		if err := p2.Use(mw2); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if err := p2.ApplyMiddleware(mw3); err != nil {
+		if err := p2.Use(mw3); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		out2, err := p2.Pipe(context.Background(), in2)
@@ -329,7 +329,7 @@ func TestProcessPipe_ErrAlreadyStarted(t *testing.T) {
 		}
 	})
 
-	t.Run("ApplyMiddleware_ReturnsErrorAfterStart", func(t *testing.T) {
+	t.Run("Use_ReturnsErrorAfterStart", func(t *testing.T) {
 		in := make(chan int)
 		close(in)
 
@@ -337,12 +337,12 @@ func TestProcessPipe_ErrAlreadyStarted(t *testing.T) {
 			return []int{i}, nil
 		}, Config{})
 
-		// ApplyMiddleware should succeed before Start
-		err := p.ApplyMiddleware(func(next middleware.ProcessFunc[int, int]) middleware.ProcessFunc[int, int] {
+		// Use should succeed before Start
+		err := p.Use(func(next middleware.ProcessFunc[int, int]) middleware.ProcessFunc[int, int] {
 			return next
 		})
 		if err != nil {
-			t.Fatalf("Expected no error on ApplyMiddleware before Start, got %v", err)
+			t.Fatalf("Expected no error on Use before Start, got %v", err)
 		}
 
 		// Start the pipe
@@ -355,8 +355,8 @@ func TestProcessPipe_ErrAlreadyStarted(t *testing.T) {
 		for range out {
 		}
 
-		// ApplyMiddleware should return ErrAlreadyStarted after Start
-		err = p.ApplyMiddleware(func(next middleware.ProcessFunc[int, int]) middleware.ProcessFunc[int, int] {
+		// Use should return ErrAlreadyStarted after Start
+		err = p.Use(func(next middleware.ProcessFunc[int, int]) middleware.ProcessFunc[int, int] {
 			return next
 		})
 		if !errors.Is(err, ErrAlreadyStarted) {
@@ -394,7 +394,7 @@ func TestBatchPipe_ErrAlreadyStarted(t *testing.T) {
 		}
 	})
 
-	t.Run("ApplyMiddleware_ReturnsErrorAfterStart", func(t *testing.T) {
+	t.Run("Use_ReturnsErrorAfterStart", func(t *testing.T) {
 		in := make(chan int)
 		close(in)
 
@@ -402,12 +402,12 @@ func TestBatchPipe_ErrAlreadyStarted(t *testing.T) {
 			return batch, nil
 		}, BatchConfig{MaxSize: 10})
 
-		// ApplyMiddleware should succeed before Start
-		err := p.ApplyMiddleware(func(next middleware.ProcessFunc[[]int, int]) middleware.ProcessFunc[[]int, int] {
+		// Use should succeed before Start
+		err := p.Use(func(next middleware.ProcessFunc[[]int, int]) middleware.ProcessFunc[[]int, int] {
 			return next
 		})
 		if err != nil {
-			t.Fatalf("Expected no error on ApplyMiddleware before Start, got %v", err)
+			t.Fatalf("Expected no error on Use before Start, got %v", err)
 		}
 
 		// Start the pipe
@@ -420,8 +420,8 @@ func TestBatchPipe_ErrAlreadyStarted(t *testing.T) {
 		for range out {
 		}
 
-		// ApplyMiddleware should return ErrAlreadyStarted after Start
-		err = p.ApplyMiddleware(func(next middleware.ProcessFunc[[]int, int]) middleware.ProcessFunc[[]int, int] {
+		// Use should return ErrAlreadyStarted after Start
+		err = p.Use(func(next middleware.ProcessFunc[[]int, int]) middleware.ProcessFunc[[]int, int] {
 			return next
 		})
 		if !errors.Is(err, ErrAlreadyStarted) {

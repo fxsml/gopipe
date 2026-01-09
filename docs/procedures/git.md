@@ -70,29 +70,16 @@ gh pr create --base develop --title "feat: <name>" --body "..."
 
 ## Release Process
 
-1. **Create release branch:**
-   ```bash
-   git checkout develop
-   git checkout -b release/vX.Y.Z
-   ```
+See [release.md](release.md) for full release procedures including:
+- Multi-module tagging (channel/, pipe/, message/)
+- Hotfix releases
+- GitHub release creation
 
-2. **Finalize:**
-   - Update CHANGELOG.md
-   - Final testing
-
-3. **Merge and tag:**
-   ```bash
-   gh pr create --base main --title "release: vX.Y.Z"
-   # After merge:
-   git tag vX.Y.Z
-   git push origin vX.Y.Z
-   git checkout develop && git merge release/vX.Y.Z
-   ```
-
-4. **Cleanup:**
-   ```bash
-   git branch -d release/vX.Y.Z
-   ```
+**Quick reference:**
+```bash
+make merge-feature BRANCH=feature/xxx  # Merge feature to develop
+make release VERSION=v0.11.0           # Release develop to main
+```
 
 ## Rules
 

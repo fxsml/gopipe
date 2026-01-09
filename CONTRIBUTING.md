@@ -21,34 +21,32 @@ go test ./message -v
 
 ```
 gopipe/
-├── channel/          # Channel utilities (Merge, Filter, GroupBy, etc.)
-├── message/          # Core message handling
-│   ├── broker/       # Broker implementations (channel, HTTP, IO)
-│   ├── cloudevents/  # CloudEvents v1.0.2 support
-│   ├── cqrs/         # CQRS command/event handlers
-│   └── multiplex/    # Topic-based routing
-├── middleware/       # Reusable middleware
-├── examples/         # Working examples
+├── channel/          # Stateless channel operations (Merge, Filter, Transform, etc.)
+├── pipe/             # Stateful components with lifecycle (ProcessPipe, Merger, Distributor)
+│   └── middleware/   # Pipe middleware (Retry, Logger, Metrics, etc.)
+├── message/          # CloudEvents message handling
+│   ├── match/        # Matchers (Types, Sources, All, Any)
+│   ├── middleware/   # Message middleware (CorrelationID)
+│   └── plugin/       # Plugins (Loopback, ProcessLoopback, BatchLoopback)
+├── examples/         # Working examples (01-05)
 └── docs/             # Documentation
-    ├── features/     # Feature documentation
-    └── adr/          # Architecture Decision Records
+    ├── adr/          # Architecture Decision Records
+    ├── plans/        # Implementation plans
+    └── procedures/   # Development procedures
 ```
 
 ## Core Components
 
-### gopipe Core
-The foundation is simple pipe composition:
-```go
-type Pipe[In, Out any] func(ctx context.Context, in <-chan In) <-chan Out
-```
-
 ### Channel Package
-Utilities for channel operations: `Merge`, `Filter`, `Transform`, `GroupBy`, etc.
+Stateless channel operations: `Merge`, `Filter`, `Transform`, `Broadcast`, `GroupBy`, etc.
+
+### Pipe Package
+Stateful components with lifecycle: `ProcessPipe`, `Merger`, `Distributor`, `Generator`.
 
 ### Message Package
-Message handling with pub/sub, routing, and CQRS support.
+CloudEvents message handling: `Engine`, `Router`, `Handler`, with type-based routing.
 
-See [README.md](README.md) for detailed component documentation.
+See [README.md](README.md) for quick start examples and package overview.
 
 ## Development Workflow
 
@@ -81,23 +79,20 @@ go test ./message -v
 
 **Required before committing:**
 
-1. **Feature Documentation** (if adding new feature)
-   - Create `docs/features/NN-feature-name.md`
-   - Follow template in existing feature docs
-   - Include: Summary, Implementation, Usage Example, Files Changed
-
-2. **CHANGELOG.md**
+1. **CHANGELOG.md**
    - Add entry under `[Unreleased]`
    - Use sections: Added, Changed, Deprecated, Removed, Fixed, Security
-   - Reference feature docs with links
 
-3. **Architecture Decision Records** (for architectural changes)
+2. **Architecture Decision Records** (for architectural changes)
    - Create `docs/adr/NNNN-decision-name.md`
    - Include: Date, Status, Context, Decision, Consequences
-   - Link to related features
 
-4. **README.md** (for new core components)
-   - Update core components section
+3. **Godoc** (for new public APIs)
+   - Add package doc.go with overview
+   - Document all exported types and functions
+
+4. **README.md** (for significant changes)
+   - Update examples if API changed
    - Add examples
    - Ensure examples are tested and up-to-date
 
@@ -105,16 +100,19 @@ go test ./message -v
 
 **Public API godoc:**
 - Precise and concise
-- No example implementations in godoc
-- Reference feature docs for concepts: "See docs/features/XX-name.md"
-- Focus on what the API does, not how to use it (examples go in docs/features)
+- Focus on what the API does, not implementation details
+- Include brief usage example in godoc when helpful
 
 **Example:**
 ```go
 // GroupBy aggregates items from the input channel by key, emitting batches
 // when size or time limits are reached.
 //
-// See docs/features/01-channel-groupby.md for usage examples and patterns.
+// Example:
+//
+//	groups := channel.GroupBy(orders, func(o Order) string {
+//	    return o.CustomerID
+//	}, channel.GroupByConfig{MaxSize: 10})
 func GroupBy[K comparable, V any](
     in <-chan V,
     keyFunc func(V) K,
@@ -126,11 +124,9 @@ func GroupBy[K comparable, V any](
 
 ```bash
 git add .
-git commit -m "feat: add your feature
+git commit -m "feat(package): add your feature
 
 Detailed description of what was added/changed.
-
-See: docs/features/NN-feature-name.md
 "
 ```
 
@@ -237,22 +233,22 @@ Status values:
 
 ## Getting Help
 
-- Check [docs/features/](docs/features/) for feature documentation
 - Review [docs/adr/](docs/adr/) for architectural decisions
-- See [CLAUDE.md](CLAUDE.md) for AI assistant procedures
+- Check [docs/procedures/](docs/procedures/) for development procedures
+- See [AGENTS.md](AGENTS.md) for AI agent guidance
 - Open an issue for questions or bugs
 
 ## AI Assistant Workflow
 
-For AI assistants working on this codebase, see [CLAUDE.md](CLAUDE.md) for detailed procedures including:
-- Feature branch documentation
-- Integration procedures
-- Documentation requirements
-- Git workflow
+For AI assistants working on this codebase, see [AGENTS.md](AGENTS.md) for:
+- Quick commands
+- Architecture decisions
+- Common mistakes to avoid
+- Project structure
 
 Key differences for AI:
 - Humans: Focus on this CONTRIBUTING.md
-- AI Assistants: Follow CLAUDE.md procedures
+- AI Assistants: Follow AGENTS.md guidance
 
 ## Release Process
 
@@ -310,8 +306,8 @@ gh issue close <issue-number> --comment "Released in v0.X.Y: https://github.com/
 ### Breaking Changes
 - Description of breaking change
 
-### Documentation
-See [docs/features/](docs/features/) for detailed documentation.
+### Full Changelog
+https://github.com/fxsml/gopipe/compare/vPREV...vX.Y.Z
 ```
 
 ### Version Numbering

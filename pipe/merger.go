@@ -3,18 +3,19 @@ package pipe
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 )
 
 // Merger merges multiple input channels into a single output channel.
-// It safely handles concurrent Add() calls and provides graceful shutdown.
+// Inverse of Distributor. Supports dynamic AddInput() after Merge().
 type Merger[T any] struct {
-	out       chan T
 	mu        sync.Mutex
 	wg        sync.WaitGroup
+	out       chan T
 	done      chan struct{}
-	config    MergerConfig
+	cfg       MergerConfig
 	closed    bool
 	inputs    []<-chan T
 	inputDone map[<-chan T]chan struct{}
@@ -22,34 +23,44 @@ type Merger[T any] struct {
 
 // MergerConfig configures Merger behavior.
 type MergerConfig struct {
-	// Buffer size for the output channel
+	// Buffer is the output channel buffer size.
 	Buffer int
-	// ShutdownTimeout is the max time to wait for input channels to drain.
-	// If 0, waits indefinitely for clean shutdown.
+	// ShutdownTimeout controls shutdown behavior on context cancellation.
+	// If <= 0, waits indefinitely for inputs to close naturally.
+	// If > 0, waits up to this duration then forces shutdown.
 	ShutdownTimeout time.Duration
+	// ErrorHandler is called when a message cannot be forwarded.
+	// Called with ErrShutdownDropped when a message is dropped due to shutdown.
+	// Default logs via slog.Error.
+	ErrorHandler func(in any, err error)
 }
 
-// NewMerger creates a new Merger instance.
-// Add input channels with Add(), then call Merge() exactly once.
-func NewMerger[T any](config MergerConfig) *Merger[T] {
+func (c MergerConfig) parse() MergerConfig {
+	if c.ErrorHandler == nil {
+		c.ErrorHandler = func(in any, err error) {
+			slog.Error("[GOPIPE] Merger error", slog.Any("input", in), slog.Any("error", err))
+		}
+	}
+	return c
+}
+
+// NewMerger creates a new Merger.
+func NewMerger[T any](cfg MergerConfig) *Merger[T] {
+	cfg = cfg.parse()
 	return &Merger[T]{
-		out:    make(chan T, config.Buffer),
+		out:    make(chan T, cfg.Buffer),
 		done:   make(chan struct{}),
-		config: config,
+		cfg:    cfg,
 		inputs: make([]<-chan T, 0),
 	}
 }
 
-// Add registers an input channel to be merged into the output.
-// Safe to call concurrently. Returns a done channel that closes when all messages
-// from the input channel have been processed, and an error if Merger is already closed.
-func (m *Merger[T]) Add(ch <-chan T) (<-chan struct{}, error) {
+// AddInput registers an input channel. Safe to call after Merge().
+func (m *Merger[T]) AddInput(ch <-chan T) (<-chan struct{}, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		done := make(chan struct{})
-		close(done)
-		return done, errors.New("gopipe merger: closed")
+		return nil, errors.New("merger: closed")
 	}
 
 	done := make(chan struct{})
@@ -69,10 +80,7 @@ func (m *Merger[T]) Add(ch <-chan T) (<-chan struct{}, error) {
 	return done, nil
 }
 
-// Merge begins merging input channels and returns the output channel.
-// The output channel closes when the context is cancelled and all input
-// channels have been drained (up to ShutdownDuration).
-// Returns ErrAlreadyStarted if called multiple times.
+// Merge starts merging and returns the output channel.
 func (m *Merger[T]) Merge(ctx context.Context) (<-chan T, error) {
 	m.mu.Lock()
 	if m.isStarted() {
@@ -99,13 +107,17 @@ func (m *Merger[T]) Merge(ctx context.Context) (<-chan T, error) {
 			close(wgDone)
 		}()
 
-		if m.config.ShutdownTimeout > 0 {
+		if m.cfg.ShutdownTimeout > 0 {
+			// Wait for natural completion or timeout
 			select {
 			case <-wgDone:
-			case <-time.After(m.config.ShutdownTimeout):
+				// Inputs finished naturally
+			case <-time.After(m.cfg.ShutdownTimeout):
+				// Force shutdown after timeout
 				close(m.done)
 			}
 		}
+		// If timeout <= 0, wait indefinitely for inputs to close naturally
 		<-wgDone
 		close(m.out)
 	}()
@@ -131,6 +143,7 @@ func (m *Merger[T]) startInput(ch <-chan T, done chan struct{}) {
 				select {
 				case m.out <- v:
 				case <-m.done:
+					m.cfg.ErrorHandler(v, ErrShutdownDropped)
 					return
 				}
 			}

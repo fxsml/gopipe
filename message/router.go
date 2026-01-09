@@ -2,244 +2,182 @@ package message
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"sync"
-	"time"
 
-	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/pipe"
-	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
-// RouterConfig configures message routing behavior.
-type RouterConfig struct {
-	Concurrency int
-	Timeout     time.Duration
-	Retry       *middleware.RetryConfig
-	Recover     bool
-	Middleware  []Middleware
+// ProcessFunc is the message processing function signature.
+type ProcessFunc func(context.Context, *Message) ([]*Message, error)
+
+// Middleware wraps a ProcessFunc to add cross-cutting concerns.
+type Middleware func(ProcessFunc) ProcessFunc
+
+// handlerEntry holds a handler and its configuration.
+type handlerEntry struct {
+	name    string
+	matcher Matcher
+	handler Handler
 }
 
-// Router dispatches messages to handlers based on attribute matching.
+// Router dispatches messages to handlers by CE type.
+// Implements Pipe signature for composability with pipe.Apply().
+// Uses pipe.ProcessPipe internally for middleware, concurrency, and error handling.
 type Router struct {
-	mu         sync.Mutex
-	handlers   []Handler
-	pipes      []Pipe
-	generators []Generator
-	config     RouterConfig
-	started    bool
+	logger Logger
+
+	mu           sync.RWMutex
+	handlers     map[string]handlerEntry
+	errorHandler ErrorHandler
+	bufferSize   int
+	concurrency  int
+	middleware   []Middleware
+	started      bool
 }
 
-// NewRouter creates a router with the given configuration.
-// Use AddHandler to add handlers before calling Start.
-func NewRouter(config RouterConfig) *Router {
+// RouterConfig configures the message router.
+type RouterConfig struct {
+	BufferSize   int // Output channel buffer size (default: 100)
+	Concurrency  int // Number of concurrent handler invocations (default: 1)
+	ErrorHandler ErrorHandler // Default: no-op (errors logged via Logger)
+	Logger       Logger       // Default: slog.Default()
+}
+
+func (c RouterConfig) parse() RouterConfig {
+	if c.ErrorHandler == nil {
+		c.ErrorHandler = func(msg *Message, err error) {}
+	}
+	if c.Logger == nil {
+		c.Logger = slog.Default()
+	}
+	if c.BufferSize <= 0 {
+		c.BufferSize = 100
+	}
+	if c.Concurrency <= 0 {
+		c.Concurrency = 1
+	}
+	return c
+}
+
+// NewRouter creates a new message router.
+func NewRouter(cfg RouterConfig) *Router {
+	cfg = cfg.parse()
 	return &Router{
-		config: config,
+		handlers:     make(map[string]handlerEntry),
+		bufferSize:   cfg.BufferSize,
+		concurrency:  cfg.Concurrency,
+		errorHandler: cfg.ErrorHandler,
+		logger:       cfg.Logger,
 	}
 }
 
-// AddHandler adds a handler to the router.
-// Returns false if the router has already started.
-func (r *Router) AddHandler(handler Handler) bool {
+// AddHandler registers a handler for its CE type.
+// The optional matcher is applied after type matching.
+func (r *Router) AddHandler(name string, matcher Matcher, h Handler) error {
+	r.logger.Info("Adding handler",
+		"handler", name,
+		"event_type", h.EventType())
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	if r.started {
-		return false
-	}
-	r.handlers = append(r.handlers, handler)
-	return true
+	r.handlers[h.EventType()] = handlerEntry{name: name, matcher: matcher, handler: h}
+	return nil
 }
 
-// AddPipe adds a pipe that receives matching messages.
-// Returns false if the router has already started.
-func (r *Router) AddPipe(pipe Pipe) bool {
+// Use registers middleware to wrap message processing.
+// Middleware is applied in order: first registered wraps outermost.
+// Must be called before Pipe().
+func (r *Router) Use(m ...Middleware) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
 	if r.started {
-		return false
+		return ErrAlreadyStarted
 	}
-	r.pipes = append(r.pipes, pipe)
-	return true
+	for _, mw := range m {
+		r.logger.Info("Using middleware", "middleware", funcName(mw))
+	}
+	r.middleware = append(r.middleware, m...)
+	return nil
 }
 
-// AddGenerator adds a generator that produces messages for the router.
-// Returns false if the router has already started.
-func (r *Router) AddGenerator(generator Generator) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.started {
-		return false
-	}
-	r.generators = append(r.generators, generator)
-	return true
-}
-
-// Pipe processes messages through matched handlers and pipes.
-// Returns ErrAlreadyStarted if called more than once.
-// Returns (nil, nil) if msgs is nil and no generators are configured.
-func (r *Router) Pipe(ctx context.Context, msgs <-chan *Message) (<-chan *Message, error) {
+// Pipe routes messages to handlers and returns outputs.
+// Signature matches pipe.Pipe[*Message, *Message] for composability.
+func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message, error) {
 	r.mu.Lock()
 	if r.started {
 		r.mu.Unlock()
 		return nil, ErrAlreadyStarted
 	}
 	r.started = true
-	// Take a snapshot of handlers, pipes, and generators under lock
-	handlers := r.handlers
-	pipes := r.pipes
-	generators := r.generators
+
+	// Apply middleware: first registered wraps outermost
+	fn := r.process
+	for i := len(r.middleware) - 1; i >= 0; i-- {
+		fn = r.middleware[i](fn)
+	}
 	r.mu.Unlock()
 
-	// Return nil if no input and no generators
-	if msgs == nil && len(generators) == 0 {
-		return nil, nil
+	cfg := pipe.Config{
+		BufferSize:  r.bufferSize,
+		Concurrency: r.concurrency,
+		ErrorHandler: func(in any, err error) {
+			msg := in.(*Message)
+			r.logger.Error("Handler error",
+				"error", err,
+				"attributes", msg.Attributes)
+			r.errorHandler(msg, err)
+		},
 	}
-
-	// Start all generators and merge with input
-	var allInputs []<-chan *Message
-	if msgs != nil {
-		allInputs = append(allInputs, msgs)
-	}
-	for _, gen := range generators {
-		out, err := gen.Generate(ctx)
-		if err != nil {
-			continue // skip failed generators
-		}
-		allInputs = append(allInputs, out)
-	}
-
-	// Merge all inputs into a single channel
-	var mergedInput <-chan *Message
-	if len(allInputs) == 1 {
-		mergedInput = allInputs[0]
-	} else {
-		mergedInput = channel.Merge(allInputs...)
-	}
-
-	// If no pipes, use simple handler-based routing
-	if len(pipes) == 0 {
-		return r.startWithHandlers(ctx, mergedInput, handlers), nil
-	}
-
-	// Start all pipes and create their input channels
-	pipeInputs := make([]chan *Message, len(pipes))
-	pipeOutputs := make([]<-chan *Message, len(pipes))
-
-	for i, pe := range pipes {
-		pipeInputs[i] = make(chan *Message)
-		out, err := pe.Pipe(ctx, pipeInputs[i])
-		if err != nil {
-			close(pipeInputs[i])
-			continue
-		}
-		pipeOutputs[i] = out
-	}
-
-	// Create handler input channel
-	handlerInput := make(chan *Message)
-	handlerOutput := r.startWithHandlers(ctx, handlerInput, handlers)
-
-	// Route incoming messages to pipes or handlers
-	go func() {
-		defer func() {
-			// Close all pipe inputs
-			for _, in := range pipeInputs {
-				close(in)
-			}
-			close(handlerInput)
-		}()
-
-		for msg := range mergedInput {
-			// Check if message matches any pipe
-			matched := false
-			for i, pe := range pipes {
-				if pe.Match(msg.Attributes) {
-					pipeInputs[i] <- msg
-					matched = true
-					break
-				}
-			}
-
-			// If no pipe matched, send to handlers
-			if !matched {
-				handlerInput <- msg
-			}
-		}
-	}()
-
-	// Merge all outputs
-	allOutputs := append(pipeOutputs, handlerOutput)
-	return channel.Merge(allOutputs...), nil
+	p := pipe.NewProcessPipe(fn, cfg)
+	return p.Pipe(ctx, in)
 }
 
-// startWithHandlers processes messages through the given handlers.
-func (r *Router) startWithHandlers(ctx context.Context, msgs <-chan *Message, handlers []Handler) <-chan *Message {
-	handle := func(ctx context.Context, msg *Message) ([]*Message, error) {
-		for _, h := range handlers {
-			if h.Match(msg.Attributes) {
-				return h.Handle(ctx, msg)
-			}
-		}
-		err := fmt.Errorf("no handler matched")
+// handler returns the handler entry for the given CE type.
+func (r *Router) handler(eventType string) (handlerEntry, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, ok := r.handlers[eventType]
+	return entry, ok
+}
+
+// NewInput creates a typed instance for unmarshaling.
+// Implements InputRegistry.
+func (r *Router) NewInput(eventType string) any {
+	entry, ok := r.handler(eventType)
+	if !ok {
+		return nil
+	}
+	return entry.handler.NewInput()
+}
+
+func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) {
+	eventType, _ := msg.Attributes["type"].(string)
+
+	entry, ok := r.handler(eventType)
+	if !ok {
+		err := ErrNoHandler
 		msg.Nack(err)
 		return nil, err
 	}
 
-	// Build middleware chain
-	var mw []middleware.Middleware[*Message, *Message]
-
-	// Metadata provider first (outermost)
-	mw = append(mw, middleware.MetadataProvider[*Message, *Message](func(msg *Message) middleware.Metadata {
-		metadata := middleware.Metadata{}
-		if id, ok := msg.Attributes.ID(); ok {
-			metadata[AttrID] = id
-		}
-		if corr, ok := msg.Attributes.CorrelationID(); ok {
-			metadata[AttrCorrelationID] = corr
-		}
-		return metadata
-	}))
-
-	// Logging
-	mw = append(mw, middleware.Log[*Message, *Message](middleware.LogConfig{
-		MessageSuccess: "Processed messages",
-		MessageFailure: "Failed to process messages",
-		MessageCancel:  "Canceled processing messages",
-	}))
-
-	// Retry
-	if r.config.Retry != nil {
-		mw = append(mw, middleware.Retry[*Message, *Message](*r.config.Retry))
+	if entry.matcher != nil && !entry.matcher.Match(msg.Attributes) {
+		err := ErrHandlerRejected
+		msg.Nack(err)
+		return nil, err
 	}
 
-	// Timeout
-	if r.config.Timeout > 0 {
-		mw = append(mw, middleware.Context[*Message, *Message](middleware.ContextConfig{
-			Timeout:    r.config.Timeout,
-			Background: true,
-		}))
+	outputs, err := entry.handler.Handle(ctx, msg)
+	if err != nil {
+		msg.Nack(err)
+		return nil, err
 	}
 
-	// User middleware
-	mw = append(mw, r.config.Middleware...)
-
-	// Recover (innermost, closest to handler)
-	if r.config.Recover {
-		mw = append(mw, middleware.Recover[*Message, *Message]())
-	}
-
-	cfg := pipe.Config{
-		Concurrency: r.config.Concurrency,
-	}
-	if cfg.Concurrency <= 0 {
-		cfg.Concurrency = 1
-	}
-
-	pp := pipe.NewProcessPipe(handle, cfg)
-	_ = pp.ApplyMiddleware(mw...) // error only if already started
-	out, _ := pp.Pipe(ctx, msgs)  // error only if already started
-	return out
+	msg.Ack()
+	r.logger.Debug("Message handled successfully",
+		"handler", entry.name,
+		"attributes", msg.Attributes)
+	return outputs, nil
 }
+
+// Verify Router implements InputRegistry.
+var _ InputRegistry = (*Router)(nil)

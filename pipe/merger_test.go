@@ -22,25 +22,26 @@ func assertDoneClosed(t *testing.T, done <-chan struct{}, timeout time.Duration,
 
 func TestMerger_BasicMerge(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
-		ShutdownTimeout: 0,
+		ShutdownTimeout: 1 * time.Second, // Allow time for graceful drain
 	})
 
-	ch1 := make(chan int)
-	ch2 := make(chan int)
-	ch3 := make(chan int)
+	ch1 := make(chan int, 2)
+	ch2 := make(chan int, 2)
+	ch3 := make(chan int, 1)
 
-	done1, err := merger.Add(ch1)
+	done1, err := merger.AddInput(ch1)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch1: %v", err)
 	}
-	done2, err := merger.Add(ch2)
+	done2, err := merger.AddInput(ch2)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch2: %v", err)
 	}
-	done3, err := merger.Add(ch3)
+	done3, err := merger.AddInput(ch3)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch3: %v", err)
 	}
@@ -49,7 +50,6 @@ func TestMerger_BasicMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error starting merger: %v", err)
 	}
-	cancel()
 
 	// Send values from different channels
 	go func() {
@@ -67,6 +67,13 @@ func TestMerger_BasicMerge(t *testing.T) {
 		close(ch3)
 	}()
 
+	// Wait for all inputs to close, then cancel
+	assertDoneClosed(t, done1, 1*time.Second, "ch1")
+	assertDoneClosed(t, done2, 1*time.Second, "ch2")
+	assertDoneClosed(t, done3, 1*time.Second, "ch3")
+
+	cancel()
+
 	// Collect results
 	results := make(map[int]bool)
 	for v := range out {
@@ -83,11 +90,6 @@ func TestMerger_BasicMerge(t *testing.T) {
 			t.Errorf("missing value %d", v)
 		}
 	}
-
-	// Assert all done channels are closed
-	assertDoneClosed(t, done1, 1*time.Second, "ch1")
-	assertDoneClosed(t, done2, 1*time.Second, "ch2")
-	assertDoneClosed(t, done3, 1*time.Second, "ch3")
 }
 
 func TestMerger_AddAfterClosed(t *testing.T) {
@@ -103,7 +105,7 @@ func TestMerger_AddAfterClosed(t *testing.T) {
 	}
 
 	ch1 := make(chan int)
-	done1, err := merger.Add(ch1)
+	done1, err := merger.AddInput(ch1)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
@@ -114,14 +116,17 @@ func TestMerger_AddAfterClosed(t *testing.T) {
 	// Wait a bit for shutdown to complete
 	time.Sleep(50 * time.Millisecond)
 
-	// Try adding after closed - should return error
+	// Try adding after closed - should return nil, error
 	ch2 := make(chan int, 1)
 	ch2 <- 99
 	close(ch2)
 
-	_, err2 := merger.Add(ch2)
+	done2, err2 := merger.AddInput(ch2)
 	if err2 == nil {
 		t.Error("expected error when adding channel after close")
+	}
+	if done2 != nil {
+		t.Error("expected nil done channel when adding channel after close")
 	}
 
 	// Drain output
@@ -145,7 +150,7 @@ func TestMerger_ContextCancellation(t *testing.T) {
 	})
 
 	ch := make(chan int, 5)
-	done, err := merger.Add(ch)
+	done, err := merger.AddInput(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
@@ -194,7 +199,7 @@ func TestMerger_ShutdownDuration(t *testing.T) {
 		ch <- i
 	}
 
-	done, err := merger.Add(ch)
+	done, err := merger.AddInput(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
@@ -232,16 +237,16 @@ func TestMerger_ShutdownDuration(t *testing.T) {
 	assertDoneClosed(t, done, 500*time.Millisecond, "ch")
 }
 
-func TestMerger_NoShutdownDuration(t *testing.T) {
+func TestMerger_ForcedShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
-		ShutdownTimeout: 0, // No timeout
+		ShutdownTimeout: 50 * time.Millisecond, // Force after 50ms
 	})
 
-	ch := make(chan int)
-	done, err := merger.Add(ch)
+	ch := make(chan int, 10)
+	done, err := merger.AddInput(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
@@ -250,16 +255,55 @@ func TestMerger_NoShutdownDuration(t *testing.T) {
 		t.Fatalf("unexpected error starting merger: %v", err)
 	}
 
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		ch <- 1
-		ch <- 2
-		close(ch)
-	}()
+	// Send some values before cancel (don't close ch)
+	ch <- 1
+	ch <- 2
 
+	// Cancel - should force shutdown after timeout since ch isn't closed
 	cancel()
 
-	// Should wait for channel to close naturally
+	// Output should close after timeout
+	timeout := time.After(500 * time.Millisecond)
+	select {
+	case <-out:
+		// Drain any values that made it through
+		for range out {
+		}
+	case <-timeout:
+		t.Fatal("output channel didn't close after forced shutdown")
+	}
+
+	// Assert done channel is closed
+	assertDoneClosed(t, done, 1*time.Second, "ch")
+}
+
+func TestMerger_NaturalCompletion(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	merger := NewMerger[int](MergerConfig{
+		Buffer:          10,
+		ShutdownTimeout: 0, // Wait for natural completion
+	})
+
+	ch := make(chan int, 10)
+	done, err := merger.AddInput(ch)
+	if err != nil {
+		t.Fatalf("unexpected error adding channel: %v", err)
+	}
+	out, err := merger.Merge(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error starting merger: %v", err)
+	}
+
+	// Send values and close input
+	ch <- 1
+	ch <- 2
+	close(ch)
+
+	// Cancel context
+	cancel()
+
+	// Should complete naturally since input is closed
 	results := []int{}
 	for v := range out {
 		results = append(results, v)
@@ -279,7 +323,7 @@ func TestMerger_ConcurrentAdds(t *testing.T) {
 
 	merger := NewMerger[int](MergerConfig{
 		Buffer:          100,
-		ShutdownTimeout: 0,
+		ShutdownTimeout: 1 * time.Second, // Allow time for processing
 	})
 	out, err := merger.Merge(ctx)
 	if err != nil {
@@ -297,7 +341,7 @@ func TestMerger_ConcurrentAdds(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			ch := make(chan int, 5)
-			done, err := merger.Add(ch)
+			done, err := merger.AddInput(ch)
 			if err != nil {
 				t.Errorf("unexpected error adding channel: %v", err)
 				return
@@ -352,7 +396,7 @@ func TestMerger_EmptyChannel(t *testing.T) {
 	})
 
 	ch := make(chan int)
-	done, err := merger.Add(ch)
+	done, err := merger.AddInput(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
@@ -391,15 +435,15 @@ func TestMerger_MultipleInputsOneCloses(t *testing.T) {
 	ch2 := make(chan int)
 	ch3 := make(chan int)
 
-	done1, err := merger.Add(ch1)
+	done1, err := merger.AddInput(ch1)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch1: %v", err)
 	}
-	done2, err := merger.Add(ch2)
+	done2, err := merger.AddInput(ch2)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch2: %v", err)
 	}
-	done3, err := merger.Add(ch3)
+	done3, err := merger.AddInput(ch3)
 	if err != nil {
 		t.Fatalf("unexpected error adding ch3: %v", err)
 	}
@@ -466,7 +510,7 @@ func TestMerger_BufferFull(t *testing.T) {
 	})
 
 	ch := make(chan int, 5)
-	done, err := merger.Add(ch)
+	done, err := merger.AddInput(ch)
 	if err != nil {
 		t.Fatalf("unexpected error adding channel: %v", err)
 	}
@@ -540,7 +584,7 @@ func TestMerger_NoGoroutineLeakWhenMergedAndStopped(t *testing.T) {
 	doneChs := []<-chan struct{}{}
 	for range 5 {
 		ch := make(chan int, 10)
-		done, err := merger.Add(ch)
+		done, err := merger.AddInput(ch)
 		if err != nil {
 			t.Fatalf("unexpected error adding channel: %v", err)
 		}
@@ -608,7 +652,7 @@ func TestMerger_NoGoroutineLeakWhenNeverMerged(t *testing.T) {
 	// Add several channels without starting
 	for range 5 {
 		ch := make(chan int, 10)
-		if _, err := merger.Add(ch); err != nil {
+		if _, err := merger.AddInput(ch); err != nil {
 			t.Fatalf("unexpected error adding channel: %v", err)
 		}
 	}

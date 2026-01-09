@@ -4,30 +4,29 @@ import (
 	"context"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
-// MessageCorrelation returns middleware that propagates correlation ID from input to output messages.
-func MessageCorrelation() middleware.Middleware[*message.Message, *message.Message] {
-	return NewMessageMiddleware(
-		func(ctx context.Context, msg *message.Message, next func() ([]*message.Message, error)) ([]*message.Message, error) {
-			results, err := next()
+// CorrelationID propagates the correlationid attribute from input to output messages.
+func CorrelationID() message.Middleware {
+	return func(next message.ProcessFunc) message.ProcessFunc {
+		return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+			correlationID, _ := msg.Attributes["correlationid"].(string)
+
+			outputs, err := next(ctx, msg)
 			if err != nil {
-				return results, err
+				return nil, err
 			}
 
-			// Propagate correlation ID to all output messages
-			if corrID, ok := msg.Attributes.CorrelationID(); ok {
-				for _, outMsg := range results {
-					if outMsg.Attributes == nil {
-						outMsg.Attributes = make(message.Attributes)
+			if correlationID != "" {
+				for _, out := range outputs {
+					if out.Attributes == nil {
+						out.Attributes = make(map[string]any)
 					}
-					// Always overwrite correlation ID
-					outMsg.Attributes[message.AttrCorrelationID] = corrID
+					out.Attributes["correlationid"] = correlationID
 				}
 			}
 
-			return results, nil
-		},
-	)
+			return outputs, nil
+		}
+	}
 }

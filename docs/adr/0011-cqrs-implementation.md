@@ -5,61 +5,54 @@
 
 ## Context
 
-CQRS (Command Query Responsibility Segregation) separates read and write operations in event-driven architectures. gopipe had strong foundations (Router, Handler, JSON marshaling) but lacked explicit CQRS semantics and convenience APIs.
+CQRS (Command Query Responsibility Segregation) separates read and write operations in event-driven architectures. gopipe needed type-safe command handlers that receive typed commands and emit typed events.
 
 ## Decision
 
-Implement CQRS support in the `message/cqrs` package with:
+Implement CQRS support directly in the `message` package:
 
 ```go
-// Marshaler for command/event serialization
-type Marshaler interface {
-    Marshal(v any) ([]byte, error)
-    Unmarshal(data []byte, v any) error
-    Name(v any) string
-}
-
 // Command handler: Command -> Events
-func NewCommandHandler[Cmd, Evt any](
-    name string,
-    marshaler Marshaler,
-    handle func(ctx context.Context, cmd Cmd) ([]Evt, error),
-) message.Handler
+func NewCommandHandler[C, E any](
+    fn func(ctx context.Context, cmd C) ([]E, error),
+    cfg CommandHandlerConfig,
+) Handler
 
-// Event handler: Event -> side effects
-func NewEventHandler[Evt any](
-    name string,
-    marshaler Marshaler,
-    handle func(ctx context.Context, evt Evt) error,
-) message.Handler
-
-// SagaCoordinator: Event -> Commands (workflow orchestration)
-type SagaCoordinator interface {
-    OnEvent(ctx context.Context, msg *message.Message) ([]*message.Message, error)
+// CommandHandlerConfig configures a command handler.
+type CommandHandlerConfig struct {
+    Source string          // required, CE source attribute
+    Naming EventTypeNaming // derives CE types for input and output
 }
+
+// Generic handler for event processing (side effects)
+func NewHandler[T any](
+    fn func(ctx context.Context, msg *Message) ([]*Message, error),
+    naming EventTypeNaming,
+) Handler
 ```
 
-Design principles: Type-safe, simple, flexible marshaling, explicit command/event distinction.
+Design principles: Type-safe, simple, convention-based type derivation.
 
 ## Consequences
 
 **Benefits:**
 - Type-safe CQRS with generics
-- Pluggable serialization (JSON, Protobuf)
-- Decoupled event handlers (side effects only)
-- Saga coordination via interface
+- Command handlers receive typed values directly
+- Automatic CloudEvents attribute generation
+- EventTypeNaming derives CE types from Go types
 
 **Drawbacks:**
-- Additional package to learn
-- Runtime type assertions in handlers
+- Runtime type assertions in generic handlers
 
 ## Links
 
-- Related: ADR 0012 (Message Package Structure)
-- Package: `github.com/fxsml/gopipe/message/cqrs`
+- Related: ADR 0020 (Message Engine Architecture)
+- Package: `github.com/fxsml/gopipe/message`
 
 ## Updates
 
 **2025-12-11:** Package moved from `cqrs` to `message/cqrs`.
 
 **2025-12-22:** Fixed Links references. Updated Consequences format to match ADR template.
+
+**2026-01-09:** Simplified. CQRS functionality integrated directly into `message` package. Removed separate `message/cqrs` package.
