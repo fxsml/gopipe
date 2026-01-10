@@ -3,7 +3,7 @@ package channel
 import (
 	"testing"
 
-	"github.com/fxsml/gopipe/internal/test"
+	"github.com/fxsml/gopipe/channel/internal/test"
 )
 
 func TestSink(t *testing.T) {
