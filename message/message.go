@@ -240,9 +240,9 @@ func (c *countWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// ParseRawMessage parses CloudEvents structured JSON from r into a RawMessage.
+// ParseRaw parses CloudEvents structured JSON from r into a RawMessage.
 // Extracts "data" as raw JSON bytes and all other fields as attributes.
-func ParseRawMessage(r io.Reader) (*RawMessage, error) {
+func ParseRaw(r io.Reader) (*RawMessage, error) {
 	var ce struct {
 		Data json.RawMessage `json:"data"`
 	}

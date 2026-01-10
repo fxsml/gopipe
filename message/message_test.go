@@ -364,12 +364,12 @@ func TestWriteTo(t *testing.T) {
 	})
 }
 
-func TestParseRawMessage(t *testing.T) {
+func TestParseRaw(t *testing.T) {
 	t.Run("parses CloudEvents JSON", func(t *testing.T) {
 		input := `{"specversion":"1.0","type":"order.created","source":"/test","id":"123","data":{"order_id":"ABC"}}`
-		msg, err := ParseRawMessage(strings.NewReader(input))
+		msg, err := ParseRaw(strings.NewReader(input))
 		if err != nil {
-			t.Fatalf("ParseRawMessage failed: %v", err)
+			t.Fatalf("ParseRaw failed: %v", err)
 		}
 
 		if msg.Attributes["type"] != "order.created" {
@@ -392,9 +392,9 @@ func TestParseRawMessage(t *testing.T) {
 		var buf bytes.Buffer
 		_, _ = original.WriteTo(&buf)
 
-		parsed, err := ParseRawMessage(&buf)
+		parsed, err := ParseRaw(&buf)
 		if err != nil {
-			t.Fatalf("ParseRawMessage failed: %v", err)
+			t.Fatalf("ParseRaw failed: %v", err)
 		}
 
 		if parsed.Attributes["type"] != "test.event" {
