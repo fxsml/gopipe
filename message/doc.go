@@ -1,8 +1,20 @@
 // Package message provides CloudEvents-aligned message handling with type-based routing.
 //
+// This package is part of [gopipe], a composable data pipeline toolkit for Go.
+// The gopipe family includes:
+//
+//   - [channel] — Stateless transforms, filters, fan-in/out
+//   - [pipe] — Stateful components with lifecycle management
+//   - [message] (this package) — CloudEvents message routing with type-based handlers
+//
 // The package centers around the [Engine], which orchestrates message flow between
 // inputs, handlers, and outputs. Messages follow the CloudEvents specification
 // with typed data payloads and context attributes.
+//
+// [gopipe]: https://github.com/fxsml/gopipe
+// [channel]: https://pkg.go.dev/github.com/fxsml/gopipe/channel
+// [pipe]: https://pkg.go.dev/github.com/fxsml/gopipe/pipe
+// [message]: https://pkg.go.dev/github.com/fxsml/gopipe/message
 //
 // # Quick Start
 //
