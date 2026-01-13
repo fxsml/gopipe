@@ -48,8 +48,18 @@ func ProcessLoopback(
 
 // BatchLoopbackConfig configures the BatchLoopback plugin.
 type BatchLoopbackConfig struct {
-	MaxSize     int           // Flush when batch reaches this size.
-	MaxDuration time.Duration // Flush after this duration since first item.
+	MaxSize     int           // Flush when batch reaches this size (default: 100).
+	MaxDuration time.Duration // Flush after this duration since first item (default: 1s).
+}
+
+func (c BatchLoopbackConfig) applyDefaults() BatchLoopbackConfig {
+	if c.MaxSize <= 0 {
+		c.MaxSize = 100
+	}
+	if c.MaxDuration <= 0 {
+		c.MaxDuration = time.Second
+	}
+	return c
 }
 
 // BatchLoopback batches matching output messages before transformation.
@@ -61,6 +71,7 @@ func BatchLoopback(
 	handle func([]*message.Message) []*message.Message,
 	config BatchLoopbackConfig,
 ) message.Plugin {
+	config = config.applyDefaults()
 	return func(e *message.Engine) error {
 		out, err := e.AddOutput(name, matcher)
 		if err != nil {
@@ -79,9 +90,9 @@ func BatchLoopback(
 
 // GroupLoopbackConfig configures the GroupLoopback plugin.
 type GroupLoopbackConfig struct {
-	MaxSize        int           // Flush group when it reaches this size.
-	MaxDuration    time.Duration // Flush group after this duration since first item.
-	MaxConcurrentGroups int      // Max active groups; 0 means unlimited.
+	MaxSize             int           // Flush group when it reaches this size (default: 100).
+	MaxDuration         time.Duration // Flush group after this duration since first item (default: 1s).
+	MaxConcurrentGroups int           // Max active groups (default: 0 meaning unlimited).
 }
 
 // GroupLoopback groups matching output messages by key before transformation.
