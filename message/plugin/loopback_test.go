@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 )
 
@@ -646,8 +647,7 @@ func TestBatchLoopback(t *testing.T) {
 					Attributes: message.Attributes{"type": "final.event"},
 				}}
 			},
-			3, // batch size
-			time.Second,
+			BatchLoopbackConfig{MaxSize: 3, MaxDuration: time.Second},
 		))
 		if err != nil {
 			t.Fatalf("AddPlugin failed: %v", err)
@@ -719,8 +719,7 @@ func TestBatchLoopback(t *testing.T) {
 					Attributes: message.Attributes{"type": "final.event"},
 				}}
 			},
-			100,                 // large batch size (won't trigger)
-			50*time.Millisecond, // short duration (will trigger)
+			BatchLoopbackConfig{MaxSize: 100, MaxDuration: 50 * time.Millisecond},
 		))
 		if err != nil {
 			t.Fatalf("AddPlugin failed: %v", err)
@@ -805,8 +804,7 @@ func TestBatchLoopback(t *testing.T) {
 					Attributes: message.Attributes{"type": "aggregated.prices"},
 				}}
 			},
-			5,
-			time.Second,
+			BatchLoopbackConfig{MaxSize: 5, MaxDuration: time.Second},
 		))
 		if err != nil {
 			t.Fatalf("AddPlugin failed: %v", err)
@@ -865,8 +863,7 @@ func TestBatchLoopback(t *testing.T) {
 			func(msgs []*message.Message) []*message.Message {
 				return nil // drop entire batch
 			},
-			2,
-			time.Second,
+			BatchLoopbackConfig{MaxSize: 2, MaxDuration: time.Second},
 		))
 		if err != nil {
 			t.Fatalf("AddPlugin failed: %v", err)
@@ -898,6 +895,287 @@ func TestBatchLoopback(t *testing.T) {
 			t.Fatal("should not receive - batch was dropped")
 		case <-time.After(200 * time.Millisecond):
 			// Expected
+		}
+	})
+}
+
+func TestGroupLoopback(t *testing.T) {
+	type groupedCommand struct {
+		ID          string `json:"id"`
+		IgnoreCache bool   `json:"ignore_cache"`
+	}
+
+	type processedEvent struct {
+		IDs         []string `json:"ids"`
+		IgnoreCache bool     `json:"ignore_cache"`
+	}
+
+	t.Run("groups messages by key", func(t *testing.T) {
+		engine := message.NewEngine(message.EngineConfig{
+			Marshaler: message.NewJSONMarshaler(),
+		})
+
+		// Handler: command -> command (pass-through for routing)
+		handler := message.NewCommandHandler(
+			func(ctx context.Context, cmd groupedCommand) ([]groupedCommand, error) {
+				return []groupedCommand{cmd}, nil
+			},
+			message.CommandHandlerConfig{Source: "/test", Naming: message.KebabNaming},
+		)
+		_ = engine.AddHandler("handler", nil, handler)
+
+		// Handler: processed event pass-through
+		handler2 := message.NewCommandHandler(
+			func(ctx context.Context, e processedEvent) ([]processedEvent, error) {
+				return []processedEvent{e}, nil
+			},
+			message.CommandHandlerConfig{Source: "/test", Naming: message.KebabNaming},
+		)
+		_ = engine.AddHandler("handler2", nil, handler2)
+
+		// GroupLoopback: group by IgnoreCache flag
+		err := engine.AddPlugin(GroupLoopback(
+			"group-loopback",
+			&typeMatcher{pattern: "grouped.command"},
+			func(msgs []*message.Message) []*message.Message {
+				var ids []string
+				var ignoreCache bool
+				for _, m := range msgs {
+					cmd := m.Data.(groupedCommand)
+					ids = append(ids, cmd.ID)
+					ignoreCache = cmd.IgnoreCache
+				}
+				return []*message.Message{{
+					Data:       processedEvent{IDs: ids, IgnoreCache: ignoreCache},
+					Attributes: message.Attributes{"type": "processed.event"},
+				}}
+			},
+			func(m *message.Message) bool { return m.Data.(groupedCommand).IgnoreCache },
+			channel.GroupByConfig{MaxBatchSize: 2, MaxDuration: time.Second},
+		))
+		if err != nil {
+			t.Fatalf("AddPlugin failed: %v", err)
+		}
+
+		input := make(chan *message.Message, 10)
+		_, _ = engine.AddInput("", nil, input)
+
+		output, _ := engine.AddOutput("", &typeMatcher{pattern: "processed.event"})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		_, _ = engine.Start(ctx)
+
+		// Send 4 commands: 2 with IgnoreCache=true, 2 with IgnoreCache=false
+		input <- &message.Message{
+			Data:       &groupedCommand{ID: "a", IgnoreCache: true},
+			Attributes: message.Attributes{"type": "grouped.command"},
+		}
+		input <- &message.Message{
+			Data:       &groupedCommand{ID: "b", IgnoreCache: false},
+			Attributes: message.Attributes{"type": "grouped.command"},
+		}
+		input <- &message.Message{
+			Data:       &groupedCommand{ID: "c", IgnoreCache: true},
+			Attributes: message.Attributes{"type": "grouped.command"},
+		}
+		input <- &message.Message{
+			Data:       &groupedCommand{ID: "d", IgnoreCache: false},
+			Attributes: message.Attributes{"type": "grouped.command"},
+		}
+
+		// Should receive 2 batches (one for each group)
+		received := make(map[bool][]string)
+		for i := 0; i < 2; i++ {
+			select {
+			case out := <-output:
+				event := out.Data.(processedEvent)
+				received[event.IgnoreCache] = event.IDs
+			case <-time.After(time.Second):
+				t.Fatalf("timeout waiting for batch %d", i+1)
+			}
+		}
+
+		// Verify grouping
+		if len(received[true]) != 2 {
+			t.Errorf("expected 2 items in IgnoreCache=true group, got %d", len(received[true]))
+		}
+		if len(received[false]) != 2 {
+			t.Errorf("expected 2 items in IgnoreCache=false group, got %d", len(received[false]))
+		}
+	})
+
+	t.Run("flushes partial groups on time", func(t *testing.T) {
+		engine := message.NewEngine(message.EngineConfig{
+			Marshaler: message.NewJSONMarshaler(),
+		})
+
+		handler := message.NewCommandHandler(
+			func(ctx context.Context, cmd groupedCommand) ([]groupedCommand, error) {
+				return []groupedCommand{cmd}, nil
+			},
+			message.CommandHandlerConfig{Source: "/test", Naming: message.KebabNaming},
+		)
+		_ = engine.AddHandler("handler", nil, handler)
+
+		handler2 := message.NewCommandHandler(
+			func(ctx context.Context, e processedEvent) ([]processedEvent, error) {
+				return []processedEvent{e}, nil
+			},
+			message.CommandHandlerConfig{Source: "/test", Naming: message.KebabNaming},
+		)
+		_ = engine.AddHandler("handler2", nil, handler2)
+
+		var batchSize int
+		err := engine.AddPlugin(GroupLoopback(
+			"time-group",
+			&typeMatcher{pattern: "grouped.command"},
+			func(msgs []*message.Message) []*message.Message {
+				batchSize = len(msgs)
+				return []*message.Message{{
+					Data:       processedEvent{IDs: []string{"timed"}},
+					Attributes: message.Attributes{"type": "processed.event"},
+				}}
+			},
+			func(m *message.Message) bool { return m.Data.(groupedCommand).IgnoreCache },
+			channel.GroupByConfig{MaxBatchSize: 100, MaxDuration: 50 * time.Millisecond},
+		))
+		if err != nil {
+			t.Fatalf("AddPlugin failed: %v", err)
+		}
+
+		input := make(chan *message.Message, 10)
+		_, _ = engine.AddInput("", nil, input)
+
+		output, _ := engine.AddOutput("", &typeMatcher{pattern: "processed.event"})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		_, _ = engine.Start(ctx)
+
+		// Send only 1 message (less than batch size)
+		input <- &message.Message{
+			Data:       &groupedCommand{ID: "x", IgnoreCache: true},
+			Attributes: message.Attributes{"type": "grouped.command"},
+		}
+
+		// Should receive after time triggers
+		select {
+		case <-output:
+			if batchSize != 1 {
+				t.Errorf("expected batch size 1, got %d", batchSize)
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timeout waiting for time-triggered result")
+		}
+	})
+
+	t.Run("use case: skip cache check by flag", func(t *testing.T) {
+		// This test demonstrates the original use case:
+		// Commands with IgnoreCache=true skip cache validation
+		// Commands with IgnoreCache=false check cache first
+
+		engine := message.NewEngine(message.EngineConfig{
+			Marshaler: message.NewJSONMarshaler(),
+		})
+
+		type cacheCheckCommand struct {
+			ID            string `json:"id"`
+			IgnoreExpiry  bool   `json:"ignore_expiry"`
+		}
+
+		type cacheResult struct {
+			ID           string `json:"id"`
+			CacheChecked bool   `json:"cache_checked"`
+		}
+
+		handler := message.NewCommandHandler(
+			func(ctx context.Context, cmd cacheCheckCommand) ([]cacheCheckCommand, error) {
+				return []cacheCheckCommand{cmd}, nil
+			},
+			message.CommandHandlerConfig{Source: "/cache", Naming: message.KebabNaming},
+		)
+		_ = engine.AddHandler("handler", nil, handler)
+
+		handler2 := message.NewCommandHandler(
+			func(ctx context.Context, e cacheResult) ([]cacheResult, error) {
+				return []cacheResult{e}, nil
+			},
+			message.CommandHandlerConfig{Source: "/cache", Naming: message.KebabNaming},
+		)
+		_ = engine.AddHandler("handler2", nil, handler2)
+
+		err := engine.AddPlugin(GroupLoopback(
+			"cache-check",
+			&typeMatcher{pattern: "cache.check.command"},
+			func(msgs []*message.Message) []*message.Message {
+				// All messages in batch have same IgnoreExpiry value
+				ignoreExpiry := msgs[0].Data.(cacheCheckCommand).IgnoreExpiry
+
+				cacheChecked := false
+				if !ignoreExpiry {
+					// Simulate cache check - in real code this would call cache
+					cacheChecked = true
+				}
+
+				var results []*message.Message
+				for _, m := range msgs {
+					cmd := m.Data.(cacheCheckCommand)
+					results = append(results, &message.Message{
+						Data:       cacheResult{ID: cmd.ID, CacheChecked: cacheChecked},
+						Attributes: message.Attributes{"type": "cache.result"},
+					})
+				}
+				return results
+			},
+			func(m *message.Message) bool { return m.Data.(cacheCheckCommand).IgnoreExpiry },
+			channel.GroupByConfig{MaxBatchSize: 10, MaxDuration: 50 * time.Millisecond},
+		))
+		if err != nil {
+			t.Fatalf("AddPlugin failed: %v", err)
+		}
+
+		input := make(chan *message.Message, 10)
+		_, _ = engine.AddInput("", nil, input)
+
+		output, _ := engine.AddOutput("", &typeMatcher{pattern: "cache.result"})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		_, _ = engine.Start(ctx)
+
+		// Send commands with different IgnoreExpiry values
+		input <- &message.Message{
+			Data:       &cacheCheckCommand{ID: "skip-cache", IgnoreExpiry: true},
+			Attributes: message.Attributes{"type": "cache.check.command"},
+		}
+		input <- &message.Message{
+			Data:       &cacheCheckCommand{ID: "check-cache", IgnoreExpiry: false},
+			Attributes: message.Attributes{"type": "cache.check.command"},
+		}
+
+		// Collect results
+		results := make(map[string]bool)
+		for i := 0; i < 2; i++ {
+			select {
+			case out := <-output:
+				result := out.Data.(cacheResult)
+				results[result.ID] = result.CacheChecked
+			case <-time.After(500 * time.Millisecond):
+				t.Fatalf("timeout waiting for result %d", i+1)
+			}
+		}
+
+		// Verify: skip-cache should NOT have checked cache
+		if results["skip-cache"] {
+			t.Error("skip-cache should not have checked cache")
+		}
+		// check-cache should have checked cache
+		if !results["check-cache"] {
+			t.Error("check-cache should have checked cache")
 		}
 	})
 }
