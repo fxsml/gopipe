@@ -48,8 +48,8 @@ func ProcessLoopback(
 
 // BatchLoopbackConfig configures the BatchLoopback plugin.
 type BatchLoopbackConfig struct {
-	MaxSize     int
-	MaxDuration time.Duration
+	MaxSize     int           // Flush when batch reaches this size.
+	MaxDuration time.Duration // Flush after this duration since first item.
 }
 
 // BatchLoopback batches matching output messages before transformation.
@@ -77,15 +77,22 @@ func BatchLoopback(
 	}
 }
 
+// GroupLoopbackConfig configures the GroupLoopback plugin.
+type GroupLoopbackConfig struct {
+	MaxSize        int           // Flush group when it reaches this size.
+	MaxDuration    time.Duration // Flush group after this duration since first item.
+	MaxConcurrentGroups int      // Max active groups; 0 means unlimited.
+}
+
 // GroupLoopback groups matching output messages by key before transformation.
 // Messages with the same key are batched together until config limits are reached.
-// The handle function returns zero or more messages; return nil to drop.
+// The handle function receives the key and grouped messages; return nil to drop.
 func GroupLoopback[K comparable](
 	name string,
 	matcher message.Matcher,
-	handle func([]*message.Message) []*message.Message,
+	handle func(key K, msgs []*message.Message) []*message.Message,
 	keyFunc func(*message.Message) K,
-	config channel.GroupByConfig,
+	config GroupLoopbackConfig,
 ) message.Plugin {
 	return func(e *message.Engine) error {
 		out, err := e.AddOutput(name, matcher)
@@ -93,9 +100,13 @@ func GroupLoopback[K comparable](
 			return fmt.Errorf("group loopback output: %w", err)
 		}
 
-		groups := channel.GroupBy(out, keyFunc, config)
+		groups := channel.GroupBy(out, keyFunc, channel.GroupByConfig{
+			MaxBatchSize:        config.MaxSize,
+			MaxDuration:         config.MaxDuration,
+			MaxConcurrentGroups: config.MaxConcurrentGroups,
+		})
 		transformed := channel.Transform(groups, func(g channel.Group[K, *message.Message]) []*message.Message {
-			return handle(g.Items)
+			return handle(g.Key, g.Items)
 		})
 		processed := channel.Flatten(transformed)
 

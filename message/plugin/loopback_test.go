@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 )
 
@@ -937,13 +936,11 @@ func TestGroupLoopback(t *testing.T) {
 		err := engine.AddPlugin(GroupLoopback(
 			"group-loopback",
 			&typeMatcher{pattern: "grouped.command"},
-			func(msgs []*message.Message) []*message.Message {
+			func(ignoreCache bool, msgs []*message.Message) []*message.Message {
 				var ids []string
-				var ignoreCache bool
 				for _, m := range msgs {
 					cmd := m.Data.(groupedCommand)
 					ids = append(ids, cmd.ID)
-					ignoreCache = cmd.IgnoreCache
 				}
 				return []*message.Message{{
 					Data:       processedEvent{IDs: ids, IgnoreCache: ignoreCache},
@@ -951,7 +948,7 @@ func TestGroupLoopback(t *testing.T) {
 				}}
 			},
 			func(m *message.Message) bool { return m.Data.(groupedCommand).IgnoreCache },
-			channel.GroupByConfig{MaxBatchSize: 2, MaxDuration: time.Second},
+			GroupLoopbackConfig{MaxSize: 2, MaxDuration: time.Second},
 		))
 		if err != nil {
 			t.Fatalf("AddPlugin failed: %v", err)
@@ -1031,7 +1028,7 @@ func TestGroupLoopback(t *testing.T) {
 		err := engine.AddPlugin(GroupLoopback(
 			"time-group",
 			&typeMatcher{pattern: "grouped.command"},
-			func(msgs []*message.Message) []*message.Message {
+			func(_ bool, msgs []*message.Message) []*message.Message {
 				batchSize = len(msgs)
 				return []*message.Message{{
 					Data:       processedEvent{IDs: []string{"timed"}},
@@ -1039,7 +1036,7 @@ func TestGroupLoopback(t *testing.T) {
 				}}
 			},
 			func(m *message.Message) bool { return m.Data.(groupedCommand).IgnoreCache },
-			channel.GroupByConfig{MaxBatchSize: 100, MaxDuration: 50 * time.Millisecond},
+			GroupLoopbackConfig{MaxSize: 100, MaxDuration: 50 * time.Millisecond},
 		))
 		if err != nil {
 			t.Fatalf("AddPlugin failed: %v", err)
@@ -1110,10 +1107,8 @@ func TestGroupLoopback(t *testing.T) {
 		err := engine.AddPlugin(GroupLoopback(
 			"cache-check",
 			&typeMatcher{pattern: "cache.check.command"},
-			func(msgs []*message.Message) []*message.Message {
-				// All messages in batch have same IgnoreExpiry value
-				ignoreExpiry := msgs[0].Data.(cacheCheckCommand).IgnoreExpiry
-
+			func(ignoreExpiry bool, msgs []*message.Message) []*message.Message {
+				// Key is now available directly - no extraction needed!
 				cacheChecked := false
 				if !ignoreExpiry {
 					// Simulate cache check - in real code this would call cache
@@ -1131,7 +1126,7 @@ func TestGroupLoopback(t *testing.T) {
 				return results
 			},
 			func(m *message.Message) bool { return m.Data.(cacheCheckCommand).IgnoreExpiry },
-			channel.GroupByConfig{MaxBatchSize: 10, MaxDuration: 50 * time.Millisecond},
+			GroupLoopbackConfig{MaxSize: 10, MaxDuration: 50 * time.Millisecond},
 		))
 		if err != nil {
 			t.Fatalf("AddPlugin failed: %v", err)
