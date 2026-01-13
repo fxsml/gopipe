@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking Changes
 
 - **message:** Rename `ParseRawMessage` to `ParseRaw` for consistency
+- **message/plugin:** `BatchLoopback` now takes `BatchLoopbackConfig` instead of individual parameters
+
+### Added
+
+- **message/plugin:** `GroupLoopback` for key-based message batching before transformation
+- **message/plugin:** `GroupLoopbackConfig` and `BatchLoopbackConfig` structs
 
 ## [0.11.0] - 2025-01-09
 
