@@ -1,5 +1,10 @@
 package message
 
+import "github.com/google/uuid"
+
+// NewID generates a new unique message ID (UUID v4).
+func NewID() string { return uuid.NewString() }
+
 // Attributes is a map of message context attributes per CloudEvents spec.
 // CloudEvents defines attributes as the metadata that describes the event.
 //

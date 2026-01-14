@@ -2,8 +2,6 @@ package message
 
 import (
 	"context"
-	"crypto/rand"
-	"fmt"
 	"reflect"
 	"time"
 )
@@ -123,24 +121,15 @@ func (h *commandHandler[C, E]) Handle(ctx context.Context, msg *Message) ([]*Mes
 	outputs := make([]*Message, len(events))
 	for i, event := range events {
 		outputs[i] = New(event, Attributes{
-			"id":          newUUID(),
-			"specversion": "1.0",
-			"type":        eventType,
-			"source":      h.source,
-			"time":        time.Now().UTC().Format(time.RFC3339),
+			AttrID:          NewID(),
+			AttrSpecVersion: "1.0",
+			AttrType:        eventType,
+			AttrSource:      h.source,
+			AttrTime:        time.Now().UTC().Format(time.RFC3339),
 		}, nil)
 	}
 
 	return outputs, nil
-}
-
-// newUUID generates a UUID v4 string using crypto/rand.
-func newUUID() string {
-	var u [16]byte
-	_, _ = rand.Read(u[:])
-	u[6] = (u[6] & 0x0f) | 0x40 // version 4
-	u[8] = (u[8] & 0x3f) | 0x80 // variant 10
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
 }
 
 // Verify handlers implement Handler.
