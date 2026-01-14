@@ -129,7 +129,7 @@ func (h *commandHandler[C, E]) Handle(ctx context.Context, msg *Message) ([]*Mes
 			AttrSpecVersion: "1.0",
 			AttrType:        eventType,
 			AttrSource:      h.source,
-			AttrTime:        time.Now().UTC().Format(time.RFC3339),
+			AttrTime:        time.Now().UTC(),
 		}
 		maps.Copy(attrs, h.attrs)
 		outputs[i] = New(event, attrs, nil)
