@@ -6,6 +6,7 @@ import (
 	"io"
 	"maps"
 	"sync"
+	"time"
 )
 
 type ackType byte
@@ -55,14 +56,6 @@ func NewSharedAcking(ack func(), nack func(error), expectedCount int) *Acking {
 		expectedAckCount: expectedCount,
 	}
 }
-
-// Attributes is a map of message context attributes per CloudEvents spec.
-// CloudEvents defines attributes as the metadata that describes the event.
-//
-// Thread safety: Attributes is not safe for concurrent read/write access.
-// Handlers receive a single message at a time, so concurrent access is rare.
-// If sharing attributes between goroutines, use external synchronization.
-type Attributes map[string]any
 
 // TypedMessage wraps a typed data payload with attributes and acknowledgment callbacks.
 // This is the base generic type for all message variants.
@@ -179,6 +172,61 @@ func (m *TypedMessage[T]) Nack(err error) bool {
 	return true
 }
 
+// ID returns the event identifier. Returns empty string if not set.
+func (m *TypedMessage[T]) ID() string {
+	s, _ := m.Attributes[AttrID].(string)
+	return s
+}
+
+// Type returns the event type. Returns empty string if not set.
+func (m *TypedMessage[T]) Type() string {
+	s, _ := m.Attributes[AttrType].(string)
+	return s
+}
+
+// Source returns the event source. Returns empty string if not set.
+func (m *TypedMessage[T]) Source() string {
+	s, _ := m.Attributes[AttrSource].(string)
+	return s
+}
+
+// Subject returns the event subject. Returns empty string if not set.
+func (m *TypedMessage[T]) Subject() string {
+	s, _ := m.Attributes[AttrSubject].(string)
+	return s
+}
+
+// Time returns the event timestamp. Returns zero time if not set or invalid.
+func (m *TypedMessage[T]) Time() time.Time {
+	switch v := m.Attributes[AttrTime].(type) {
+	case time.Time:
+		return v
+	case string:
+		t, _ := time.Parse(time.RFC3339, v)
+		return t
+	default:
+		return time.Time{}
+	}
+}
+
+// DataContentType returns the data content type. Returns empty string if not set.
+func (m *TypedMessage[T]) DataContentType() string {
+	s, _ := m.Attributes[AttrDataContentType].(string)
+	return s
+}
+
+// DataSchema returns the data schema URI. Returns empty string if not set.
+func (m *TypedMessage[T]) DataSchema() string {
+	s, _ := m.Attributes[AttrDataSchema].(string)
+	return s
+}
+
+// SpecVersion returns the CloudEvents spec version. Returns empty string if not set.
+func (m *TypedMessage[T]) SpecVersion() string {
+	s, _ := m.Attributes[AttrSpecVersion].(string)
+	return s
+}
+
 // Copy creates a new message with different data while preserving
 // attributes (cloned) and acknowledgment callbacks (shared).
 func Copy[In, Out any](msg *TypedMessage[In], data Out) *TypedMessage[Out] {
@@ -194,8 +242,8 @@ func Copy[In, Out any](msg *TypedMessage[In], data Out) *TypedMessage[Out] {
 func (m *TypedMessage[T]) cloudEvent() map[string]any {
 	ce := make(map[string]any, len(m.Attributes)+2)
 	maps.Copy(ce, m.Attributes)
-	if _, ok := ce["specversion"]; !ok {
-		ce["specversion"] = "1.0"
+	if _, ok := ce[AttrSpecVersion]; !ok {
+		ce[AttrSpecVersion] = "1.0"
 	}
 
 	// For []byte data, embed as raw JSON if valid
