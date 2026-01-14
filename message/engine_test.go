@@ -60,8 +60,8 @@ func TestEngine_BasicFlow(t *testing.T) {
 		if event.ID != "123" || event.Status != "done" {
 			t.Errorf("unexpected event: %+v", event)
 		}
-		if out.Attributes["type"] != "test.event" {
-			t.Errorf("expected type 'test.event', got %v", out.Attributes["type"])
+		if out.Type() != "test.event" {
+			t.Errorf("expected type 'test.event', got %v", out.Type())
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for output")
@@ -342,8 +342,8 @@ func TestEngine_Loopback(t *testing.T) {
 
 	select {
 	case out := <-output:
-		if out.Attributes["type"] != "test.event" {
-			t.Errorf("expected final event type, got %v", out.Attributes["type"])
+		if out.Type() != "test.event" {
+			t.Errorf("expected final event type, got %v", out.Type())
 		}
 		var event TestEvent
 		_ = json.Unmarshal(out.Data, &event)
@@ -717,8 +717,8 @@ func TestEngine_TypedIO(t *testing.T) {
 		if event.ID != "123" || event.Status != "done" {
 			t.Errorf("unexpected event: %+v", event)
 		}
-		if out.Attributes["type"] != "test.event" {
-			t.Errorf("expected type 'test.event', got %v", out.Attributes["type"])
+		if out.Type() != "test.event" {
+			t.Errorf("expected type 'test.event', got %v", out.Type())
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for typed output")

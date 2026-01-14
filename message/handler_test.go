@@ -117,14 +117,14 @@ func TestNewCommandHandler(t *testing.T) {
 		}
 
 		out := outputs[0]
-		if out.Attributes["type"] != "test.event" {
-			t.Errorf("expected output type 'test.event', got %v", out.Attributes["type"])
+		if out.Type() != "test.event" {
+			t.Errorf("expected output type 'test.event', got %v", out.Type())
 		}
-		if out.Attributes["source"] != "/test-service" {
-			t.Errorf("expected source '/test-service', got %v", out.Attributes["source"])
+		if out.Source() != "/test-service" {
+			t.Errorf("expected source '/test-service', got %v", out.Source())
 		}
-		if out.Attributes["specversion"] != "1.0" {
-			t.Errorf("expected specversion '1.0', got %v", out.Attributes["specversion"])
+		if out.SpecVersion() != "1.0" {
+			t.Errorf("expected specversion '1.0', got %v", out.SpecVersion())
 		}
 
 		event, ok := out.Data.(TestEvent)

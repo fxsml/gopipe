@@ -4,6 +4,7 @@
 // - Creating an engine with a marshaler
 // - Registering a command handler
 // - Sending and receiving messages
+// - Message acknowledgment (acking)
 //
 // Run: go run ./examples/04-message
 package main
@@ -15,6 +16,7 @@ import (
 	"log"
 
 	"github.com/fxsml/gopipe/message"
+	"github.com/google/uuid"
 )
 
 // CreateOrder is the input command type.
@@ -67,13 +69,17 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Send a message
+	// Send a message with acking
 	data, _ := json.Marshal(CreateOrder{OrderID: "ORD-123", Amount: 99.99})
 	input <- message.NewRaw(data, message.Attributes{
-		"type":   "create.order",
-		"source": "/test",
-		"id":     "msg-1",
-	}, nil)
+		message.AttrSpecVersion: "1.0",
+		message.AttrType:        "create.order",
+		message.AttrSource:      "/test",
+		message.AttrID:          uuid.NewString(),
+	}, message.NewAcking(
+		func() { fmt.Println("Message successfully processed") },
+		func(err error) { fmt.Printf("Message processing failed: %v\n", err) },
+	))
 
 	// Receive the response
 	result := <-output
@@ -87,4 +93,5 @@ func main() {
 	// Output:
 	// Processing order: ORD-123 (amount: 99.99)
 	// Received: {"data":{"order_id":"ORD-123","status":"created"},...}
+	// Message successfully processed
 }

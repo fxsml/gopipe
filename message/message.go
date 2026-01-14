@@ -1,11 +1,13 @@
 package message
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
 	"sync"
+	"time"
 )
 
 type ackType byte
@@ -55,14 +57,6 @@ func NewSharedAcking(ack func(), nack func(error), expectedCount int) *Acking {
 		expectedAckCount: expectedCount,
 	}
 }
-
-// Attributes is a map of message context attributes per CloudEvents spec.
-// CloudEvents defines attributes as the metadata that describes the event.
-//
-// Thread safety: Attributes is not safe for concurrent read/write access.
-// Handlers receive a single message at a time, so concurrent access is rare.
-// If sharing attributes between goroutines, use external synchronization.
-type Attributes map[string]any
 
 // TypedMessage wraps a typed data payload with attributes and acknowledgment callbacks.
 // This is the base generic type for all message variants.
@@ -179,6 +173,61 @@ func (m *TypedMessage[T]) Nack(err error) bool {
 	return true
 }
 
+// ID returns the event identifier. Returns empty string if not set.
+func (m *TypedMessage[T]) ID() string {
+	s, _ := m.Attributes[AttrID].(string)
+	return s
+}
+
+// Type returns the event type. Returns empty string if not set.
+func (m *TypedMessage[T]) Type() string {
+	s, _ := m.Attributes[AttrType].(string)
+	return s
+}
+
+// Source returns the event source. Returns empty string if not set.
+func (m *TypedMessage[T]) Source() string {
+	s, _ := m.Attributes[AttrSource].(string)
+	return s
+}
+
+// Subject returns the event subject. Returns empty string if not set.
+func (m *TypedMessage[T]) Subject() string {
+	s, _ := m.Attributes[AttrSubject].(string)
+	return s
+}
+
+// Time returns the event timestamp. Returns zero time if not set or invalid.
+func (m *TypedMessage[T]) Time() time.Time {
+	switch v := m.Attributes[AttrTime].(type) {
+	case time.Time:
+		return v
+	case string:
+		t, _ := time.Parse(time.RFC3339, v)
+		return t
+	default:
+		return time.Time{}
+	}
+}
+
+// DataContentType returns the data content type. Returns empty string if not set.
+func (m *TypedMessage[T]) DataContentType() string {
+	s, _ := m.Attributes[AttrDataContentType].(string)
+	return s
+}
+
+// DataSchema returns the data schema URI. Returns empty string if not set.
+func (m *TypedMessage[T]) DataSchema() string {
+	s, _ := m.Attributes[AttrDataSchema].(string)
+	return s
+}
+
+// SpecVersion returns the CloudEvents spec version. Returns empty string if not set.
+func (m *TypedMessage[T]) SpecVersion() string {
+	s, _ := m.Attributes[AttrSpecVersion].(string)
+	return s
+}
+
 // Copy creates a new message with different data while preserving
 // attributes (cloned) and acknowledgment callbacks (shared).
 func Copy[In, Out any](msg *TypedMessage[In], data Out) *TypedMessage[Out] {
@@ -191,19 +240,22 @@ func Copy[In, Out any](msg *TypedMessage[In], data Out) *TypedMessage[Out] {
 
 // cloudEvent returns the message as a CloudEvents structured map.
 // Injects specversion "1.0" if not present in attributes.
+// For []byte data: valid JSON goes to "data", binary goes to "data_base64".
 func (m *TypedMessage[T]) cloudEvent() map[string]any {
 	ce := make(map[string]any, len(m.Attributes)+2)
 	maps.Copy(ce, m.Attributes)
-	if _, ok := ce["specversion"]; !ok {
-		ce["specversion"] = "1.0"
+	if _, ok := ce[AttrSpecVersion]; !ok {
+		ce[AttrSpecVersion] = "1.0"
 	}
 
-	// For []byte data, embed as raw JSON if valid
+	// For []byte data, embed as raw JSON if valid, otherwise base64 encode
 	if data, ok := any(m.Data).([]byte); ok {
-		if json.Valid(data) {
+		if len(data) == 0 {
+			// Empty data, omit
+		} else if json.Valid(data) {
 			ce["data"] = json.RawMessage(data)
 		} else {
-			ce["data"] = data
+			ce["data_base64"] = base64.StdEncoding.EncodeToString(data)
 		}
 	} else {
 		ce["data"] = m.Data
@@ -211,57 +263,74 @@ func (m *TypedMessage[T]) cloudEvent() map[string]any {
 	return ce
 }
 
-// String returns the message in CloudEvents structured JSON format.
-// Injects specversion "1.0" if not present in attributes.
+// MarshalJSON implements json.Marshaler.
+// Returns the message as CloudEvents structured JSON.
+func (m *TypedMessage[T]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(m.cloudEvent())
+}
+
+// String implements fmt.Stringer.
+// Returns the message as CloudEvents structured JSON.
 func (m *TypedMessage[T]) String() string {
-	b, err := json.Marshal(m.cloudEvent())
+	b, err := m.MarshalJSON()
 	if err != nil {
-		return fmt.Sprintf("gopipe error: marshaling CloudEvents message: %v", err)
+		return fmt.Sprintf("gopipe error: %v", err)
 	}
 	return string(b)
 }
 
-// WriteTo writes the message in CloudEvents structured JSON format to w.
-// Implements io.WriterTo for direct streaming to http.ResponseWriter, files, etc.
+// WriteTo implements io.WriterTo.
+// Writes the message as CloudEvents structured JSON.
 func (m *TypedMessage[T]) WriteTo(w io.Writer) (int64, error) {
-	cw := &countWriter{w: w}
-	err := json.NewEncoder(cw).Encode(m.cloudEvent())
-	return cw.n, err
-}
-
-type countWriter struct {
-	w io.Writer
-	n int64
-}
-
-func (c *countWriter) Write(p []byte) (int, error) {
-	n, err := c.w.Write(p)
-	c.n += int64(n)
-	return n, err
+	b, err := m.MarshalJSON()
+	if err != nil {
+		return 0, err
+	}
+	n, err := w.Write(b)
+	return int64(n), err
 }
 
 // ParseRaw parses CloudEvents structured JSON from r into a RawMessage.
-// Extracts "data" as raw JSON bytes and all other fields as attributes.
+// Handles both data and data_base64 fields per CloudEvents spec.
 func ParseRaw(r io.Reader) (*RawMessage, error) {
-	var ce struct {
-		Data json.RawMessage `json:"data"`
-	}
-	body, err := io.ReadAll(r)
+	b, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("message: reading body: %w", err)
 	}
-	if err := json.Unmarshal(body, &ce); err != nil {
+	return parseRawBytes(b)
+}
+
+// parseRawBytes parses CloudEvents structured JSON bytes into a RawMessage.
+func parseRawBytes(b []byte) (*RawMessage, error) {
+	var ce struct {
+		Data       json.RawMessage `json:"data"`
+		DataBase64 string          `json:"data_base64"`
+	}
+	if err := json.Unmarshal(b, &ce); err != nil {
 		return nil, fmt.Errorf("message: parsing CloudEvents JSON: %w", err)
 	}
 
 	var attrs Attributes
-	if err := json.Unmarshal(body, &attrs); err != nil {
+	if err := json.Unmarshal(b, &attrs); err != nil {
 		return nil, fmt.Errorf("message: parsing attributes: %w", err)
 	}
 	delete(attrs, "data")
+	delete(attrs, "data_base64")
+
+	// Prefer data_base64 if present (binary data), otherwise use data
+	var data []byte
+	if ce.DataBase64 != "" {
+		var err error
+		data, err = base64.StdEncoding.DecodeString(ce.DataBase64)
+		if err != nil {
+			return nil, fmt.Errorf("message: decoding data_base64: %w", err)
+		}
+	} else {
+		data = ce.Data
+	}
 
 	return &RawMessage{
-		Data:       ce.Data,
+		Data:       data,
 		Attributes: attrs,
 	}, nil
 }

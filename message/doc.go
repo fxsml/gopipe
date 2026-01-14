@@ -69,9 +69,13 @@
 //
 // # Subpackages
 //
-// match: Matchers for filtering messages by attributes
+//   - [cloudevents]: Integration with CloudEvents SDK protocol bindings
+//   - [match]: Matchers for filtering messages by attributes
+//   - [middleware]: Cross-cutting concerns (correlation ID, logging)
+//   - [plugin]: Reusable engine plugins (Loopback, ProcessLoopback)
 //
-// middleware: Cross-cutting concerns (correlation ID, logging)
-//
-// plugin: Reusable engine plugins (Loopback, ProcessLoopback)
+// [cloudevents]: https://pkg.go.dev/github.com/fxsml/gopipe/message/cloudevents
+// [match]: https://pkg.go.dev/github.com/fxsml/gopipe/message/match
+// [middleware]: https://pkg.go.dev/github.com/fxsml/gopipe/message/middleware
+// [plugin]: https://pkg.go.dev/github.com/fxsml/gopipe/message/plugin
 package message

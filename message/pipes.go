@@ -11,9 +11,7 @@ import (
 // Returns error via cfg.ErrorHandler if type not in registry or unmarshal fails.
 func NewUnmarshalPipe(registry InputRegistry, marshaler Marshaler, cfg pipe.Config) *pipe.ProcessPipe[*RawMessage, *Message] {
 	return pipe.NewProcessPipe(func(ctx context.Context, raw *RawMessage) ([]*Message, error) {
-		eventType, _ := raw.Attributes["type"].(string)
-
-		instance := registry.NewInput(eventType)
+		instance := registry.NewInput(raw.Type())
 		if instance == nil {
 			return nil, ErrUnknownType
 		}
@@ -43,7 +41,7 @@ func NewMarshalPipe(marshaler Marshaler, cfg pipe.Config) *pipe.ProcessPipe[*Mes
 		if attrs == nil {
 			attrs = make(Attributes)
 		}
-		attrs["datacontenttype"] = marshaler.DataContentType()
+		attrs[AttrDataContentType] = marshaler.DataContentType()
 
 		return []*RawMessage{{
 			Data:       data,
