@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestNew(t *testing.T) {
@@ -77,8 +78,8 @@ func TestNewRaw(t *testing.T) {
 		if string(msg.Data) != string(data) {
 			t.Errorf("expected data %s, got %s", data, msg.Data)
 		}
-		if msg.Attributes["type"] != "test" {
-			t.Errorf("expected type test, got %v", msg.Attributes["type"])
+		if msg.Type() != "test" {
+			t.Errorf("expected type test, got %v", msg.Type())
 		}
 	})
 
@@ -364,19 +365,19 @@ func TestWriteTo(t *testing.T) {
 	})
 }
 
-func TestParseRawMessage(t *testing.T) {
+func TestParseRaw(t *testing.T) {
 	t.Run("parses CloudEvents JSON", func(t *testing.T) {
 		input := `{"specversion":"1.0","type":"order.created","source":"/test","id":"123","data":{"order_id":"ABC"}}`
-		msg, err := ParseRawMessage(strings.NewReader(input))
+		msg, err := ParseRaw(strings.NewReader(input))
 		if err != nil {
-			t.Fatalf("ParseRawMessage failed: %v", err)
+			t.Fatalf("ParseRaw failed: %v", err)
 		}
 
-		if msg.Attributes["type"] != "order.created" {
-			t.Errorf("expected type order.created, got %v", msg.Attributes["type"])
+		if msg.Type() != "order.created" {
+			t.Errorf("expected type order.created, got %v", msg.Type())
 		}
-		if msg.Attributes["specversion"] != "1.0" {
-			t.Errorf("expected specversion 1.0, got %v", msg.Attributes["specversion"])
+		if msg.SpecVersion() != "1.0" {
+			t.Errorf("expected specversion 1.0, got %v", msg.SpecVersion())
 		}
 		if string(msg.Data) != `{"order_id":"ABC"}` {
 			t.Errorf("expected data {\"order_id\":\"ABC\"}, got %s", msg.Data)
@@ -392,16 +393,138 @@ func TestParseRawMessage(t *testing.T) {
 		var buf bytes.Buffer
 		_, _ = original.WriteTo(&buf)
 
-		parsed, err := ParseRawMessage(&buf)
+		parsed, err := ParseRaw(&buf)
 		if err != nil {
-			t.Fatalf("ParseRawMessage failed: %v", err)
+			t.Fatalf("ParseRaw failed: %v", err)
 		}
 
-		if parsed.Attributes["type"] != "test.event" {
-			t.Errorf("expected type test.event, got %v", parsed.Attributes["type"])
+		if parsed.Type() != "test.event" {
+			t.Errorf("expected type test.event, got %v", parsed.Type())
 		}
 		if string(parsed.Data) != `{"id":456}` {
 			t.Errorf("expected data {\"id\":456}, got %s", parsed.Data)
+		}
+	})
+
+	t.Run("parses data_base64 field", func(t *testing.T) {
+		// "hello world" base64 encoded
+		input := `{"specversion":"1.0","type":"binary.event","source":"/test","id":"123","data_base64":"aGVsbG8gd29ybGQ="}`
+		msg, err := ParseRaw(strings.NewReader(input))
+		if err != nil {
+			t.Fatalf("ParseRaw failed: %v", err)
+		}
+
+		if msg.Type() != "binary.event" {
+			t.Errorf("expected type binary.event, got %v", msg.Type())
+		}
+		if string(msg.Data) != "hello world" {
+			t.Errorf("expected data 'hello world', got %s", msg.Data)
+		}
+	})
+
+	t.Run("roundtrip with binary data", func(t *testing.T) {
+		binaryData := []byte{0x00, 0x01, 0x02, 0xFF, 0xFE}
+		original := NewRaw(binaryData, Attributes{
+			"type":   "binary.event",
+			"source": "/binary",
+		}, nil)
+
+		var buf bytes.Buffer
+		_, _ = original.WriteTo(&buf)
+
+		// Verify data_base64 is used in JSON output
+		jsonStr := buf.String()
+		if !strings.Contains(jsonStr, "data_base64") {
+			t.Errorf("expected data_base64 field in JSON, got: %s", jsonStr)
+		}
+		if strings.Contains(jsonStr, `"data":`) {
+			t.Errorf("unexpected data field in JSON for binary data, got: %s", jsonStr)
+		}
+
+		parsed, err := ParseRaw(strings.NewReader(jsonStr))
+		if err != nil {
+			t.Fatalf("ParseRaw failed: %v", err)
+		}
+
+		if !bytes.Equal(parsed.Data, binaryData) {
+			t.Errorf("expected data %v, got %v", binaryData, parsed.Data)
+		}
+	})
+}
+
+func TestTime(t *testing.T) {
+	t.Run("returns time.Time value", func(t *testing.T) {
+		ts := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+		msg := New("data", Attributes{AttrTime: ts}, nil)
+
+		got := msg.Time()
+		if !got.Equal(ts) {
+			t.Errorf("expected %v, got %v", ts, got)
+		}
+	})
+
+	t.Run("parses RFC3339 string", func(t *testing.T) {
+		ts := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+		msg := New("data", Attributes{AttrTime: "2025-01-15T10:30:00Z"}, nil)
+
+		got := msg.Time()
+		if !got.Equal(ts) {
+			t.Errorf("expected %v, got %v", ts, got)
+		}
+	})
+
+	t.Run("returns zero time when missing", func(t *testing.T) {
+		msg := New("data", nil, nil)
+
+		got := msg.Time()
+		if !got.IsZero() {
+			t.Errorf("expected zero time, got %v", got)
+		}
+	})
+
+	t.Run("returns zero time for invalid type", func(t *testing.T) {
+		msg := New("data", Attributes{AttrTime: 12345}, nil)
+
+		got := msg.Time()
+		if !got.IsZero() {
+			t.Errorf("expected zero time, got %v", got)
+		}
+	})
+
+	t.Run("serializes time.Time to RFC3339", func(t *testing.T) {
+		ts := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+		msg := New("data", Attributes{AttrTime: ts, AttrType: "test"}, nil)
+		s := msg.String()
+
+		var ce map[string]any
+		if err := json.Unmarshal([]byte(s), &ce); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		timeStr, ok := ce["time"].(string)
+		if !ok {
+			t.Fatalf("expected time as string, got %T", ce["time"])
+		}
+		if timeStr != "2025-01-15T10:30:00Z" {
+			t.Errorf("expected 2025-01-15T10:30:00Z, got %s", timeStr)
+		}
+	})
+
+	t.Run("preserves RFC3339 string in serialization", func(t *testing.T) {
+		msg := New("data", Attributes{AttrTime: "2025-01-15T10:30:00Z", AttrType: "test"}, nil)
+		s := msg.String()
+
+		var ce map[string]any
+		if err := json.Unmarshal([]byte(s), &ce); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		timeStr, ok := ce["time"].(string)
+		if !ok {
+			t.Fatalf("expected time as string, got %T", ce["time"])
+		}
+		if timeStr != "2025-01-15T10:30:00Z" {
+			t.Errorf("expected 2025-01-15T10:30:00Z, got %s", timeStr)
 		}
 	})
 }

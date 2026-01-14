@@ -117,14 +117,14 @@ func TestNewCommandHandler(t *testing.T) {
 		}
 
 		out := outputs[0]
-		if out.Attributes["type"] != "test.event" {
-			t.Errorf("expected output type 'test.event', got %v", out.Attributes["type"])
+		if out.Type() != "test.event" {
+			t.Errorf("expected output type 'test.event', got %v", out.Type())
 		}
-		if out.Attributes["source"] != "/test-service" {
-			t.Errorf("expected source '/test-service', got %v", out.Attributes["source"])
+		if out.Source() != "/test-service" {
+			t.Errorf("expected source '/test-service', got %v", out.Source())
 		}
-		if out.Attributes["specversion"] != "1.0" {
-			t.Errorf("expected specversion '1.0', got %v", out.Attributes["specversion"])
+		if out.SpecVersion() != "1.0" {
+			t.Errorf("expected specversion '1.0', got %v", out.SpecVersion())
 		}
 
 		event, ok := out.Data.(TestEvent)
@@ -186,28 +186,41 @@ func TestNewCommandHandler(t *testing.T) {
 			t.Errorf("expected source '/original' in context, got %v", ctxAttrs["source"])
 		}
 	})
-}
 
-func TestNewUUID(t *testing.T) {
-	t.Run("generates valid UUID v4 format", func(t *testing.T) {
-		uuid := newUUID()
-		// UUID format: 8-4-4-4-12
-		if len(uuid) != 36 {
-			t.Errorf("expected UUID length 36, got %d", len(uuid))
-		}
-		if uuid[8] != '-' || uuid[13] != '-' || uuid[18] != '-' || uuid[23] != '-' {
-			t.Errorf("invalid UUID format: %s", uuid)
-		}
-	})
+	t.Run("config attributes merged into outputs", func(t *testing.T) {
+		h := NewCommandHandler(
+			func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+				return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
+			},
+			CommandHandlerConfig{
+				Source: "/test",
+				Naming: KebabNaming,
+				Attributes: Attributes{
+					AttrDataSchema: "https://example.com/schema.json",
+					"customext":    "custom-value",
+				},
+			},
+		)
 
-	t.Run("generates unique UUIDs", func(t *testing.T) {
-		uuids := make(map[string]bool)
-		for i := 0; i < 1000; i++ {
-			uuid := newUUID()
-			if uuids[uuid] {
-				t.Errorf("duplicate UUID generated: %s", uuid)
-			}
-			uuids[uuid] = true
+		msg := &Message{Data: &TestCommand{ID: "123"}}
+		outputs, err := h.Handle(context.Background(), msg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		out := outputs[0]
+		if out.DataSchema() != "https://example.com/schema.json" {
+			t.Errorf("expected dataschema, got %v", out.DataSchema())
+		}
+		if out.Attributes["customext"] != "custom-value" {
+			t.Errorf("expected customext 'custom-value', got %v", out.Attributes["customext"])
+		}
+		// Core attributes should still be set
+		if out.Source() != "/test" {
+			t.Errorf("expected source '/test', got %v", out.Source())
+		}
+		if out.ID() == "" {
+			t.Error("expected id to be set")
 		}
 	})
 }

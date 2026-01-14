@@ -5,7 +5,31 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.0] - 2026-01-14
+
+### Breaking Changes
+
+- **message:** Rename `ParseRawMessage` to `ParseRaw` for consistency
+- **message/plugin:** `BatchLoopback` now takes `BatchLoopbackConfig` instead of individual parameters
+
+### Added
+
+- **message:** CloudEvents attribute accessors: `ID()`, `Type()`, `Source()`, `Subject()`, `Time()`, `DataContentType()`, `DataSchema()`, `SpecVersion()`
+- **message:** `MarshalJSON()` for CloudEvents structured JSON format
+- **message:** `ParseRaw()` for parsing CloudEvents JSON input
+- **message:** `data_base64` support for binary data per CloudEvents spec
+- **message:** `NewID()` function for generating UUID v4 message IDs (uses google/uuid)
+- **message:** `Attributes` field in `CommandHandlerConfig` for static output attributes
+- **message/middleware:** `Subject()` middleware for automatic subject extraction via duck typing
+- **message/plugin:** `GroupLoopback` for key-based message batching before transformation
+- **message/plugin:** `GroupLoopbackConfig` and `BatchLoopbackConfig` structs
+- **message/cloudevents:** CloudEvents protocol integration with `Subscriber` and `Publisher`
+- **message/cloudevents:** `SubscriberPlugin` and `PublisherPlugin` for simplified engine registration
+- **examples:** CloudEvents HTTP example (06-cloudevents-http)
+
+### Changed
+
+- **message:** `CommandHandlerConfig` now uses `time.Time` directly for `AttrTime` (auto-marshals to RFC3339)
 
 ## [0.11.0] - 2025-01-09
 

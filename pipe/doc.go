@@ -1,7 +1,19 @@
 // Package pipe provides stateful pipeline components with lifecycle management.
 //
+// This package is part of [gopipe], a composable data pipeline toolkit for Go.
+// The gopipe family includes:
+//
+//   - [channel] — Stateless transforms, filters, fan-in/out
+//   - [pipe] (this package) — Stateful components with lifecycle management
+//   - [message] — CloudEvents message routing with type-based handlers
+//
 // Unlike the channel package which provides stateless operations, pipe components
 // have configuration, middleware support, and controlled shutdown behavior.
+//
+// [gopipe]: https://github.com/fxsml/gopipe
+// [channel]: https://pkg.go.dev/github.com/fxsml/gopipe/channel
+// [pipe]: https://pkg.go.dev/github.com/fxsml/gopipe/pipe
+// [message]: https://pkg.go.dev/github.com/fxsml/gopipe/message
 //
 // # Quick Start
 //

@@ -2,16 +2,16 @@ package message
 
 import (
 	"context"
-	"crypto/rand"
-	"fmt"
+	"maps"
 	"reflect"
 	"time"
 )
 
 // CommandHandlerConfig configures a command handler.
 type CommandHandlerConfig struct {
-	Source string          // required, CE source attribute
-	Naming EventTypeNaming // derives CE types for input and output
+	Source     string          // required, CE source attribute
+	Naming     EventTypeNaming // optional, derives CE types for input and output
+	Attributes Attributes      // optional, merged into all output messages
 }
 
 // Handler processes messages of a specific CE type.
@@ -67,6 +67,7 @@ type commandHandler[C, E any] struct {
 	eventType string
 	source    string
 	naming    EventTypeNaming
+	attrs     Attributes
 	fn        func(ctx context.Context, cmd C) ([]E, error)
 }
 
@@ -87,6 +88,7 @@ func NewCommandHandler[C, E any](
 		eventType: naming.EventType(t),
 		source:    cfg.Source,
 		naming:    naming,
+		attrs:     cfg.Attributes,
 		fn:        fn,
 	}
 }
@@ -122,25 +124,18 @@ func (h *commandHandler[C, E]) Handle(ctx context.Context, msg *Message) ([]*Mes
 
 	outputs := make([]*Message, len(events))
 	for i, event := range events {
-		outputs[i] = New(event, Attributes{
-			"id":          newUUID(),
-			"specversion": "1.0",
-			"type":        eventType,
-			"source":      h.source,
-			"time":        time.Now().UTC().Format(time.RFC3339),
-		}, nil)
+		attrs := Attributes{
+			AttrID:          NewID(),
+			AttrSpecVersion: "1.0",
+			AttrType:        eventType,
+			AttrSource:      h.source,
+			AttrTime:        time.Now().UTC(),
+		}
+		maps.Copy(attrs, h.attrs)
+		outputs[i] = New(event, attrs, nil)
 	}
 
 	return outputs, nil
-}
-
-// newUUID generates a UUID v4 string using crypto/rand.
-func newUUID() string {
-	var u [16]byte
-	_, _ = rand.Read(u[:])
-	u[6] = (u[6] & 0x0f) | 0x40 // version 4
-	u[8] = (u[8] & 0x3f) | 0x80 // variant 10
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
 }
 
 // Verify handlers implement Handler.

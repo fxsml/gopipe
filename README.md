@@ -1,7 +1,7 @@
 # gopipe
 
 [![CI](https://github.com/fxsml/gopipe/actions/workflows/ci.yml/badge.svg)](https://github.com/fxsml/gopipe/actions/workflows/ci.yml)
-[![GoDoc](https://pkg.go.dev/badge/github.com/fxsml/gopipe.svg)](https://pkg.go.dev/github.com/fxsml/gopipe)
+[![Go Reference](https://pkg.go.dev/badge/github.com/fxsml/gopipe/message.svg)](https://pkg.go.dev/github.com/fxsml/gopipe/message)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Composable data pipelines for Go** — from simple channel operations to CloudEvents message routing, with zero dependencies.
@@ -95,8 +95,17 @@ message.Handler    →  Type-safe command/event handlers
 
 ## Installation
 
+gopipe uses Go modules. Install the packages you need:
+
 ```bash
-go get github.com/fxsml/gopipe
+# Channel operations (stateless transforms, filters, fan-in/out)
+go get github.com/fxsml/gopipe/channel
+
+# Pipe components (stateful, dynamic inputs/outputs)
+go get github.com/fxsml/gopipe/pipe
+
+# Message routing (CloudEvents, type-based handlers)
+go get github.com/fxsml/gopipe/message
 ```
 
 ## Learning Path
@@ -109,7 +118,10 @@ go get github.com/fxsml/gopipe
 
 ## Documentation
 
-- **[Package Documentation](https://pkg.go.dev/github.com/fxsml/gopipe)** — API reference
+- **Package Reference:**
+  - [channel](https://pkg.go.dev/github.com/fxsml/gopipe/channel) — Stateless channel operations
+  - [pipe](https://pkg.go.dev/github.com/fxsml/gopipe/pipe) — Stateful pipeline components
+  - [message](https://pkg.go.dev/github.com/fxsml/gopipe/message) — CloudEvents message routing
 - **[Examples](examples/)** — Working code examples
 - **[AGENTS.md](AGENTS.md)** — Architecture decisions and design notes
 

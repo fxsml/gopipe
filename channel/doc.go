@@ -1,8 +1,20 @@
 // Package channel provides stateless channel operations for composing data pipelines.
 //
+// This package is part of [gopipe], a composable data pipeline toolkit for Go.
+// The gopipe family includes:
+//
+//   - [channel] (this package) — Stateless transforms, filters, fan-in/out
+//   - [pipe] — Stateful components with lifecycle management
+//   - [message] — CloudEvents message routing with type-based handlers
+//
 // Operations include filtering, transforming, merging, routing, broadcasting,
 // batching, and more. All functions are pure and create new channels without
 // modifying inputs.
+//
+// [gopipe]: https://github.com/fxsml/gopipe
+// [channel]: https://pkg.go.dev/github.com/fxsml/gopipe/channel
+// [pipe]: https://pkg.go.dev/github.com/fxsml/gopipe/pipe
+// [message]: https://pkg.go.dev/github.com/fxsml/gopipe/message
 //
 // # Quick Start
 //
