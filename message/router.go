@@ -151,9 +151,7 @@ func (r *Router) NewInput(eventType string) any {
 }
 
 func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) {
-	eventType, _ := msg.Attributes["type"].(string)
-
-	entry, ok := r.handler(eventType)
+	entry, ok := r.handler(msg.Type())
 	if !ok {
 		err := ErrNoHandler
 		msg.Nack(err)

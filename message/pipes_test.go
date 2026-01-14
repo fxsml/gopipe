@@ -109,11 +109,11 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		out, _ := p.Pipe(ctx, in)
 		msg := <-out
 
-		if msg.Attributes["source"] != "/test" {
-			t.Errorf("source = %v, want /test", msg.Attributes["source"])
+		if msg.Source() != "/test" {
+			t.Errorf("source = %v, want /test", msg.Source())
 		}
-		if msg.Attributes["id"] != "123" {
-			t.Errorf("id = %v, want 123", msg.Attributes["id"])
+		if msg.ID() != "123" {
+			t.Errorf("id = %v, want 123", msg.ID())
 		}
 	})
 }
@@ -168,8 +168,8 @@ func TestNewMarshalPipe(t *testing.T) {
 		out, _ := p.Pipe(ctx, in)
 		raw := <-out
 
-		if raw.Attributes["datacontenttype"] != "application/json" {
-			t.Errorf("datacontenttype = %v, want application/json", raw.Attributes["datacontenttype"])
+		if raw.DataContentType() != "application/json" {
+			t.Errorf("datacontenttype = %v, want application/json", raw.DataContentType())
 		}
 	})
 
@@ -194,8 +194,8 @@ func TestNewMarshalPipe(t *testing.T) {
 		if raw.Attributes == nil {
 			t.Fatal("Attributes = nil, want non-nil")
 		}
-		if raw.Attributes["datacontenttype"] != "application/json" {
-			t.Errorf("datacontenttype = %v, want application/json", raw.Attributes["datacontenttype"])
+		if raw.DataContentType() != "application/json" {
+			t.Errorf("datacontenttype = %v, want application/json", raw.DataContentType())
 		}
 	})
 
@@ -221,11 +221,11 @@ func TestNewMarshalPipe(t *testing.T) {
 		out, _ := p.Pipe(ctx, in)
 		raw := <-out
 
-		if raw.Attributes["source"] != "/test" {
-			t.Errorf("source = %v, want /test", raw.Attributes["source"])
+		if raw.Source() != "/test" {
+			t.Errorf("source = %v, want /test", raw.Source())
 		}
-		if raw.Attributes["id"] != "123" {
-			t.Errorf("id = %v, want 123", raw.Attributes["id"])
+		if raw.ID() != "123" {
+			t.Errorf("id = %v, want 123", raw.ID())
 		}
 	})
 }
@@ -264,14 +264,14 @@ func TestPipeRoundtrip(t *testing.T) {
 		if string(result.Data) != expected {
 			t.Errorf("Data = %s, want %s", result.Data, expected)
 		}
-		if result.Attributes["type"] != "test.data" {
-			t.Errorf("type = %v, want test.data", result.Attributes["type"])
+		if result.Type() != "test.data" {
+			t.Errorf("type = %v, want test.data", result.Type())
 		}
-		if result.Attributes["source"] != "/test" {
-			t.Errorf("source = %v, want /test", result.Attributes["source"])
+		if result.Source() != "/test" {
+			t.Errorf("source = %v, want /test", result.Source())
 		}
-		if result.Attributes["datacontenttype"] != "application/json" {
-			t.Errorf("datacontenttype = %v, want application/json", result.Attributes["datacontenttype"])
+		if result.DataContentType() != "application/json" {
+			t.Errorf("datacontenttype = %v, want application/json", result.DataContentType())
 		}
 	})
 }

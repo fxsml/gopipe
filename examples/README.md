@@ -11,6 +11,7 @@ Learn gopipe step-by-step.
 | 3 | [merger](03-merger/) | Dynamic inputs, shutdown timeout |
 | 4 | [message](04-message/) | CloudEvents engine, handlers, routing |
 | 5 | [generator](05-generator/) | Producing values, context cancellation |
+| 6 | [cloudevents-nats](06-cloudevents-nats/) | CloudEvents protocol bindings, NATS JetStream, acking |
 
 ## Quick Start
 
