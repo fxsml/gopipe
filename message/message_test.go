@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestNew(t *testing.T) {
@@ -447,6 +448,83 @@ func TestParseRaw(t *testing.T) {
 
 		if !bytes.Equal(parsed.Data, binaryData) {
 			t.Errorf("expected data %v, got %v", binaryData, parsed.Data)
+		}
+	})
+}
+
+func TestTime(t *testing.T) {
+	t.Run("returns time.Time value", func(t *testing.T) {
+		ts := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+		msg := New("data", Attributes{AttrTime: ts}, nil)
+
+		got := msg.Time()
+		if !got.Equal(ts) {
+			t.Errorf("expected %v, got %v", ts, got)
+		}
+	})
+
+	t.Run("parses RFC3339 string", func(t *testing.T) {
+		ts := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+		msg := New("data", Attributes{AttrTime: "2025-01-15T10:30:00Z"}, nil)
+
+		got := msg.Time()
+		if !got.Equal(ts) {
+			t.Errorf("expected %v, got %v", ts, got)
+		}
+	})
+
+	t.Run("returns zero time when missing", func(t *testing.T) {
+		msg := New("data", nil, nil)
+
+		got := msg.Time()
+		if !got.IsZero() {
+			t.Errorf("expected zero time, got %v", got)
+		}
+	})
+
+	t.Run("returns zero time for invalid type", func(t *testing.T) {
+		msg := New("data", Attributes{AttrTime: 12345}, nil)
+
+		got := msg.Time()
+		if !got.IsZero() {
+			t.Errorf("expected zero time, got %v", got)
+		}
+	})
+
+	t.Run("serializes time.Time to RFC3339", func(t *testing.T) {
+		ts := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+		msg := New("data", Attributes{AttrTime: ts, AttrType: "test"}, nil)
+		s := msg.String()
+
+		var ce map[string]any
+		if err := json.Unmarshal([]byte(s), &ce); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		timeStr, ok := ce["time"].(string)
+		if !ok {
+			t.Fatalf("expected time as string, got %T", ce["time"])
+		}
+		if timeStr != "2025-01-15T10:30:00Z" {
+			t.Errorf("expected 2025-01-15T10:30:00Z, got %s", timeStr)
+		}
+	})
+
+	t.Run("preserves RFC3339 string in serialization", func(t *testing.T) {
+		msg := New("data", Attributes{AttrTime: "2025-01-15T10:30:00Z", AttrType: "test"}, nil)
+		s := msg.String()
+
+		var ce map[string]any
+		if err := json.Unmarshal([]byte(s), &ce); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		timeStr, ok := ce["time"].(string)
+		if !ok {
+			t.Fatalf("expected time as string, got %T", ce["time"])
+		}
+		if timeStr != "2025-01-15T10:30:00Z" {
+			t.Errorf("expected 2025-01-15T10:30:00Z, got %s", timeStr)
 		}
 	})
 }
