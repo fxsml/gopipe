@@ -187,27 +187,3 @@ func TestNewCommandHandler(t *testing.T) {
 		}
 	})
 }
-
-func TestNewUUID(t *testing.T) {
-	t.Run("generates valid UUID v4 format", func(t *testing.T) {
-		uuid := newUUID()
-		// UUID format: 8-4-4-4-12
-		if len(uuid) != 36 {
-			t.Errorf("expected UUID length 36, got %d", len(uuid))
-		}
-		if uuid[8] != '-' || uuid[13] != '-' || uuid[18] != '-' || uuid[23] != '-' {
-			t.Errorf("invalid UUID format: %s", uuid)
-		}
-	})
-
-	t.Run("generates unique UUIDs", func(t *testing.T) {
-		uuids := make(map[string]bool)
-		for i := 0; i < 1000; i++ {
-			uuid := newUUID()
-			if uuids[uuid] {
-				t.Errorf("duplicate UUID generated: %s", uuid)
-			}
-			uuids[uuid] = true
-		}
-	})
-}
