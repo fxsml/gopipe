@@ -14,11 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **message:** `NewID()` function for generating UUID v4 message IDs (uses google/uuid)
+- **message:** `Attributes` field in `CommandHandlerConfig` for static output attributes
+- **message/middleware:** `Subject()` middleware for automatic subject extraction via duck typing
 - **message/plugin:** `GroupLoopback` for key-based message batching before transformation
 - **message/plugin:** `GroupLoopbackConfig` and `BatchLoopbackConfig` structs
 - **message/cloudevents:** CloudEvents protocol integration with Subscriber/Publisher
 - **message/cloudevents:** Plugin layer for simplified engine registration
 - **examples:** CloudEvents HTTP example (06-cloudevents-http)
+
+### Changed
+
+- **message:** `CommandHandlerConfig` now uses `time.Time` directly for `AttrTime` (auto-marshals to RFC3339)
 
 ## [0.11.0] - 2025-01-09
 
