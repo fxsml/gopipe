@@ -404,4 +404,49 @@ func TestParseRaw(t *testing.T) {
 			t.Errorf("expected data {\"id\":456}, got %s", parsed.Data)
 		}
 	})
+
+	t.Run("parses data_base64 field", func(t *testing.T) {
+		// "hello world" base64 encoded
+		input := `{"specversion":"1.0","type":"binary.event","source":"/test","id":"123","data_base64":"aGVsbG8gd29ybGQ="}`
+		msg, err := ParseRaw(strings.NewReader(input))
+		if err != nil {
+			t.Fatalf("ParseRaw failed: %v", err)
+		}
+
+		if msg.Type() != "binary.event" {
+			t.Errorf("expected type binary.event, got %v", msg.Type())
+		}
+		if string(msg.Data) != "hello world" {
+			t.Errorf("expected data 'hello world', got %s", msg.Data)
+		}
+	})
+
+	t.Run("roundtrip with binary data", func(t *testing.T) {
+		binaryData := []byte{0x00, 0x01, 0x02, 0xFF, 0xFE}
+		original := NewRaw(binaryData, Attributes{
+			"type":   "binary.event",
+			"source": "/binary",
+		}, nil)
+
+		var buf bytes.Buffer
+		_, _ = original.WriteTo(&buf)
+
+		// Verify data_base64 is used in JSON output
+		jsonStr := buf.String()
+		if !strings.Contains(jsonStr, "data_base64") {
+			t.Errorf("expected data_base64 field in JSON, got: %s", jsonStr)
+		}
+		if strings.Contains(jsonStr, `"data":`) {
+			t.Errorf("unexpected data field in JSON for binary data, got: %s", jsonStr)
+		}
+
+		parsed, err := ParseRaw(strings.NewReader(jsonStr))
+		if err != nil {
+			t.Fatalf("ParseRaw failed: %v", err)
+		}
+
+		if !bytes.Equal(parsed.Data, binaryData) {
+			t.Errorf("expected data %v, got %v", binaryData, parsed.Data)
+		}
+	})
 }
