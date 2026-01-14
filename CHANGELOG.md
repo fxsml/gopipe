@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **message/plugin:** `GroupLoopback` for key-based message batching before transformation
 - **message/plugin:** `GroupLoopbackConfig` and `BatchLoopbackConfig` structs
+- **message/cloudevents:** CloudEvents protocol integration with Subscriber/Publisher
+- **message/cloudevents:** Plugin layer for simplified engine registration
+- **examples:** CloudEvents HTTP example (06-cloudevents-http)
 
 ## [0.11.0] - 2025-01-09
 
