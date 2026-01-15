@@ -72,8 +72,8 @@ func TestCorrelationID(t *testing.T) {
 		input <- &message.Message{
 			Data: &TestCommand{Input: 5},
 			Attributes: message.Attributes{
-				"type":          "test.command",
-				"correlationid": "abc-123",
+				"type":                   "test.command",
+				message.AttrCorrelationID: "abc-123",
 			},
 		}
 		close(input)
@@ -94,9 +94,9 @@ func TestCorrelationID(t *testing.T) {
 		<-done
 
 		for i, out := range outputs {
-			cid, ok := out.Attributes["correlationid"].(string)
+			cid, ok := out.Attributes[message.AttrCorrelationID].(string)
 			if !ok || cid != "abc-123" {
-				t.Errorf("output[%d]: expected correlationid 'abc-123', got %v", i, out.Attributes["correlationid"])
+				t.Errorf("output[%d]: expected correlationid 'abc-123', got %v", i, out.Attributes[message.AttrCorrelationID])
 			}
 		}
 	})
@@ -150,7 +150,7 @@ func TestCorrelationID(t *testing.T) {
 
 		select {
 		case msg := <-output:
-			if _, ok := msg.Attributes["correlationid"]; ok {
+			if _, ok := msg.Attributes[message.AttrCorrelationID]; ok {
 				t.Error("expected no correlationid attribute")
 			}
 		case <-time.After(time.Second):

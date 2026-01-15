@@ -6,11 +6,11 @@ import (
 	"github.com/fxsml/gopipe/message"
 )
 
-// CorrelationID propagates the correlationid attribute from input to output messages.
+// CorrelationID propagates the correlationid extension from input to output messages.
 func CorrelationID() message.Middleware {
 	return func(next message.ProcessFunc) message.ProcessFunc {
 		return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-			correlationID, _ := msg.Attributes["correlationid"].(string)
+			correlationID := msg.CorrelationID()
 
 			outputs, err := next(ctx, msg)
 			if err != nil {
@@ -22,7 +22,7 @@ func CorrelationID() message.Middleware {
 					if out.Attributes == nil {
 						out.Attributes = make(map[string]any)
 					}
-					out.Attributes["correlationid"] = correlationID
+					out.Attributes[message.AttrCorrelationID] = correlationID
 				}
 			}
 
