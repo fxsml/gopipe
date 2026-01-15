@@ -86,6 +86,31 @@ git branch -d release/vX.Y.Z
 git push origin --delete release/vX.Y.Z
 ```
 
+### 5. Verify Release
+
+```bash
+# Verify tags exist on remote
+git ls-remote --tags origin | grep vX.Y.Z
+
+# Verify modules resolve via Go proxy (may take a few minutes)
+go list -m github.com/fxsml/gopipe/channel@vX.Y.Z
+go list -m github.com/fxsml/gopipe/pipe@vX.Y.Z
+go list -m github.com/fxsml/gopipe/message@vX.Y.Z
+
+# Verify GitHub release exists
+gh release view vX.Y.Z
+```
+
+**Optional: Test in fresh project**
+
+```bash
+cd $(mktemp -d)
+go mod init test
+go get github.com/fxsml/gopipe/message@vX.Y.Z
+# Verify correct version installed
+go list -m github.com/fxsml/gopipe/...
+```
+
 ## Hotfix Release Process
 
 For critical fixes to production that cannot wait for a regular release.
@@ -171,6 +196,21 @@ git push origin develop
 # Delete hotfix branch
 git branch -d hotfix/<descriptive-name>
 git push origin --delete hotfix/<descriptive-name>
+```
+
+### 6. Verify Release
+
+```bash
+# Verify tags exist on remote
+git ls-remote --tags origin | grep vX.Y.Z
+
+# Verify modules resolve via Go proxy (may take a few minutes)
+go list -m github.com/fxsml/gopipe/channel@vX.Y.Z
+go list -m github.com/fxsml/gopipe/pipe@vX.Y.Z
+go list -m github.com/fxsml/gopipe/message@vX.Y.Z
+
+# Verify GitHub release exists
+gh release view vX.Y.Z
 ```
 
 ### Resolving CHANGELOG Conflicts
@@ -380,6 +420,16 @@ Before any release:
 - [ ] Check for cross-module API changes (see "go.mod Internal Version References")
   - If no API changes in channel/pipe: keep existing go.mod refs
   - If API changes: plan sequential tagging with go.mod updates
+
+## Post-Release Checklist
+
+After any release:
+
+- [ ] Tags visible on remote (`git ls-remote --tags origin | grep vX.Y.Z`)
+- [ ] Modules resolve via Go proxy (`go list -m github.com/fxsml/gopipe/message@vX.Y.Z`)
+- [ ] GitHub release visible (`gh release view vX.Y.Z`)
+- [ ] Main merged back to develop
+- [ ] Release/hotfix branch deleted
 
 ## GitHub Release Notes
 
