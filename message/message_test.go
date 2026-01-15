@@ -452,6 +452,66 @@ func TestParseRaw(t *testing.T) {
 	})
 }
 
+func TestCorrelationID(t *testing.T) {
+	t.Run("returns correlation ID", func(t *testing.T) {
+		msg := New("data", Attributes{
+			AttrCorrelationID: "abc-123",
+		}, nil)
+
+		if msg.CorrelationID() != "abc-123" {
+			t.Errorf("expected abc-123, got %v", msg.CorrelationID())
+		}
+	})
+
+	t.Run("returns empty string when not set", func(t *testing.T) {
+		msg := New("data", nil, nil)
+
+		if msg.CorrelationID() != "" {
+			t.Errorf("expected empty string, got %v", msg.CorrelationID())
+		}
+	})
+}
+
+func TestExpiryTime(t *testing.T) {
+	t.Run("returns time.Time value", func(t *testing.T) {
+		ts := time.Date(2025, 12, 31, 23, 59, 59, 0, time.UTC)
+		msg := New("data", Attributes{AttrExpiryTime: ts}, nil)
+
+		got := msg.ExpiryTime()
+		if !got.Equal(ts) {
+			t.Errorf("expected %v, got %v", ts, got)
+		}
+	})
+
+	t.Run("parses RFC3339 string", func(t *testing.T) {
+		ts := time.Date(2025, 12, 31, 23, 59, 59, 0, time.UTC)
+		msg := New("data", Attributes{AttrExpiryTime: "2025-12-31T23:59:59Z"}, nil)
+
+		got := msg.ExpiryTime()
+		if !got.Equal(ts) {
+			t.Errorf("expected %v, got %v", ts, got)
+		}
+	})
+
+	t.Run("returns zero time when missing", func(t *testing.T) {
+		msg := New("data", nil, nil)
+
+		got := msg.ExpiryTime()
+		if !got.IsZero() {
+			t.Errorf("expected zero time, got %v", got)
+		}
+	})
+
+	t.Run("returns zero time for invalid type", func(t *testing.T) {
+		msg := New("data", Attributes{AttrExpiryTime: 12345}, nil)
+
+		got := msg.ExpiryTime()
+		if !got.IsZero() {
+			t.Errorf("expected zero time, got %v", got)
+		}
+	})
+}
+
 func TestTime(t *testing.T) {
 	t.Run("returns time.Time value", func(t *testing.T) {
 		ts := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)

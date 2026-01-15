@@ -228,6 +228,25 @@ func (m *TypedMessage[T]) SpecVersion() string {
 	return s
 }
 
+// CorrelationID returns the correlation ID extension. Returns empty string if not set.
+func (m *TypedMessage[T]) CorrelationID() string {
+	s, _ := m.Attributes[AttrCorrelationID].(string)
+	return s
+}
+
+// ExpiryTime returns the expiry time extension. Returns zero time if not set or invalid.
+func (m *TypedMessage[T]) ExpiryTime() time.Time {
+	switch v := m.Attributes[AttrExpiryTime].(type) {
+	case time.Time:
+		return v
+	case string:
+		t, _ := time.Parse(time.RFC3339, v)
+		return t
+	default:
+		return time.Time{}
+	}
+}
+
 // Copy creates a new message with different data while preserving
 // attributes (cloned) and acknowledgment callbacks (shared).
 func Copy[In, Out any](msg *TypedMessage[In], data Out) *TypedMessage[Out] {
