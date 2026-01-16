@@ -5,6 +5,16 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-01-16
+
+### Fixed
+
+- **message:** `funcName` now correctly handles generic factory functions (fixes #79)
+  - Strip generic type parameters `[...]` from runtime function names
+  - Return `package.FunctionName` for package-level functions (e.g., `context.Background`)
+  - Traverse nested closures to find the actual factory name
+  - Correctly distinguish `funcHelper` from closure names like `func1`
+
 ## [0.13.0] - 2026-01-15
 
 ### Added
