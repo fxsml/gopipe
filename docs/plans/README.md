@@ -7,6 +7,7 @@
 | [locals](locals.md) | Message Locals | Implemented |
 | [0007](0007-cesql-pattern-matching.md) | CESQL Pattern Matching | Proposed |
 | [autoscale-worker-pool](autoscale-worker-pool.md) | Autoscale Worker Pool | Proposed |
+| [pipe-autoscaling](pipe-autoscaling.md) | Dynamic Worker Pool | In Progress |
 | [transaction-handling](transaction-handling.md) | Transaction Handling | Proposed |
 | [inbox-outbox](inbox-outbox.md) | Inbox/Outbox Pattern | Proposed |
 | [redis-transactions](redis-transactions.md) | Redis Integration | Proposed |
