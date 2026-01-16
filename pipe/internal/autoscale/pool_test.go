@@ -10,7 +10,14 @@ import (
 )
 
 func TestPool_MinWorkers(t *testing.T) {
-	cfg := Parse(2, 10, 30*time.Second, 5*time.Second, 10*time.Second, 100*time.Millisecond)
+	cfg := PoolConfig{
+		MinWorkers:        2,
+		MaxWorkers:        10,
+		ScaleDownAfter:    30 * time.Second,
+		ScaleUpCooldown:   5 * time.Second,
+		ScaleDownCooldown: 10 * time.Second,
+		CheckInterval:     100 * time.Millisecond,
+	}
 
 	fn := func(ctx context.Context, in int) ([]int, error) {
 		return []int{in * 2}, nil
@@ -36,7 +43,14 @@ func TestPool_MinWorkers(t *testing.T) {
 
 func TestPool_MaxWorkers(t *testing.T) {
 	// Use very short intervals for faster test
-	cfg := Parse(1, 3, 30*time.Second, 10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond)
+	cfg := PoolConfig{
+		MinWorkers:        1,
+		MaxWorkers:        3,
+		ScaleDownAfter:    30 * time.Second,
+		ScaleUpCooldown:   10 * time.Millisecond,
+		ScaleDownCooldown: 10 * time.Millisecond,
+		CheckInterval:     10 * time.Millisecond,
+	}
 
 	var processing atomic.Int32
 
@@ -74,7 +88,14 @@ func TestPool_MaxWorkers(t *testing.T) {
 
 func TestPool_ScaleUp(t *testing.T) {
 	// Short cooldowns for faster test
-	cfg := Parse(1, 5, 30*time.Second, 20*time.Millisecond, 10*time.Second, 10*time.Millisecond)
+	cfg := PoolConfig{
+		MinWorkers:        1,
+		MaxWorkers:        5,
+		ScaleDownAfter:    30 * time.Second,
+		ScaleUpCooldown:   20 * time.Millisecond,
+		ScaleDownCooldown: 10 * time.Second,
+		CheckInterval:     10 * time.Millisecond,
+	}
 
 	var mu sync.Mutex
 	blocked := make(chan struct{})
@@ -124,7 +145,14 @@ func TestPool_ScaleUp(t *testing.T) {
 
 func TestPool_ScaleDown(t *testing.T) {
 	// Very short scale-down time for test
-	cfg := Parse(1, 5, 50*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond)
+	cfg := PoolConfig{
+		MinWorkers:        1,
+		MaxWorkers:        5,
+		ScaleDownAfter:    50 * time.Millisecond,
+		ScaleUpCooldown:   10 * time.Millisecond,
+		ScaleDownCooldown: 10 * time.Millisecond,
+		CheckInterval:     10 * time.Millisecond,
+	}
 
 	fn := func(ctx context.Context, in int) ([]int, error) {
 		return []int{in * 2}, nil
@@ -167,7 +195,14 @@ func TestPool_ScaleDown(t *testing.T) {
 }
 
 func TestPool_ProcessesAllItems(t *testing.T) {
-	cfg := Parse(2, 8, 30*time.Second, 50*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond)
+	cfg := PoolConfig{
+		MinWorkers:        2,
+		MaxWorkers:        8,
+		ScaleDownAfter:    30 * time.Second,
+		ScaleUpCooldown:   50 * time.Millisecond,
+		ScaleDownCooldown: 100 * time.Millisecond,
+		CheckInterval:     20 * time.Millisecond,
+	}
 
 	fn := func(ctx context.Context, in int) ([]int, error) {
 		return []int{in * 2}, nil
@@ -200,7 +235,14 @@ func TestPool_ProcessesAllItems(t *testing.T) {
 }
 
 func TestPool_ErrorHandler(t *testing.T) {
-	cfg := Parse(1, 1, 30*time.Second, 5*time.Second, 10*time.Second, 100*time.Millisecond)
+	cfg := PoolConfig{
+		MinWorkers:        1,
+		MaxWorkers:        1,
+		ScaleDownAfter:    30 * time.Second,
+		ScaleUpCooldown:   5 * time.Second,
+		ScaleDownCooldown: 10 * time.Second,
+		CheckInterval:     100 * time.Millisecond,
+	}
 
 	var mu sync.Mutex
 	var errors []int
@@ -248,34 +290,23 @@ func TestPool_ErrorHandler(t *testing.T) {
 	mu.Unlock()
 }
 
-func TestConfig_Parse_Defaults(t *testing.T) {
-	cfg := Parse(0, 0, 0, 0, 0, 0)
-
-	if cfg.MinWorkers != DefaultMinWorkers {
-		t.Errorf("expected MinWorkers=%d, got %d", DefaultMinWorkers, cfg.MinWorkers)
+func TestPoolConfig_Defaults(t *testing.T) {
+	// Test that defaults are applied when using zero values
+	// This tests the constants, not a Parse function
+	if DefaultMinWorkers != 1 {
+		t.Errorf("expected DefaultMinWorkers=1, got %d", DefaultMinWorkers)
 	}
-	if cfg.MaxWorkers <= 0 {
-		t.Errorf("expected MaxWorkers > 0, got %d", cfg.MaxWorkers)
+	if DefaultScaleDownAfter != 30*time.Second {
+		t.Errorf("expected DefaultScaleDownAfter=30s, got %v", DefaultScaleDownAfter)
 	}
-	if cfg.ScaleDownAfter != DefaultScaleDownAfter {
-		t.Errorf("expected ScaleDownAfter=%v, got %v", DefaultScaleDownAfter, cfg.ScaleDownAfter)
+	if DefaultScaleUpCooldown != 5*time.Second {
+		t.Errorf("expected DefaultScaleUpCooldown=5s, got %v", DefaultScaleUpCooldown)
 	}
-	if cfg.ScaleUpCooldown != DefaultScaleUpCooldown {
-		t.Errorf("expected ScaleUpCooldown=%v, got %v", DefaultScaleUpCooldown, cfg.ScaleUpCooldown)
+	if DefaultScaleDownCooldown != 10*time.Second {
+		t.Errorf("expected DefaultScaleDownCooldown=10s, got %v", DefaultScaleDownCooldown)
 	}
-	if cfg.ScaleDownCooldown != DefaultScaleDownCooldown {
-		t.Errorf("expected ScaleDownCooldown=%v, got %v", DefaultScaleDownCooldown, cfg.ScaleDownCooldown)
-	}
-	if cfg.CheckInterval != DefaultCheckInterval {
-		t.Errorf("expected CheckInterval=%v, got %v", DefaultCheckInterval, cfg.CheckInterval)
-	}
-}
-
-func TestConfig_Parse_MinGreaterThanMax(t *testing.T) {
-	cfg := Parse(10, 5, 0, 0, 0, 0)
-
-	if cfg.MinWorkers > cfg.MaxWorkers {
-		t.Errorf("MinWorkers (%d) should not exceed MaxWorkers (%d)", cfg.MinWorkers, cfg.MaxWorkers)
+	if DefaultCheckInterval != 1*time.Second {
+		t.Errorf("expected DefaultCheckInterval=1s, got %v", DefaultCheckInterval)
 	}
 }
 
@@ -285,7 +316,14 @@ func TestPool_NoGoroutineLeak_InputClose(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	initialGoroutines := runtime.NumGoroutine()
 
-	cfg := Parse(2, 8, 30*time.Second, 50*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond)
+	cfg := PoolConfig{
+		MinWorkers:        2,
+		MaxWorkers:        8,
+		ScaleDownAfter:    30 * time.Second,
+		ScaleUpCooldown:   50 * time.Millisecond,
+		ScaleDownCooldown: 100 * time.Millisecond,
+		CheckInterval:     20 * time.Millisecond,
+	}
 
 	fn := func(ctx context.Context, in int) ([]int, error) {
 		return []int{in * 2}, nil
@@ -328,7 +366,14 @@ func TestPool_NoGoroutineLeak_ContextCancel(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	initialGoroutines := runtime.NumGoroutine()
 
-	cfg := Parse(2, 4, 30*time.Second, 50*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond)
+	cfg := PoolConfig{
+		MinWorkers:        2,
+		MaxWorkers:        4,
+		ScaleDownAfter:    30 * time.Second,
+		ScaleUpCooldown:   50 * time.Millisecond,
+		ScaleDownCooldown: 100 * time.Millisecond,
+		CheckInterval:     20 * time.Millisecond,
+	}
 
 	fn := func(ctx context.Context, in int) ([]int, error) {
 		return []int{in * 2}, nil
@@ -387,7 +432,14 @@ func TestPool_NoGoroutineLeak_Stop(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	initialGoroutines := runtime.NumGoroutine()
 
-	cfg := Parse(2, 4, 30*time.Second, 50*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond)
+	cfg := PoolConfig{
+		MinWorkers:        2,
+		MaxWorkers:        4,
+		ScaleDownAfter:    30 * time.Second,
+		ScaleUpCooldown:   50 * time.Millisecond,
+		ScaleDownCooldown: 100 * time.Millisecond,
+		CheckInterval:     20 * time.Millisecond,
+	}
 
 	fn := func(ctx context.Context, in int) ([]int, error) {
 		time.Sleep(10 * time.Millisecond)
@@ -429,7 +481,14 @@ func TestPool_NoGoroutineLeak_Stop(t *testing.T) {
 }
 
 func TestPool_EmptyInput(t *testing.T) {
-	cfg := Parse(2, 4, 30*time.Second, 50*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond)
+	cfg := PoolConfig{
+		MinWorkers:        2,
+		MaxWorkers:        4,
+		ScaleDownAfter:    30 * time.Second,
+		ScaleUpCooldown:   50 * time.Millisecond,
+		ScaleDownCooldown: 100 * time.Millisecond,
+		CheckInterval:     20 * time.Millisecond,
+	}
 
 	fn := func(ctx context.Context, in int) ([]int, error) {
 		return []int{in * 2}, nil
@@ -457,7 +516,14 @@ func TestPool_EmptyInput(t *testing.T) {
 }
 
 func TestPool_ContextCancellation(t *testing.T) {
-	cfg := Parse(1, 2, 30*time.Second, 50*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond)
+	cfg := PoolConfig{
+		MinWorkers:        1,
+		MaxWorkers:        2,
+		ScaleDownAfter:    30 * time.Second,
+		ScaleUpCooldown:   50 * time.Millisecond,
+		ScaleDownCooldown: 100 * time.Millisecond,
+		CheckInterval:     20 * time.Millisecond,
+	}
 
 	var processed atomic.Int32
 	fn := func(ctx context.Context, in int) ([]int, error) {
@@ -500,7 +566,14 @@ func TestPool_ContextCancellation(t *testing.T) {
 
 func TestPool_ScaleUpCooldown(t *testing.T) {
 	// Set a long scale-up cooldown
-	cfg := Parse(1, 10, 30*time.Second, 200*time.Millisecond, 10*time.Second, 10*time.Millisecond)
+	cfg := PoolConfig{
+		MinWorkers:        1,
+		MaxWorkers:        10,
+		ScaleDownAfter:    30 * time.Second,
+		ScaleUpCooldown:   200 * time.Millisecond,
+		ScaleDownCooldown: 10 * time.Second,
+		CheckInterval:     10 * time.Millisecond,
+	}
 
 	fn := func(ctx context.Context, in int) ([]int, error) {
 		time.Sleep(50 * time.Millisecond) // Simulate work
@@ -533,7 +606,14 @@ func TestPool_ScaleUpCooldown(t *testing.T) {
 }
 
 func TestPool_MultipleOutputsPerInput(t *testing.T) {
-	cfg := Parse(2, 4, 30*time.Second, 50*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond)
+	cfg := PoolConfig{
+		MinWorkers:        2,
+		MaxWorkers:        4,
+		ScaleDownAfter:    30 * time.Second,
+		ScaleUpCooldown:   50 * time.Millisecond,
+		ScaleDownCooldown: 100 * time.Millisecond,
+		CheckInterval:     20 * time.Millisecond,
+	}
 
 	// Function that returns multiple outputs per input
 	fn := func(ctx context.Context, in int) ([]int, error) {

@@ -74,11 +74,19 @@ func startProcessing[In, Out any](
 ) <-chan Out {
 	cfg = cfg.parse()
 
-	// Use autoscaled processing if configured
 	if cfg.Autoscale != nil {
 		return startAutoscaledProcessing(ctx, in, fn, cfg)
 	}
+	return startStaticProcessing(ctx, in, fn, cfg)
+}
 
+// startStaticProcessing handles processing with a fixed number of workers.
+func startStaticProcessing[In, Out any](
+	ctx context.Context,
+	in <-chan In,
+	fn ProcessFunc[In, Out],
+	cfg Config,
+) <-chan Out {
 	out := make(chan Out, cfg.BufferSize)
 	done := make(chan struct{})
 
@@ -164,48 +172,35 @@ func startAutoscaledProcessing[In, Out any](
 	fn ProcessFunc[In, Out],
 	cfg Config,
 ) <-chan Out {
-	as := cfg.Autoscale
+	as := cfg.Autoscale.parse()
 
-	// Parse autoscale config with defaults
-	asCfg := autoscale.Parse(
-		as.MinWorkers,
-		as.MaxWorkers,
-		as.ScaleDownAfter,
-		as.ScaleUpCooldown,
-		as.ScaleDownCooldown,
-		as.CheckInterval,
-	)
-
-	// Create the pool
 	pool := autoscale.NewPool(
-		asCfg,
-		autoscale.ProcessFunc[In, Out](fn),
+		autoscale.PoolConfig{
+			MinWorkers:        as.MinWorkers,
+			MaxWorkers:        as.MaxWorkers,
+			ScaleDownAfter:    as.ScaleDownAfter,
+			ScaleUpCooldown:   as.ScaleUpCooldown,
+			ScaleDownCooldown: as.ScaleDownCooldown,
+			CheckInterval:     as.CheckInterval,
+		},
+		fn,
 		cfg.ErrorHandler,
 		ErrShutdownDropped,
 	)
 
-	// Wrap the output channel to handle cleanup
-	out := pool.Start(ctx, in, cfg.BufferSize)
+	poolOut := pool.Start(ctx, in, cfg.BufferSize)
+	out := make(chan Out, cfg.BufferSize)
+	poolDone := make(chan struct{})
 
-	// Handle shutdown timeout and cleanup in a separate goroutine
+	// Forward outputs and handle cleanup
 	go func() {
-		// Wait for context cancellation
-		<-ctx.Done()
-
-		if cfg.ShutdownTimeout > 0 {
-			time.Sleep(cfg.ShutdownTimeout)
-			pool.Stop()
+		for v := range poolOut {
+			out <- v
 		}
-	}()
+		close(poolDone)
 
-	// Handle cleanup after pool completion
-	if cfg.CleanupHandler != nil {
-		wrappedOut := make(chan Out, cfg.BufferSize)
-		go func() {
-			for v := range out {
-				wrappedOut <- v
-			}
-
+		// Pool has completed - handle cleanup
+		if cfg.CleanupHandler != nil {
 			cleanupCtx := context.Background()
 			if cfg.CleanupTimeout > 0 {
 				var cancel context.CancelFunc
@@ -213,10 +208,23 @@ func startAutoscaledProcessing[In, Out any](
 				defer cancel()
 			}
 			cfg.CleanupHandler(cleanupCtx)
-			close(wrappedOut)
-		}()
-		return wrappedOut
-	}
+		}
+
+		close(out)
+	}()
+
+	// Handle shutdown timeout
+	go func() {
+		select {
+		case <-ctx.Done():
+			if cfg.ShutdownTimeout > 0 {
+				time.Sleep(cfg.ShutdownTimeout)
+				pool.Stop()
+			}
+		case <-poolDone:
+			// Pool finished naturally, nothing to do
+		}
+	}()
 
 	return out
 }
