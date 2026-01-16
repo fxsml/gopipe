@@ -7,17 +7,22 @@ import (
 	"time"
 )
 
-// ProcessFunc is the core processing function signature.
-type ProcessFunc[In, Out any] func(ctx context.Context, in In) ([]Out, error)
-
-// ErrorHandler handles processing errors.
-type ErrorHandler func(in any, err error)
+// PoolConfig holds the configuration for an autoscaling pool.
+// All fields should be pre-validated with sensible defaults applied.
+type PoolConfig struct {
+	MinWorkers        int
+	MaxWorkers        int
+	ScaleDownAfter    time.Duration
+	ScaleUpCooldown   time.Duration
+	ScaleDownCooldown time.Duration
+	CheckInterval     time.Duration
+}
 
 // Pool manages a dynamic pool of workers that scales based on load.
 type Pool[In, Out any] struct {
-	cfg          Config
-	fn           ProcessFunc[In, Out]
-	errorHandler ErrorHandler
+	cfg          PoolConfig
+	fn           func(context.Context, In) ([]Out, error)
+	errorHandler func(in any, err error)
 	shutdownErr  error // Error to report when shutdown drops messages
 
 	mu       sync.Mutex
@@ -47,9 +52,9 @@ type worker struct {
 
 // NewPool creates a new autoscaling worker pool.
 func NewPool[In, Out any](
-	cfg Config,
-	fn ProcessFunc[In, Out],
-	errorHandler ErrorHandler,
+	cfg PoolConfig,
+	fn func(context.Context, In) ([]Out, error),
+	errorHandler func(in any, err error),
 	shutdownErr error,
 ) *Pool[In, Out] {
 	return &Pool[In, Out]{
