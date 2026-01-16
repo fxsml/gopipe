@@ -2,9 +2,10 @@
 
 ## Current
 
-| Plan | Title | Status |
-|------|-------|--------|
-| [0007](0007-cesql-pattern-matching.md) | CESQL Pattern Matching | Proposed |
+| Plan | Status | Description |
+|------|--------|-------------|
+| [0007](0007-cesql-pattern-matching.md) | Proposed | CESQL Pattern Matching |
+| [pipe-autoscaling](pipe-autoscaling.md) | In Progress | Dynamic worker pool |
 
 ## Agent Guidance
 

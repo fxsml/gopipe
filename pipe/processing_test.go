@@ -510,3 +510,113 @@ func TestProcessing_NoShutdownTimeout_WaitsIndefinitely(t *testing.T) {
 		t.Fatal("output not closed after input closed")
 	}
 }
+
+func TestProcessing_Autoscale_Basic(t *testing.T) {
+	in := make(chan int)
+
+	process := func(ctx context.Context, v int) ([]int, error) {
+		return []int{v * 2}, nil
+	}
+
+	out := startProcessing(context.Background(), in, process, Config{
+		Autoscale: &AutoscaleConfig{
+			MinWorkers: 2,
+			MaxWorkers: 4,
+		},
+	})
+
+	go func() {
+		for i := range 10 {
+			in <- i
+		}
+		close(in)
+	}()
+
+	var results []int
+	for v := range out {
+		results = append(results, v)
+	}
+
+	if len(results) != 10 {
+		t.Errorf("expected 10 results, got %d", len(results))
+	}
+}
+
+func TestProcessing_Autoscale_WithErrorHandler(t *testing.T) {
+	in := make(chan int)
+
+	var mu sync.Mutex
+	var errors []int
+
+	process := func(ctx context.Context, v int) ([]int, error) {
+		if v < 0 {
+			return nil, context.DeadlineExceeded
+		}
+		return []int{v * 2}, nil
+	}
+
+	out := startProcessing(context.Background(), in, process, Config{
+		Autoscale: &AutoscaleConfig{
+			MinWorkers: 1,
+			MaxWorkers: 2,
+		},
+		ErrorHandler: func(val any, err error) {
+			mu.Lock()
+			errors = append(errors, val.(int))
+			mu.Unlock()
+		},
+	})
+
+	go func() {
+		in <- 1
+		in <- -1 // Error
+		in <- 2
+		in <- -2 // Error
+		in <- 3
+		close(in)
+	}()
+
+	var results []int
+	for v := range out {
+		results = append(results, v)
+	}
+
+	if len(results) != 3 {
+		t.Errorf("expected 3 results, got %d", len(results))
+	}
+
+	mu.Lock()
+	if len(errors) != 2 {
+		t.Errorf("expected 2 errors, got %d", len(errors))
+	}
+	mu.Unlock()
+}
+
+func TestProcessing_Autoscale_BackwardCompatibility(t *testing.T) {
+	// Ensure static concurrency still works when Autoscale is nil
+	in := make(chan int)
+
+	process := func(ctx context.Context, v int) ([]int, error) {
+		return []int{v * 2}, nil
+	}
+
+	out := startProcessing(context.Background(), in, process, Config{
+		Concurrency: 3, // Static concurrency, no autoscale
+	})
+
+	go func() {
+		for i := range 5 {
+			in <- i
+		}
+		close(in)
+	}()
+
+	var results []int
+	for v := range out {
+		results = append(results, v)
+	}
+
+	if len(results) != 5 {
+		t.Errorf("expected 5 results, got %d", len(results))
+	}
+}
