@@ -3,6 +3,7 @@ package message
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -343,6 +344,121 @@ func TestFuncName(t *testing.T) {
 	factory := testMiddlewareFactory()
 	if got := funcName(factory); got != "testMiddlewareFactory" {
 		t.Errorf("funcName: got %q, want %q", got, "testMiddlewareFactory")
+	}
+}
+
+func TestFuncName_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		fn       any
+		wantName string
+	}{
+		{
+			name:     "non-generic factory function",
+			fn:       testMiddlewareFactory(),
+			wantName: "testMiddlewareFactory",
+		},
+		{
+			name:     "generic factory function with single type param",
+			fn:       testGenericFactory[string](),
+			wantName: "testGenericFactory",
+		},
+		{
+			name:     "generic factory function with int type",
+			fn:       testGenericFactory[int](),
+			wantName: "testGenericFactory",
+		},
+		{
+			name:     "generic factory with multiple type params",
+			fn:       testGenericFactoryMulti[string, int](),
+			wantName: "testGenericFactoryMulti",
+		},
+		{
+			name:     "generic factory with nested generics",
+			fn:       testGenericFactory[map[string][]int](),
+			wantName: "testGenericFactory",
+		},
+		{
+			name:     "generic factory with struct type param",
+			fn:       testGenericFactory[Attributes](),
+			wantName: "testGenericFactory",
+		},
+		{
+			name:     "generic factory with pointer type param",
+			fn:       testGenericFactory[*Message](),
+			wantName: "testGenericFactory",
+		},
+		{
+			name:     "package-level function includes package prefix",
+			fn:       testStandaloneFunc,
+			wantName: "message.testStandaloneFunc",
+		},
+		{
+			name:     "function from external package",
+			fn:       context.Background,
+			wantName: "context.Background",
+		},
+		{
+			name:     "generic package-level function (not closure)",
+			fn:       testGenericFunc[string],
+			wantName: "message.testGenericFunc",
+		},
+		{
+			name:     "method expression",
+			fn:       (*strings.Builder).WriteString,
+			wantName: "strings.(*Builder).WriteString",
+		},
+		{
+			name:     "function named funcXxx not misidentified as closure",
+			fn:       funcHelper,
+			wantName: "message.funcHelper",
+		},
+		{
+			name:     "nested closure traverses to factory",
+			fn:       outerFactory()(),
+			wantName: "outerFactory",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := funcName(tt.fn)
+			if got != tt.wantName {
+				t.Errorf("funcName() = %q, want %q", got, tt.wantName)
+			}
+		})
+	}
+}
+
+// testGenericFactory returns a closure from a generic function.
+// This is the pattern that caused issue #79 - funcName returned "]"
+// because the runtime name is like "pkg.testGenericFactory[string].func1"
+func testGenericFactory[T any]() Middleware {
+	return func(next ProcessFunc) ProcessFunc { return next }
+}
+
+// testGenericFactoryMulti tests multiple type parameters.
+// Runtime name is like "pkg.testGenericFactoryMulti[string,int].func1"
+func testGenericFactoryMulti[K comparable, V any]() Middleware {
+	return func(next ProcessFunc) ProcessFunc { return next }
+}
+
+// testStandaloneFunc is a package-level function, not a closure.
+// funcName returns package.FunctionName.
+func testStandaloneFunc(next ProcessFunc) ProcessFunc { return next }
+
+// testGenericFunc is a generic package-level function (not returning a closure).
+// Tests that generic type params are stripped: "pkg.testGenericFunc[string]" -> "message.testGenericFunc"
+func testGenericFunc[T any]() T { var zero T; return zero }
+
+// funcHelper is a function whose name starts with "func".
+// Should NOT be misidentified as a closure (func1, func2, etc.).
+func funcHelper() {}
+
+// outerFactory returns a nested closure to test nested closure handling.
+func outerFactory() func() func() {
+	return func() func() {
+		return func() {}
 	}
 }
 
