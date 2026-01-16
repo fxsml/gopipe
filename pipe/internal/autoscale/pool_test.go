@@ -2,6 +2,7 @@ package autoscale
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -275,5 +276,291 @@ func TestConfig_Parse_MinGreaterThanMax(t *testing.T) {
 
 	if cfg.MinWorkers > cfg.MaxWorkers {
 		t.Errorf("MinWorkers (%d) should not exceed MaxWorkers (%d)", cfg.MinWorkers, cfg.MaxWorkers)
+	}
+}
+
+func TestPool_NoGoroutineLeak_InputClose(t *testing.T) {
+	// Count goroutines before starting
+	runtime.GC()
+	time.Sleep(10 * time.Millisecond)
+	initialGoroutines := runtime.NumGoroutine()
+
+	cfg := Parse(2, 8, 30*time.Second, 50*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond)
+
+	fn := func(ctx context.Context, in int) ([]int, error) {
+		return []int{in * 2}, nil
+	}
+
+	pool := NewPool(cfg, fn, func(any, error) {}, nil)
+
+	in := make(chan int)
+	ctx := context.Background()
+
+	out := pool.Start(ctx, in, 10)
+
+	// Send some items then close
+	go func() {
+		for i := range 10 {
+			in <- i
+		}
+		close(in)
+	}()
+
+	// Drain output
+	for range out {
+	}
+
+	// Allow goroutines to clean up
+	runtime.GC()
+	time.Sleep(50 * time.Millisecond)
+
+	finalGoroutines := runtime.NumGoroutine()
+	leaked := finalGoroutines - initialGoroutines
+
+	if leaked > 0 {
+		t.Errorf("goroutine leak detected: %d goroutine(s) leaked after input close", leaked)
+	}
+}
+
+func TestPool_NoGoroutineLeak_ContextCancel(t *testing.T) {
+	// Count goroutines before starting
+	runtime.GC()
+	time.Sleep(10 * time.Millisecond)
+	initialGoroutines := runtime.NumGoroutine()
+
+	cfg := Parse(2, 4, 30*time.Second, 50*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond)
+
+	fn := func(ctx context.Context, in int) ([]int, error) {
+		return []int{in * 2}, nil
+	}
+
+	pool := NewPool(cfg, fn, func(any, error) {}, nil)
+
+	in := make(chan int)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	out := pool.Start(ctx, in, 10)
+
+	// Send some items
+	go func() {
+		for i := range 5 {
+			select {
+			case in <- i:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Read a few results then cancel
+	count := 0
+	for range out {
+		count++
+		if count >= 2 {
+			cancel()
+			break
+		}
+	}
+
+	// Close input to allow cleanup
+	close(in)
+
+	// Drain remaining output
+	for range out {
+	}
+
+	// Allow goroutines to clean up
+	runtime.GC()
+	time.Sleep(50 * time.Millisecond)
+
+	finalGoroutines := runtime.NumGoroutine()
+	leaked := finalGoroutines - initialGoroutines
+
+	if leaked > 0 {
+		t.Errorf("goroutine leak detected: %d goroutine(s) leaked after context cancel", leaked)
+	}
+}
+
+func TestPool_NoGoroutineLeak_Stop(t *testing.T) {
+	// Count goroutines before starting
+	runtime.GC()
+	time.Sleep(10 * time.Millisecond)
+	initialGoroutines := runtime.NumGoroutine()
+
+	cfg := Parse(2, 4, 30*time.Second, 50*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond)
+
+	fn := func(ctx context.Context, in int) ([]int, error) {
+		time.Sleep(10 * time.Millisecond)
+		return []int{in * 2}, nil
+	}
+
+	pool := NewPool(cfg, fn, func(any, error) {}, nil)
+
+	in := make(chan int, 10)
+	ctx := context.Background()
+
+	out := pool.Start(ctx, in, 10)
+
+	// Send items
+	for i := range 5 {
+		in <- i
+	}
+
+	// Stop the pool explicitly
+	pool.Stop()
+
+	// Drain output
+	for range out {
+	}
+
+	// Close input
+	close(in)
+
+	// Allow goroutines to clean up
+	runtime.GC()
+	time.Sleep(50 * time.Millisecond)
+
+	finalGoroutines := runtime.NumGoroutine()
+	leaked := finalGoroutines - initialGoroutines
+
+	if leaked > 0 {
+		t.Errorf("goroutine leak detected: %d goroutine(s) leaked after Stop()", leaked)
+	}
+}
+
+func TestPool_EmptyInput(t *testing.T) {
+	cfg := Parse(2, 4, 30*time.Second, 50*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond)
+
+	fn := func(ctx context.Context, in int) ([]int, error) {
+		return []int{in * 2}, nil
+	}
+
+	pool := NewPool(cfg, fn, func(any, error) {}, nil)
+
+	in := make(chan int)
+	ctx := context.Background()
+
+	out := pool.Start(ctx, in, 10)
+
+	// Immediately close input without sending anything
+	close(in)
+
+	// Output should close without blocking
+	var results []int
+	for v := range out {
+		results = append(results, v)
+	}
+
+	if len(results) != 0 {
+		t.Errorf("expected 0 results from empty input, got %d", len(results))
+	}
+}
+
+func TestPool_ContextCancellation(t *testing.T) {
+	cfg := Parse(1, 2, 30*time.Second, 50*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond)
+
+	var processed atomic.Int32
+	fn := func(ctx context.Context, in int) ([]int, error) {
+		select {
+		case <-time.After(100 * time.Millisecond):
+			processed.Add(1)
+			return []int{in * 2}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	pool := NewPool(cfg, fn, func(any, error) {}, nil)
+
+	in := make(chan int, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	out := pool.Start(ctx, in, 10)
+
+	// Send items
+	for i := range 5 {
+		in <- i
+	}
+
+	// Cancel after a short delay
+	time.AfterFunc(50*time.Millisecond, cancel)
+
+	// Close input to allow cleanup
+	time.AfterFunc(60*time.Millisecond, func() { close(in) })
+
+	// Drain output
+	for range out {
+	}
+
+	// Should have processed fewer items due to cancellation
+	if processed.Load() >= 5 {
+		t.Errorf("expected fewer than 5 items processed due to cancellation, got %d", processed.Load())
+	}
+}
+
+func TestPool_ScaleUpCooldown(t *testing.T) {
+	// Set a long scale-up cooldown
+	cfg := Parse(1, 10, 30*time.Second, 200*time.Millisecond, 10*time.Second, 10*time.Millisecond)
+
+	fn := func(ctx context.Context, in int) ([]int, error) {
+		time.Sleep(50 * time.Millisecond) // Simulate work
+		return []int{in * 2}, nil
+	}
+
+	pool := NewPool(cfg, fn, func(any, error) {}, nil)
+
+	in := make(chan int, 20)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pool.Start(ctx, in, 20)
+
+	// Send burst to trigger scale-up attempts
+	for i := range 10 {
+		in <- i
+	}
+
+	// Wait less than cooldown period
+	time.Sleep(100 * time.Millisecond)
+
+	// Should only have scaled up once due to cooldown
+	workers := pool.TotalWorkers()
+	if workers > 2 {
+		t.Errorf("expected at most 2 workers due to cooldown, got %d", workers)
+	}
+
+	close(in)
+}
+
+func TestPool_MultipleOutputsPerInput(t *testing.T) {
+	cfg := Parse(2, 4, 30*time.Second, 50*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond)
+
+	// Function that returns multiple outputs per input
+	fn := func(ctx context.Context, in int) ([]int, error) {
+		return []int{in, in * 2, in * 3}, nil
+	}
+
+	pool := NewPool(cfg, fn, func(any, error) {}, nil)
+
+	in := make(chan int)
+	ctx := context.Background()
+
+	out := pool.Start(ctx, in, 100)
+
+	go func() {
+		for i := 1; i <= 5; i++ {
+			in <- i
+		}
+		close(in)
+	}()
+
+	var results []int
+	for v := range out {
+		results = append(results, v)
+	}
+
+	// Should have 15 results (5 inputs * 3 outputs each)
+	if len(results) != 15 {
+		t.Errorf("expected 15 results, got %d", len(results))
 	}
 }
