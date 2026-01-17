@@ -327,17 +327,408 @@ engine.CreateLoopback("loop", matcher)
 3. **Error handling:** What if `CloseLoopbackOutputs` fails?
    - Recommend: Log warning, continue shutdown (best effort)
 
+## Complex Pipeline Scenarios
+
+The basic solution handles simple loopbacks, but complex pipelines require more sophisticated orchestration.
+
+### Scenario 1: Multiple Independent Loopbacks
+
+```
+                    ┌── Loopback1 (retry errors) ──┐
+                    │                               │
+External Input → Merger → Router → Distributor ────┤
+                    │                               │
+                    └── Loopback2 (batch events) ──┘
+```
+
+**Challenge:** Both loopbacks must close, but they're independent.
+
+**Solution:** Close all loopback outputs simultaneously when external inputs are done.
+
+### Scenario 2: Chained Loopbacks
+
+```
+External → Merger → Router → Distributor → Loopback1 Output
+              ↑                                  │
+              │                                  ↓
+              │                           ProcessPipe
+              │                                  │
+              └── Loopback2 Input ← Distributor2 ← Loopback1 Input
+                                          │
+                                          └→ Loopback2 Output ─┐
+                                                               │
+                                     ┌─────────────────────────┘
+                                     ↓
+                              (back to Merger)
+```
+
+**Challenge:** L2 depends on L1's output. Closing L1 first leaves L2 orphaned.
+
+**Solution:** Track the full dependency graph, close in reverse topological order.
+
+### Scenario 3: Mutual/Circular Loopbacks
+
+```
+              ┌──────────── Loopback1 ────────────┐
+              │                                    │
+              ↓                                    │
+External → Merger → Router → Distributor ─────────┤
+              ↑                                    │
+              │                                    │
+              └──────────── Loopback2 ────────────┘
+```
+
+Where L1 produces messages that L2 catches, AND L2 produces messages that L1 catches.
+
+**Challenge:** No safe order to close—mutual dependency.
+
+**Solution:** Use reference counting to detect when the cycle is "drained" (no in-flight messages), then close both simultaneously.
+
+### Scenario 4: Pipeline of Engines
+
+```
+Engine1 → RawOutput → Engine2 → RawOutput → Engine3
+   ↑          │          ↑          │
+   └──────────┘          └──────────┘
+   (loopback)            (loopback)
+```
+
+**Challenge:** Each engine has its own loopback; inter-engine communication adds latency.
+
+**Solution:** Pipeline plugin coordinates shutdown across engines.
+
+## Shutdown Orchestrator Design
+
+To handle all scenarios, we need a proper **Shutdown Orchestrator** that:
+1. Tracks the full pipeline topology
+2. Detects cycles and dependencies
+3. Coordinates phased shutdown
+4. Handles edge cases gracefully
+
+### Core Concept: Reference Counting
+
+Track messages through the entire pipeline:
+
+```go
+type MessageTracker struct {
+    inFlight atomic.Int64
+    drained  chan struct{}
+    once     sync.Once
+}
+
+func (t *MessageTracker) Enter() {
+    t.inFlight.Add(1)
+}
+
+func (t *MessageTracker) Exit() {
+    if t.inFlight.Add(-1) == 0 {
+        t.once.Do(func() { close(t.drained) })
+    }
+}
+
+func (t *MessageTracker) Drained() <-chan struct{} {
+    return t.drained
+}
+```
+
+**How it works:**
+- On entry to merger: `tracker.Enter()`
+- On exit from distributor (to external output): `tracker.Exit()`
+- Loopback messages: Don't exit—they re-enter
+- When external inputs close AND in-flight count = 0: All messages processed
+
+**This is deterministic and handles any topology!**
+
+### Orchestrator Architecture
+
+```go
+type ShutdownOrchestrator struct {
+    tracker     *MessageTracker
+    merger      *pipe.Merger[*Message]
+    distributor *pipe.Distributor[*Message]
+
+    mu              sync.Mutex
+    loopbackOutputs []chan *Message
+    externalInputs  []<-chan *Message
+}
+
+func (o *ShutdownOrchestrator) Shutdown(ctx context.Context) error {
+    // Phase 1: Stop accepting new external messages
+    // (external inputs should be closed by user)
+
+    // Phase 2: Wait for pipeline to drain
+    select {
+    case <-o.tracker.Drained():
+        // All messages processed - clean shutdown
+    case <-time.After(o.cfg.ShutdownTimeout):
+        // Timeout - force shutdown
+        o.forceCloseLoopbacks()
+    case <-ctx.Done():
+        // Cancelled - force shutdown
+        o.forceCloseLoopbacks()
+    }
+
+    // Phase 3: Close loopback outputs (if not already)
+    o.closeLoopbackOutputs()
+
+    // Phase 4: Wait for pipeline to fully drain
+    return o.waitForCompletion()
+}
+```
+
+### Handling Infinite Loops
+
+What if a handler creates an infinite loop (always produces loopback messages)?
+
+```go
+// Handler that loops forever
+func (h *BadHandler) Handle(ctx context.Context, msg *Message) ([]*Message, error) {
+    return []*Message{msg}, nil // Always loops back!
+}
+```
+
+**Detection:**
+- If in-flight count doesn't decrease after ShutdownTimeout
+- Log warning about potential infinite loop
+- Force-close loopbacks
+
+**Mitigation:**
+- Optional `MaxLoopIterations` config
+- TTL/hop-count middleware (already supported)
+
+## Pipeline Plugin Design
+
+For complex orchestration, provide a high-level **Pipeline Plugin** that declares the topology:
+
+### API Design
+
+```go
+// Declarative pipeline with explicit stages
+p := plugin.NewPipeline("order-processing")
+
+// Stage 1: Validate incoming orders
+p.Stage("validate",
+    validateHandler,
+)
+
+// Stage 2: Enrich with customer data, retry on failure
+p.Stage("enrich",
+    enrichHandler,
+    plugin.WithLoopback("retry", retryMatcher, plugin.MaxRetries(3)),
+)
+
+// Stage 3: Aggregate orders by customer
+p.Stage("aggregate",
+    aggregateHandler,
+    plugin.WithBatchLoopback("batch", batchMatcher, batchFn, BatchConfig{
+        MaxSize:     100,
+        MaxDuration: time.Second,
+    }),
+)
+
+// Stage 4: Publish to downstream
+p.Stage("publish",
+    publishHandler,
+)
+
+// Register with engine
+engine.AddPlugin(p.Build())
+```
+
+### Benefits
+
+1. **Clear structure:** Pipeline topology is explicit
+2. **Automatic orchestration:** Plugin manages shutdown order
+3. **Observability:** Can add per-stage metrics
+4. **Validation:** Detect invalid topologies at registration
+5. **Optimization:** Can optimize routing based on declared stages
+
+### Internal Implementation
+
+```go
+type Pipeline struct {
+    name   string
+    stages []Stage
+}
+
+type Stage struct {
+    name     string
+    handler  Handler
+    loopback *LoopbackConfig
+}
+
+func (p *Pipeline) Build() message.Plugin {
+    return func(e *message.Engine) error {
+        // 1. Register all handlers
+        for _, stage := range p.stages {
+            if err := e.AddHandler(stage.name, nil, stage.handler); err != nil {
+                return err
+            }
+        }
+
+        // 2. Register loopbacks in reverse order (for shutdown)
+        // This ensures later stages close first
+        for i := len(p.stages) - 1; i >= 0; i-- {
+            stage := p.stages[i]
+            if stage.loopback != nil {
+                if err := e.AddLoopback(stage.loopback); err != nil {
+                    return err
+                }
+            }
+        }
+
+        // 3. Register shutdown hook
+        e.OnShutdown(p.orchestrateShutdown)
+
+        return nil
+    }
+}
+
+func (p *Pipeline) orchestrateShutdown(ctx context.Context, e *message.Engine) {
+    // Close loopbacks in order: last stage first
+    for i := len(p.stages) - 1; i >= 0; i-- {
+        stage := p.stages[i]
+        if stage.loopback != nil {
+            e.CloseLoopback(stage.loopback.Name)
+            // Wait for stage to drain
+            <-stage.drained
+        }
+    }
+}
+```
+
+### Automatic Topology Detection (Alternative)
+
+For users who don't want to declare stages explicitly:
+
+```go
+// Engine automatically infers topology from registration order
+engine.AddPlugin(plugin.Loopback("L1", m1))    // Registered first
+engine.AddPlugin(plugin.Loopback("L2", m2))    // Registered second
+
+// Shutdown closes in reverse order: L2 first, then L1
+```
+
+**How it works:**
+- Track registration order of loopbacks
+- Later registrations are "deeper" in the pipeline
+- Close in reverse order (LIFO)
+
+**Limitation:** Can't detect actual message flow dependencies.
+
+## Updated Implementation Plan
+
+### Phase 1: Message Tracking Infrastructure
+1. Add `MessageTracker` struct with Enter/Exit/Drained
+2. Integrate with Merger (Enter on input)
+3. Integrate with Distributor (Exit on external output)
+4. Add tests for tracking accuracy
+
+### Phase 2: Distributor Loopback Support
+1. Add `loopbackOutputs` tracking
+2. Add `MarkLoopbackOutput(ch)` method
+3. Add `CloseLoopbackOutputs()` method
+4. Skip Exit() for loopback outputs in tracking
+
+### Phase 3: Merger Loopback Support
+1. Add `loopbackInputs` tracking
+2. Add `MarkLoopbackInput(ch)` method
+3. Add `ExternalInputsDone()` channel
+
+### Phase 4: Shutdown Orchestrator
+1. Create `ShutdownOrchestrator` struct
+2. Implement phased shutdown logic
+3. Add timeout and force-close handling
+4. Integrate with Engine
+
+### Phase 5: Engine Integration
+1. Add `MarkLoopbackOutput/Input` passthrough methods
+2. Create orchestrator in Engine.Start()
+3. Wire up shutdown coordination
+4. Add `OnShutdown` hook for plugins
+
+### Phase 6: Plugin Updates
+1. Update all loopback plugins to use mark methods
+2. Add Pipeline plugin (optional, for complex topologies)
+3. Update documentation
+
+### Phase 7: Testing
+1. Unit tests for each component
+2. Integration tests for simple loopback
+3. Integration tests for multiple loopbacks
+4. Integration tests for chained loopbacks
+5. Stress tests for race conditions
+6. Benchmark shutdown latency
+
+## Configuration Options
+
+```go
+type EngineConfig struct {
+    // ... existing fields ...
+
+    // ShutdownTimeout is the maximum time to wait for graceful shutdown.
+    // After this, loopbacks are force-closed.
+    // Default: 30s
+    ShutdownTimeout time.Duration
+
+    // DrainTimeout is the maximum time to wait for in-flight messages
+    // to drain after external inputs close.
+    // Default: ShutdownTimeout
+    DrainTimeout time.Duration
+
+    // ShutdownOrder controls how loopbacks are closed.
+    // - "simultaneous": Close all at once (default, simplest)
+    // - "reverse": Close in reverse registration order
+    // - "tracked": Use message tracking for optimal order
+    ShutdownOrder string
+}
+```
+
+## Summary: Complete Solution
+
+| Component | Responsibility |
+|-----------|----------------|
+| **MessageTracker** | Count in-flight messages, detect drain |
+| **Merger** | Track external vs loopback inputs |
+| **Distributor** | Track loopback outputs, support early close |
+| **ShutdownOrchestrator** | Coordinate phased shutdown |
+| **Engine** | Wire everything together |
+| **Pipeline Plugin** | Optional: explicit topology declaration |
+
+**Shutdown sequence (complete):**
+
+```
+Time    Event
+─────   ──────────────────────────────────────────────────
+t0      ctx.Cancel() called
+t1      Engine stops accepting new external messages
+t2      Wait for MessageTracker.Drained() OR timeout
+t3      If drained: All messages processed, loopbacks empty
+t4      If timeout: Force-close loopbacks
+t5      Close loopback outputs (simultaneous or ordered)
+t6      Loopback input goroutines detect closed channels
+t7      Merger completes (all inputs closed)
+t8      Router drains remaining messages
+t9      Distributor drains remaining messages
+t10     All outputs closed
+t11     Engine done channel closes
+```
+
 ## Conclusion
 
 The recommended solution uses **Engine-coordinated shutdown with Distributor involvement**:
 
-- **No heuristics:** Deterministic based on external input completion
+- **No heuristics:** Deterministic based on message tracking
 - **Simple API:** Existing plugin API unchanged
 - **Clean shutdown:** Loopback outputs closed explicitly, not timed out
 - **Distributor involved:** Leverages Distributor's knowledge of outputs
+- **Complex pipeline support:** MessageTracker + Pipeline plugin
+- **User responsibility:** None—orchestration is automatic
 
 This approach satisfies all user requirements:
 1. ✅ Simple API (plugin unchanged)
 2. ✅ Involves Distributor
-3. ✅ No heuristics (context/done channels)
+3. ✅ No heuristics (reference counting + done channels)
 4. ✅ Clean shutdown
+5. ✅ Handles complex multi-loopback pipelines
+6. ✅ Optional Pipeline plugin for explicit topology
