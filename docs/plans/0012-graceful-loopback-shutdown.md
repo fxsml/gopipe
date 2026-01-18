@@ -10,9 +10,10 @@ Enable graceful shutdown for pipelines with loopbacks without heuristics. Uses r
 ## Goals
 
 1. Deterministic shutdown without idle-time heuristics
-2. Works for simple and complex loopback topologies
-3. No API changes for existing loopback plugins
-4. Involves Distributor in shutdown coordination
+2. Works for all loopback topologies (simple, batch, group, chained)
+3. No API changes for existing loopback plugins (internal refactor)
+4. Components remain decoupled - Engine owns all tracking logic
+5. Minimal runtime overhead
 
 ## Problem
 
@@ -35,427 +36,452 @@ External Input → Merger → Router → Distributor → Loopback Output
 5. Router waits for Merger to close
 6. **DEADLOCK**
 
-## Solution: Reference Counting
+## Solution: Reference Counting with Engine Wrapping
 
-Track messages through the pipeline. When external inputs close AND in-flight count reaches zero, the pipeline is drained. Then close loopback outputs to break the cycle.
+Track messages through the pipeline via channel wrappers. Components remain decoupled - only Engine knows about tracking.
 
-**Why this works for all cases:**
-- Simple loopback: Count decreases as messages exit to external outputs
-- Multiple loopbacks: Same counting, all drain together
-- Chained loopbacks: Messages flow through, count tracks total in-flight
-- Mutual loopbacks: Count only reaches zero when cycle is empty
+### Architecture
 
-### MessageTracker
-
-```go
-type MessageTracker struct {
-    inFlight atomic.Int64
-    drained  chan struct{}
-    once     sync.Once
-}
-
-func (t *MessageTracker) Enter() {
-    t.inFlight.Add(1)
-}
-
-func (t *MessageTracker) Exit() {
-    if t.inFlight.Add(-1) == 0 {
-        t.once.Do(func() { close(t.drained) })
-    }
-}
-
-func (t *MessageTracker) Drained() <-chan struct{} {
-    return t.drained
-}
+```
+                      ┌──────────────────────────────────────────────────────────┐
+                      │                         Engine                            │
+                      │   ┌────────────────────────────────────────────────────┐  │
+                      │   │                 MessageTracker                      │  │
+                      │   │              (Enter / Exit / Drained)               │  │
+                      │   └────────────────────────────────────────────────────┘  │
+                      │          ▲                ▲                ▲              │
+                      │          │                │                │              │
+External ─► AddInput ─┼─► [wrap Enter] ─► Merger ─► Router ─► Distributor ───────┼─► AddOutput ─► [wrap Exit] ─► External
+                      │                              ▲                │           │
+                      │                              │                ▼           │
+Loopback ◄─ AddLoopbackInput ◄───────────────────────┴──── AddLoopbackOutput ◄───┘
+                      │          (no wrap)                      (no wrap)         │
+                      └──────────────────────────────────────────────────────────┘
 ```
 
-**Counting rules:**
-- `Enter()`: Called when message enters Merger from external input
-- `Exit()`: Called when message exits Distributor to external output
-- Loopback: Message re-enters Merger, but no new `Enter()` (already counted)
+### Counting Rules
+
+| Event | Action | Location |
+|-------|--------|----------|
+| Message enters from external input | `Enter()` | Engine input wrapper |
+| Message exits to external output | `Exit()` | Engine output wrapper |
+| Handler drops message (returns 0) | `Exit()` | Engine handler wrapper |
+| Handler multiplies message (returns N>1) | `Enter()` × (N-1) | Engine handler wrapper |
+| Message goes to loopback | Nothing | Not wrapped |
+| Message returns from loopback | Nothing | Not wrapped |
 
 ### Shutdown Sequence
 
 ```
-Time    Event
-─────   ──────────────────────────────────────
-t0      ctx.Cancel() called
-t1      External inputs close (user responsibility)
-t2      Wait for tracker.Drained() OR ShutdownTimeout
-t3      Close loopback outputs (breaks cycle)
-t4      Loopback inputs detect closed channels
-t5      Merger completes (all inputs closed)
-t6      Pipeline drains naturally
-t7      Engine done channel closes
+t0    ctx.Cancel()
+t1    Wait for tracker.Drained() OR ShutdownTimeout
+t2    Close loopback outputs (breaks cycle)
+t3    Loopback inputs see closed channel
+t4    Merger completes
+t5    Pipeline drains naturally
+t6    Engine done channel closes
 ```
 
-## Tasks
+## API Design
 
-### Task 1: Add MessageTracker
-
-**Goal:** Track in-flight messages through the pipeline.
-
-**Implementation:**
+### Engine (public)
 
 ```go
-// pipe/tracker.go
-package pipe
+// External - tracked
+func (e *Engine) AddInput(name string, matcher Matcher, ch <-chan *Message) (<-chan struct{}, error)
+func (e *Engine) AddOutput(name string, matcher Matcher) (<-chan *Message, error)
 
+// Loopback - not tracked, marked for shutdown coordination
+func (e *Engine) AddLoopbackInput(name string, matcher Matcher, ch <-chan *Message) (<-chan struct{}, error)
+func (e *Engine) AddLoopbackOutput(name string, matcher Matcher) (<-chan *Message, error)
+```
+
+### Distributor (internal)
+
+```go
+// Existing
+func (d *Distributor[T]) AddOutput(matcher func(T) bool) (<-chan T, error)
+
+// New
+func (d *Distributor[T]) AddLoopbackOutput(matcher func(T) bool) (<-chan T, error)
+func (d *Distributor[T]) CloseLoopbackOutputs()
+```
+
+### MessageTracker (new, internal)
+
+```go
 type MessageTracker struct {
     inFlight atomic.Int64
     drained  chan struct{}
     once     sync.Once
 }
 
-func NewMessageTracker() *MessageTracker {
-    return &MessageTracker{
-        drained: make(chan struct{}),
-    }
-}
-
-func (t *MessageTracker) Enter() { t.inFlight.Add(1) }
-
-func (t *MessageTracker) Exit() {
-    if t.inFlight.Add(-1) == 0 {
-        t.once.Do(func() { close(t.drained) })
-    }
-}
-
-func (t *MessageTracker) Drained() <-chan struct{} { return t.drained }
-
-func (t *MessageTracker) InFlight() int64 { return t.inFlight.Load() }
+func NewMessageTracker() *MessageTracker
+func (t *MessageTracker) Enter()
+func (t *MessageTracker) Exit()
+func (t *MessageTracker) Drained() <-chan struct{}
+func (t *MessageTracker) InFlight() int64
 ```
 
-**Files to Create:**
-- `pipe/tracker.go` - MessageTracker implementation
+## Testing Strategy
+
+Tests must be written **before** implementation to establish baseline behavior and detect regressions.
+
+### Phase 1: Baseline Tests (Pre-Implementation)
+
+Establish current behavior and performance baselines.
+
+#### 1.1 Shutdown Behavior Tests
+
+Create `message/engine_shutdown_test.go`:
+
+```go
+func TestEngine_ShutdownWithoutLoopback(t *testing.T)
+    // Baseline: Engine without loopback shuts down cleanly
+    // Measures: shutdown latency, message delivery guarantee
+
+func TestEngine_ShutdownWithLoopback_CurrentBehavior(t *testing.T)
+    // Documents current deadlock/timeout behavior
+    // Expected: Waits for ShutdownTimeout (slow)
+
+func TestEngine_LoopbackMessageDelivery(t *testing.T)
+    // Verifies all messages are delivered before shutdown
+    // Baseline for message loss detection
+```
+
+#### 1.2 Performance Benchmarks
+
+Create `message/engine_bench_test.go`:
+
+```go
+func BenchmarkEngine_Throughput_NoLoopback(b *testing.B)
+    // Baseline throughput without loopback
+    // Measures: messages/second
+
+func BenchmarkEngine_Throughput_WithLoopback(b *testing.B)
+    // Baseline throughput with loopback
+    // Measures: messages/second
+
+func BenchmarkEngine_ShutdownLatency_NoLoopback(b *testing.B)
+    // Baseline shutdown time without loopback
+    // Measures: time from cancel to done
+
+func BenchmarkEngine_ShutdownLatency_WithLoopback(b *testing.B)
+    // Current shutdown time (expect: ~ShutdownTimeout)
+    // Measures: time from cancel to done
+
+func BenchmarkEngine_MessageOverhead(b *testing.B)
+    // Baseline per-message overhead
+    // Measures: allocations, CPU time per message
+```
+
+#### 1.3 Component Benchmarks
+
+Create `pipe/distributor_bench_test.go`:
+
+```go
+func BenchmarkDistributor_Route(b *testing.B)
+    // Baseline routing performance
+
+func BenchmarkDistributor_Route_WithLoopbackCheck(b *testing.B)
+    // Simulates overhead of loopback output tracking
+```
+
+Create `pipe/tracker_bench_test.go`:
+
+```go
+func BenchmarkMessageTracker_EnterExit(b *testing.B)
+    // Atomic counter overhead
+
+func BenchmarkMessageTracker_EnterExit_Parallel(b *testing.B)
+    // Contention under high concurrency
+```
+
+### Phase 2: Implementation Tests
+
+Written alongside implementation, run against new code.
+
+#### 2.1 MessageTracker Unit Tests
+
+Create `pipe/tracker_test.go`:
+
+```go
+func TestMessageTracker_EnterExit(t *testing.T)
+    // Basic counting
+
+func TestMessageTracker_Drained_ClosesAtZero(t *testing.T)
+    // Drained channel closes when count reaches 0
+
+func TestMessageTracker_Drained_OnlyClosesOnce(t *testing.T)
+    // Multiple zero crossings don't panic
+
+func TestMessageTracker_Concurrent(t *testing.T)
+    // Race detector clean under concurrent access
+
+func TestMessageTracker_NegativeCount(t *testing.T)
+    // Count can go negative (multiply case), Drained still works
+```
+
+#### 2.2 Distributor Loopback Tests
+
+Add to `pipe/distributor_test.go`:
+
+```go
+func TestDistributor_AddLoopbackOutput(t *testing.T)
+    // Loopback output is tracked separately
+
+func TestDistributor_CloseLoopbackOutputs(t *testing.T)
+    // Only loopback outputs are closed
+
+func TestDistributor_CloseLoopbackOutputs_WhileRouting(t *testing.T)
+    // Safe to call during active routing
+
+func TestDistributor_MixedOutputs(t *testing.T)
+    // External and loopback outputs work together
+```
+
+#### 2.3 Engine Integration Tests
+
+Add to `message/engine_shutdown_test.go`:
+
+```go
+func TestEngine_GracefulShutdown_SimpleLoopback(t *testing.T)
+    // Single loopback, fast shutdown
+
+func TestEngine_GracefulShutdown_BatchLoopback(t *testing.T)
+    // BatchLoopback drains correctly
+
+func TestEngine_GracefulShutdown_GroupLoopback(t *testing.T)
+    // GroupLoopback drains correctly
+
+func TestEngine_GracefulShutdown_MultipleLoopbacks(t *testing.T)
+    // Multiple independent loopbacks
+
+func TestEngine_GracefulShutdown_ChainedLoopbacks(t *testing.T)
+    // L1 output feeds L2 input
+
+func TestEngine_GracefulShutdown_HandlerDropsMessages(t *testing.T)
+    // Handler returns 0 messages
+
+func TestEngine_GracefulShutdown_HandlerMultipliesMessages(t *testing.T)
+    // Handler returns N > 1 messages
+
+func TestEngine_GracefulShutdown_NoExternalInputs(t *testing.T)
+    // Only loopback inputs (edge case)
+
+func TestEngine_GracefulShutdown_Timeout(t *testing.T)
+    // Infinite loop handler triggers timeout
+
+func TestEngine_GracefulShutdown_NoMessageLoss(t *testing.T)
+    // All in-flight messages delivered
+```
+
+#### 2.4 Handler Wrapper Tests
+
+Create `message/tracked_handler_test.go`:
+
+```go
+func TestTrackedHandler_OneToOne(t *testing.T)
+    // Handler returns 1 message - no count change
+
+func TestTrackedHandler_Drop(t *testing.T)
+    // Handler returns 0 - Exit() called
+
+func TestTrackedHandler_Multiply(t *testing.T)
+    // Handler returns N - Enter() called N-1 times
+
+func TestTrackedHandler_Error(t *testing.T)
+    // Handler returns error - Exit() called
+
+func TestTrackedHandler_PreservesInterface(t *testing.T)
+    // EventType(), NewInput() still work
+```
+
+### Phase 3: Performance Validation
+
+Run after implementation to verify overhead is acceptable.
+
+#### 3.1 Overhead Analysis
+
+```go
+func BenchmarkEngine_Throughput_WithTracking(b *testing.B)
+    // Compare to baseline - target: <5% overhead
+
+func BenchmarkEngine_ShutdownLatency_WithTracking(b *testing.B)
+    // Compare to baseline - target: <100ms for drained pipeline
+
+func BenchmarkEngine_ChannelWrapper_Overhead(b *testing.B)
+    // Measure wrapper goroutine overhead
+    // Compare: direct channel vs wrapped channel
+```
+
+#### 3.2 Acceptance Criteria
+
+| Metric | Baseline | Target | Acceptable |
+|--------|----------|--------|------------|
+| Throughput overhead | 0% | <2% | <5% |
+| Per-message allocations | 0 extra | 0 extra | 1 extra |
+| Shutdown latency (drained) | N/A | <50ms | <100ms |
+| Shutdown latency (timeout) | ShutdownTimeout | ShutdownTimeout | Same |
+
+### Phase 4: Stress Tests
+
+```go
+func TestEngine_Stress_HighThroughput(t *testing.T)
+    // 100k messages, verify no race conditions
+
+func TestEngine_Stress_RapidShutdown(t *testing.T)
+    // Start/stop cycles, verify no goroutine leaks
+
+func TestEngine_Stress_ConcurrentLoopbacks(t *testing.T)
+    // Multiple loopbacks under high load
+```
+
+## Implementation Plan
+
+### Task 1: Baseline Tests & Benchmarks
+
+**Goal:** Establish current behavior before changes.
+
+**Files:**
+- `message/engine_shutdown_test.go` - Shutdown behavior tests
+- `message/engine_bench_test.go` - Engine benchmarks
+- `pipe/distributor_bench_test.go` - Distributor benchmarks
+
+**Acceptance:**
+- [ ] All baseline tests pass
+- [ ] Benchmarks produce stable results
+- [ ] Current loopback shutdown behavior documented
+
+### Task 2: MessageTracker
+
+**Goal:** Implement standalone counter.
+
+**Files:**
+- `pipe/tracker.go` - Implementation
 - `pipe/tracker_test.go` - Unit tests
+- `pipe/tracker_bench_test.go` - Benchmarks
 
-**Acceptance Criteria:**
-- [ ] Enter/Exit correctly track count
-- [ ] Drained() closes when count reaches zero
-- [ ] Thread-safe under concurrent access
-
-### Task 2: Add Loopback Tracking to Distributor
-
-**Goal:** Distributor tracks which outputs are loopbacks and can close them on demand.
-
-**Implementation:**
-
-```go
-type Distributor[T any] struct {
-    // ... existing fields ...
-    loopbackOutputs map[chan T]struct{}
-}
-
-func (d *Distributor[T]) MarkLoopbackOutput(ch <-chan T) {
-    d.mu.Lock()
-    defer d.mu.Unlock()
-    // Find the internal channel that matches this read-only channel
-    for _, out := range d.outputs {
-        if (<-chan T)(out.ch) == ch {
-            if d.loopbackOutputs == nil {
-                d.loopbackOutputs = make(map[chan T]struct{})
-            }
-            d.loopbackOutputs[out.ch] = struct{}{}
-            return
-        }
-    }
-}
-
-func (d *Distributor[T]) CloseLoopbackOutputs() {
-    d.mu.Lock()
-    defer d.mu.Unlock()
-    for ch := range d.loopbackOutputs {
-        close(ch)
-    }
-    // Remove from outputs to prevent double-close
-    d.loopbackOutputs = nil
-}
-
-func (d *Distributor[T]) IsLoopbackOutput(ch chan T) bool {
-    d.mu.RLock()
-    defer d.mu.RUnlock()
-    _, ok := d.loopbackOutputs[ch]
-    return ok
-}
-```
-
-**Files to Modify:**
-- `pipe/distributor.go` - Add loopback tracking
-
-**Acceptance Criteria:**
-- [ ] MarkLoopbackOutput correctly identifies loopback channels
-- [ ] CloseLoopbackOutputs closes only loopback outputs
-- [ ] Non-loopback outputs remain open
-
-### Task 3: Integrate Tracker with Distributor
-
-**Goal:** Distributor calls Exit() for external outputs only.
-
-**Implementation:**
-
-```go
-type DistributorConfig[T any] struct {
-    // ... existing fields ...
-    Tracker *MessageTracker
-}
-
-func (d *Distributor[T]) route(in T) {
-    // ... existing matching logic ...
-
-    for _, out := range outputs {
-        if out.matcher == nil || out.matcher(in) {
-            select {
-            case out.ch <- in:
-                // Track exit for non-loopback outputs
-                if d.cfg.Tracker != nil && !d.IsLoopbackOutput(out.ch) {
-                    d.cfg.Tracker.Exit()
-                }
-            case <-d.done:
-                d.cfg.ErrorHandler(in, ErrShutdownDropped)
-            }
-            return
-        }
-    }
-    // ... no match handling ...
-}
-```
-
-**Files to Modify:**
-- `pipe/distributor.go` - Integrate tracker
-
-**Acceptance Criteria:**
-- [ ] Exit() called for external outputs
-- [ ] Exit() NOT called for loopback outputs
-- [ ] Tracker optional (nil check)
-
-### Task 4: Integrate Tracker with Merger
-
-**Goal:** Merger calls Enter() for external inputs only.
-
-**Implementation:**
-
-```go
-type MergerConfig struct {
-    // ... existing fields ...
-    Tracker *MessageTracker
-}
-
-func (m *Merger[T]) AddInput(ch <-chan T) (<-chan struct{}, error) {
-    return m.addInput(ch, false)
-}
-
-func (m *Merger[T]) AddLoopbackInput(ch <-chan T) (<-chan struct{}, error) {
-    return m.addInput(ch, true)
-}
-
-func (m *Merger[T]) addInput(ch <-chan T, isLoopback bool) (<-chan struct{}, error) {
-    // ... existing logic ...
-    // Store isLoopback flag with input
-}
-
-func (m *Merger[T]) startInput(ch <-chan T, done chan struct{}, isLoopback bool) {
-    m.wg.Add(1)
-    go func() {
-        defer m.wg.Done()
-        if done != nil {
-            defer close(done)
-        }
-        for {
-            select {
-            case <-m.done:
-                return
-            case v, ok := <-ch:
-                if !ok {
-                    return
-                }
-                // Track entry for non-loopback inputs
-                if m.cfg.Tracker != nil && !isLoopback {
-                    m.cfg.Tracker.Enter()
-                }
-                select {
-                case m.out <- v:
-                case <-m.done:
-                    m.cfg.ErrorHandler(v, ErrShutdownDropped)
-                    return
-                }
-            }
-        }
-    }()
-}
-```
-
-**Files to Modify:**
-- `pipe/merger.go` - Add AddLoopbackInput, integrate tracker
-
-**Acceptance Criteria:**
-- [ ] Enter() called for external inputs
-- [ ] Enter() NOT called for loopback inputs
-- [ ] Tracker optional (nil check)
-
-### Task 5: Engine Shutdown Orchestration
-
-**Goal:** Engine coordinates shutdown using tracker.
-
-**Implementation:**
-
-```go
-type Engine struct {
-    // ... existing fields ...
-    tracker *pipe.MessageTracker
-}
-
-func NewEngine(cfg EngineConfig) *Engine {
-    tracker := pipe.NewMessageTracker()
-
-    e := &Engine{
-        tracker: tracker,
-        merger: pipe.NewMerger[*Message](pipe.MergerConfig{
-            Buffer:          cfg.BufferSize,
-            ShutdownTimeout: cfg.ShutdownTimeout,
-            Tracker:         tracker,
-        }),
-        distributor: pipe.NewDistributor(pipe.DistributorConfig[*Message]{
-            Buffer:  cfg.BufferSize,
-            Tracker: tracker,
-            // ... error handler ...
-        }),
-    }
-    return e
-}
-
-func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
-    // ... existing setup ...
-
-    go func() {
-        <-ctx.Done()
-
-        // Wait for pipeline to drain or timeout
-        select {
-        case <-e.tracker.Drained():
-            // Pipeline drained naturally
-        case <-time.After(e.cfg.ShutdownTimeout):
-            // Timeout - force close
-        }
-
-        // Close loopback outputs to break cycle
-        e.distributor.CloseLoopbackOutputs()
-    }()
-
-    // ... start pipeline ...
-}
-```
-
-**Files to Modify:**
-- `message/engine.go` - Create tracker, orchestrate shutdown
-
-**Acceptance Criteria:**
-- [ ] Tracker created and wired to merger/distributor
-- [ ] Shutdown waits for drain or timeout
-- [ ] Loopback outputs closed after drain
-
-### Task 6: Update Loopback Plugin
-
-**Goal:** Loopback plugin marks channels for shutdown coordination.
-
-**Implementation:**
-
-```go
-func Loopback(name string, matcher message.Matcher) message.Plugin {
-    return func(e *message.Engine) error {
-        out, err := e.AddOutput(name, matcher)
-        if err != nil {
-            return fmt.Errorf("loopback output: %w", err)
-        }
-
-        // Mark as loopback for shutdown coordination
-        e.MarkLoopbackOutput(out)
-
-        _, err = e.AddLoopbackInput(name, nil, out)
-        if err != nil {
-            return fmt.Errorf("loopback input: %w", err)
-        }
-        return nil
-    }
-}
-```
-
-**Engine methods:**
-
-```go
-func (e *Engine) MarkLoopbackOutput(ch <-chan *Message) {
-    e.distributor.MarkLoopbackOutput(ch)
-}
-
-func (e *Engine) AddLoopbackInput(name string, matcher Matcher, ch <-chan *Message) (<-chan struct{}, error) {
-    e.cfg.Logger.Info("Adding loopback input", "input", name)
-    filtered := e.applyTypedInputMatcher(name, ch, matcher)
-    return e.merger.AddLoopbackInput(filtered)
-}
-```
-
-**Files to Modify:**
-- `message/engine.go` - Add MarkLoopbackOutput, AddLoopbackInput
-- `message/plugin/loopback.go` - Use new methods
-
-**Acceptance Criteria:**
-- [ ] Loopback plugin uses MarkLoopbackOutput
-- [ ] Loopback plugin uses AddLoopbackInput
-- [ ] ProcessLoopback, BatchLoopback, GroupLoopback updated
-
-### Task 7: Testing
-
-**Goal:** Verify shutdown works correctly for all scenarios.
-
-**Test cases:**
-1. Simple loopback - fast shutdown
-2. Multiple independent loopbacks
-3. Chained loopbacks (L1 output → L2 input)
-4. No loopbacks (baseline)
-5. Shutdown timeout triggers force-close
-6. Infinite loop detection (handler always loops)
-
-**Files to Create:**
-- `pipe/tracker_test.go` - Tracker unit tests
-- `message/engine_shutdown_test.go` - Integration tests
-
-**Acceptance Criteria:**
-- [ ] All test cases pass
+**Acceptance:**
+- [ ] All unit tests pass
 - [ ] Race detector clean
-- [ ] Shutdown latency < 100ms for drained pipeline
+- [ ] Benchmark shows <10ns per Enter/Exit
+
+### Task 3: Distributor Loopback Support
+
+**Goal:** Add loopback output tracking.
+
+**Files:**
+- `pipe/distributor.go` - Add methods
+- `pipe/distributor_test.go` - Add tests
+
+**Acceptance:**
+- [ ] `AddLoopbackOutput` works
+- [ ] `CloseLoopbackOutputs` only closes loopback outputs
+- [ ] Existing tests still pass
+- [ ] No performance regression in routing benchmark
+
+### Task 4: Engine Channel Wrappers
+
+**Goal:** Wrap input/output channels for tracking.
+
+**Files:**
+- `message/engine.go` - Add wrapper methods
+- `message/tracking.go` - Wrapper implementations
+
+**Acceptance:**
+- [ ] External channels are wrapped
+- [ ] Loopback channels are not wrapped
+- [ ] No goroutine leaks (verified via test)
+
+### Task 5: Engine Handler Wrapper
+
+**Goal:** Wrap handlers for drop/multiply tracking.
+
+**Files:**
+- `message/tracked_handler.go` - Implementation
+- `message/tracked_handler_test.go` - Tests
+
+**Acceptance:**
+- [ ] Drop detection works
+- [ ] Multiply detection works
+- [ ] Handler interface preserved
+
+### Task 6: Engine Shutdown Orchestration
+
+**Goal:** Coordinate shutdown using tracker.
+
+**Files:**
+- `message/engine.go` - Update Start()
+
+**Acceptance:**
+- [ ] Shutdown waits for Drained() or timeout
+- [ ] Loopback outputs closed after drain
+- [ ] All integration tests pass
+
+### Task 7: Plugin Updates
+
+**Goal:** Update loopback plugins to use new API.
+
+**Files:**
+- `message/plugin/loopback.go` - Use AddLoopbackInput/Output
+
+**Acceptance:**
+- [ ] All loopback plugin tests pass
+- [ ] No API change for plugin users
+
+### Task 8: Performance Validation
+
+**Goal:** Verify overhead is acceptable.
+
+**Acceptance:**
+- [ ] Throughput overhead <5%
+- [ ] Per-message allocations: 0 extra (or 1 acceptable)
+- [ ] Shutdown latency <100ms for drained pipeline
+- [ ] All stress tests pass
 
 ## Implementation Order
 
 ```
-Task 1: MessageTracker
-    ↓
-Task 2: Distributor loopback tracking
-    ↓
-Task 3: Distributor + Tracker integration
-    ↓
-Task 4: Merger + Tracker integration
-    ↓
-Task 5: Engine orchestration
-    ↓
-Task 6: Plugin updates
-    ↓
-Task 7: Testing
+Task 1: Baseline Tests ◄── Must complete first
+    │
+    ▼
+Task 2: MessageTracker
+    │
+    ▼
+Task 3: Distributor Loopback
+    │
+    ├──────────────────┐
+    ▼                  ▼
+Task 4: Channel     Task 5: Handler
+Wrappers            Wrapper
+    │                  │
+    └────────┬─────────┘
+             ▼
+Task 6: Shutdown Orchestration
+             │
+             ▼
+Task 7: Plugin Updates
+             │
+             ▼
+Task 8: Performance Validation ◄── Must pass before merge
 ```
 
-## Edge Cases
+## Risks & Mitigations
 
-| Scenario | Behavior |
-|----------|----------|
-| No external inputs | Drained() returns immediately |
-| No loopbacks | Tracker still works, just counts external flow |
-| Infinite loop handler | Timeout triggers, force-close loopbacks |
-| Messages in buffer at shutdown | Delivered before outputs close |
-| Concurrent AddInput during shutdown | Rejected (merger closed) |
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Wrapper goroutine overhead | Performance regression | Benchmark before/after; consider sync approach if needed |
+| Negative count edge cases | Drained never closes | Test multiply scenarios; Drained closes at 0 crossing |
+| Race in CloseLoopbackOutputs | Panic or deadlock | Proper locking; stress test with race detector |
+| Handler wrapper breaks interface | Compilation errors | Test EventType/NewInput preservation |
 
 ## Acceptance Criteria
 
-- [ ] All tasks completed
-- [ ] Tests pass (`make test`)
-- [ ] Race detector clean
+- [ ] All Phase 1 baseline tests pass (before implementation)
+- [ ] All Phase 2 implementation tests pass
+- [ ] All Phase 3 performance benchmarks meet targets
+- [ ] All Phase 4 stress tests pass
+- [ ] Race detector clean (`go test -race`)
+- [ ] No goroutine leaks
 - [ ] CHANGELOG updated
-- [ ] Shutdown latency improved (benchmark)
