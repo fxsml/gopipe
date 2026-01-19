@@ -35,6 +35,9 @@ type EngineConfig struct {
 }
 
 func (c EngineConfig) parse() EngineConfig {
+	if c.Marshaler == nil {
+		c.Marshaler = NewJSONMarshaler()
+	}
 	if c.ErrorHandler == nil {
 		c.ErrorHandler = func(msg *Message, err error) {}
 	}
