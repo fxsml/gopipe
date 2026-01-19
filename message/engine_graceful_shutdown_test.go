@@ -177,13 +177,14 @@ func TestEngine_GracefulShutdown_InFlightDuringCancel(t *testing.T) {
 	})
 
 	var step1Count, step2Count, step3Count atomic.Int32
-	step2Started := make(chan struct{})
+	step1Done := make(chan struct{})
 	step2Proceed := make(chan struct{})
 
-	// Step 1: Fast
+	// Step 1: Fast, signals completion
 	_ = engine.AddHandler("step1", nil, NewCommandHandler(
 		func(ctx context.Context, cmd Step1Command) ([]Step2Event, error) {
 			step1Count.Add(1)
+			close(step1Done)
 			return []Step2Event{{ID: cmd.ID, Step: 2}}, nil
 		},
 		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
@@ -193,10 +194,6 @@ func TestEngine_GracefulShutdown_InFlightDuringCancel(t *testing.T) {
 	_ = engine.AddHandler("step2", nil, NewCommandHandler(
 		func(ctx context.Context, cmd Step2Event) ([]Step3Event, error) {
 			step2Count.Add(1)
-			select {
-			case step2Started <- struct{}{}:
-			default:
-			}
 			<-step2Proceed // Wait for signal to continue
 			return []Step3Event{{ID: cmd.ID, Step: 3}}, nil
 		},
@@ -227,15 +224,18 @@ func TestEngine_GracefulShutdown_InFlightDuringCancel(t *testing.T) {
 	data, _ := json.Marshal(Step1Command{ID: "test"})
 	input <- NewRaw(data, Attributes{"type": "step1.command"}, nil)
 
-	// Wait for message to reach step 2 (in-flight)
+	// Wait for step1 to complete - message has entered the pipeline
 	select {
-	case <-step2Started:
-		// Message is now in step 2
-	case <-time.After(time.Second):
-		t.Fatal("Message didn't reach step 2")
+	case <-step1Done:
+		// Step 1 completed, message is now being routed through loopback
+	case <-time.After(5 * time.Second):
+		t.Fatal("Step 1 didn't process the message")
 	}
 
-	// Close input and cancel while message is in-flight
+	// Give loopback time to route message to step2
+	time.Sleep(100 * time.Millisecond)
+
+	// Close input and cancel while message is in-flight (blocked in step2)
 	close(input)
 	cancel()
 

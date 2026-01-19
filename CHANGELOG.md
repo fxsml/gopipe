@@ -5,6 +5,16 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.2] - 2026-01-19
+
+### Fixed
+
+- **message:** Graceful loopback shutdown - messages in loopback pipelines now drain properly before engine shutdown (fixes #81)
+  - Added `messageTracker` for tracking in-flight messages through loopbacks
+  - Added `AddLoopbackOutput` and `AddLoopbackInput` methods on Engine for explicit loopback wiring
+  - Loopback outputs close only after pipeline is drained, preventing message loss
+  - Added comprehensive tests and benchmarks for graceful shutdown scenarios
+
 ## [0.13.1] - 2026-01-16
 
 ### Fixed
