@@ -1,0 +1,15 @@
+{
+  "project": {
+    "name": "gopipe",
+    "description": "Go channel pipeline library with CloudEvents support"
+  },
+  "procedures": {
+    "git": "docs/procedures/git.md",
+    "go": "docs/procedures/go.md",
+    "documentation": "docs/procedures/documentation.md",
+    "planning": "docs/procedures/planning.md",
+    "adr": "docs/procedures/adr.md",
+    "release": "docs/procedures/release.md",
+    "feature-release": "docs/procedures/feature-release.md"
+  }
+}

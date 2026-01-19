@@ -17,6 +17,39 @@ make vet    # Run linters
 3. **Document before push** — Features, ADRs, CHANGELOG
 4. **Test before push** — `make test && make build && make vet`
 
+## Claude Code Integration
+
+### Slash Commands
+
+Use slash commands for common workflows:
+
+| Command | Description |
+|---------|-------------|
+| `/release-feature BRANCH` | Merge feature branch to develop |
+| `/release VERSION` | Release develop to main with tags |
+| `/hotfix NAME` | Create and release hotfix |
+| `/create-feature NAME` | Create feature branch |
+| `/verify` | Run pre-push checks |
+| `/docs-lint` | Check documentation quality |
+| `/create-adr TITLE` | Create new ADR |
+| `/create-plan TITLE` | Create implementation plan |
+| `/changelog add TYPE DESC` | Add CHANGELOG entry |
+| `/review-pr [NUMBER]` | Review PR against standards |
+
+Commands are in `.claude/commands/` and follow procedures from `docs/procedures/`. They require approval for destructive operations.
+
+### Skills (Auto-Applied)
+
+Domain expertise is automatically applied via skills in `.claude/skills/`:
+
+| Skill | Expertise Area |
+|-------|----------------|
+| `managing-git-workflow` | Git flow, branch naming, multi-module tagging, approval gates |
+| `developing-go-code` | Go standards, testing, common mistakes to avoid |
+| `building-message-pipelines` | Message package architecture, Engine, Router, Handler patterns |
+
+Skills are loaded automatically when relevant to the conversation context.
+
 ## Package Overview
 
 | Package | Purpose | Key Types |

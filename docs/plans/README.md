@@ -4,6 +4,8 @@
 
 | Plan | Status | Description |
 |------|--------|-------------|
+| [0013-claude-commands](0013-claude-commands.md) | Implemented | Claude Code commands and skills integration |
+| [0012-graceful-loopback-shutdown](0012-graceful-loopback-shutdown.md) | Implemented | Graceful shutdown for loopback pipelines |
 | [message-refactoring](message-refactoring.md) | Implemented | CloudEvents message handling |
 
 ## Agent Guidance
