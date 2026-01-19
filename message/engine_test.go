@@ -1113,3 +1113,68 @@ func TestEngine_NoGoroutineLeakOnShutdown(t *testing.T) {
 			initialGoroutines, finalGoroutines, leaked)
 	}
 }
+
+func TestEngine_DefaultMarshaler(t *testing.T) {
+	// Engine should default to JSONMarshaler when Marshaler is not set.
+	// This ensures raw inputs can be processed without explicit marshaler config.
+	// See: https://github.com/fxsml/gopipe/issues/85
+	engine := NewEngine(EngineConfig{})
+
+	// Register handler
+	handler := NewCommandHandler(
+		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
+		},
+		CommandHandlerConfig{
+			Source: "/test",
+			Naming: KebabNaming,
+		},
+	)
+	_ = engine.AddHandler("test-handler", nil, handler)
+
+	// Setup raw I/O (this is where the panic occurred with nil marshaler)
+	input := make(chan *RawMessage, 1)
+	_, _ = engine.AddRawInput("test-input", nil, input)
+	output, _ := engine.AddRawOutput("test-output", nil)
+
+	// Start engine
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done, err := engine.Start(ctx)
+	if err != nil {
+		t.Fatalf("failed to start engine: %v", err)
+	}
+
+	// Send message - this would panic with nil marshaler
+	data, _ := json.Marshal(TestCommand{ID: "456", Name: "default-marshaler-test"})
+	input <- &RawMessage{
+		Data: data,
+		Attributes: Attributes{
+			"type": "test.command",
+		},
+	}
+
+	// Receive output
+	select {
+	case out := <-output:
+		var event TestEvent
+		if err := json.Unmarshal(out.Data, &event); err != nil {
+			t.Fatalf("failed to unmarshal output: %v", err)
+		}
+		if event.ID != "456" || event.Status != "done" {
+			t.Errorf("unexpected event: %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for output")
+	}
+
+	// Shutdown
+	close(input)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for engine to stop")
+	}
+}
