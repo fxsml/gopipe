@@ -3,6 +3,9 @@ package message
 import (
 	"context"
 	"log/slog"
+	"reflect"
+	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/fxsml/gopipe/pipe"
@@ -38,8 +41,8 @@ type Router struct {
 
 // RouterConfig configures the message router.
 type RouterConfig struct {
-	BufferSize   int // Output channel buffer size (default: 100)
-	Concurrency  int // Number of concurrent handler invocations (default: 1)
+	BufferSize   int          // Output channel buffer size (default: 100)
+	Concurrency  int          // Number of concurrent handler invocations (default: 1)
 	ErrorHandler ErrorHandler // Default: no-op (errors logged via Logger)
 	Logger       Logger       // Default: slog.Default()
 }
@@ -179,3 +182,63 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 
 // Verify Router implements InputRegistry.
 var _ InputRegistry = (*Router)(nil)
+
+// funcName extracts a readable name from a function.
+// For package-level functions, returns "package.Function" (e.g., "context.Background").
+// For closures, returns the factory function name (e.g., "factory" from "factory.func1").
+func funcName(f any) string {
+	name := runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
+
+	// Strip generic type parameters [...] to handle closures from generic functions.
+	// Example: "pkg.GenericFunc[...].func1" -> "pkg.GenericFunc.func1"
+	if idx := strings.Index(name, "["); idx >= 0 {
+		if end := strings.LastIndex(name, "]"); end > idx {
+			name = name[:idx] + name[end+1:]
+		}
+	}
+
+	// Find package boundary (after last /)
+	// "github.com/user/repo/pkg.Func" -> "pkg.Func"
+	pkgPart := name
+	if slash := strings.LastIndex(name, "/"); slash >= 0 {
+		pkgPart = name[slash+1:]
+	}
+
+	if dot := strings.LastIndex(pkgPart, "."); dot >= 0 {
+		suffix := pkgPart[dot+1:]
+		if isClosureSuffix(suffix) {
+			// Closure: traverse up past any intermediate funcN to find the factory name
+			parent := pkgPart[:dot]
+			for {
+				dot2 := strings.LastIndex(parent, ".")
+				if dot2 < 0 {
+					// Reached the end; if still a closure suffix, return "custom"
+					if isClosureSuffix(parent) {
+						return "custom"
+					}
+					return parent
+				}
+				segment := parent[dot2+1:]
+				if !isClosureSuffix(segment) {
+					return segment
+				}
+				parent = parent[:dot2]
+			}
+		}
+		// Package-level function: return package.FunctionName
+		return pkgPart
+	}
+	return "custom"
+}
+
+// isClosureSuffix checks if a name segment is a closure indicator.
+// Go names closures as "func1", "func2", etc. or just numeric like "1", "2".
+func isClosureSuffix(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	if s[0] >= '0' && s[0] <= '9' {
+		return true
+	}
+	return len(s) > 4 && s[:4] == "func" && s[4] >= '0' && s[4] <= '9'
+}
