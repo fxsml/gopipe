@@ -79,6 +79,7 @@ func NewRouter(cfg RouterConfig) *Router {
 // The optional matcher is applied after type matching.
 func (r *Router) AddHandler(name string, matcher Matcher, h Handler) error {
 	r.logger.Info("Adding handler",
+		"component", "router",
 		"handler", name,
 		"event_type", h.EventType())
 	r.mu.Lock()
@@ -97,7 +98,7 @@ func (r *Router) Use(m ...Middleware) error {
 		return ErrAlreadyStarted
 	}
 	for _, mw := range m {
-		r.logger.Info("Using middleware", "middleware", funcName(mw))
+		r.logger.Info("Using middleware", "component", "router", "middleware", funcName(mw))
 	}
 	r.middleware = append(r.middleware, m...)
 	return nil
@@ -125,9 +126,6 @@ func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message,
 		Concurrency: r.concurrency,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
-			r.logger.Error("Handler error",
-				"error", err,
-				"attributes", msg.Attributes)
 			r.errorHandler(msg, err)
 		},
 	}
@@ -158,23 +156,38 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 	if !ok {
 		err := ErrNoHandler
 		msg.Nack(err)
+		r.logger.Error("Routing message failed",
+			"component", "router",
+			"error", err,
+			"attributes", msg.Attributes)
 		return nil, err
 	}
 
 	if entry.matcher != nil && !entry.matcher.Match(msg.Attributes) {
 		err := ErrHandlerRejected
 		msg.Nack(err)
+		r.logger.Error("Matching handler failed",
+			"component", "router",
+			"handler", entry.name,
+			"error", err,
+			"attributes", msg.Attributes)
 		return nil, err
 	}
 
 	outputs, err := entry.handler.Handle(ctx, msg)
 	if err != nil {
 		msg.Nack(err)
+		r.logger.Error("Executing handler failed",
+			"component", "router",
+			"handler", entry.name,
+			"error", err,
+			"attributes", msg.Attributes)
 		return nil, err
 	}
 
 	msg.Ack()
 	r.logger.Debug("Message handled successfully",
+		"component", "router",
 		"handler", entry.name,
 		"attributes", msg.Attributes)
 	return outputs, nil
