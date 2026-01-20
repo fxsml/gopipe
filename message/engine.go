@@ -22,6 +22,8 @@ type EngineConfig struct {
 	Marshaler Marshaler
 	// BufferSize is the channel buffer size (default: 100).
 	BufferSize int
+	// Concurrency is the number of concurrent handler invocations (default: 1).
+	Concurrency int
 	// ErrorHandler is called on processing errors (default: no-op).
 	// Errors are logged via Logger; use ErrorHandler for custom handling
 	// like metrics, alerting, or recovery logic.
@@ -46,6 +48,9 @@ func (c EngineConfig) parse() EngineConfig {
 	}
 	if c.BufferSize <= 0 {
 		c.BufferSize = 100
+	}
+	if c.Concurrency <= 0 {
+		c.Concurrency = 1
 	}
 	return c
 }
@@ -81,6 +86,7 @@ func NewEngine(cfg EngineConfig) *Engine {
 		router: NewRouter(RouterConfig{
 			ErrorHandler: cfg.ErrorHandler,
 			BufferSize:   cfg.BufferSize,
+			Concurrency:  cfg.Concurrency,
 			Logger:       cfg.Logger,
 		}),
 	}
@@ -256,7 +262,8 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 
 	e.cfg.Logger.Info("Starting engine",
 		"component", "engine",
-		"buffer_size", e.cfg.BufferSize)
+		"buffer_size", e.cfg.BufferSize,
+		"concurrency", e.cfg.Concurrency)
 
 	// Shutdown orchestration goroutine
 	go func() {
