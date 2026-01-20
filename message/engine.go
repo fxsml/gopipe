@@ -104,7 +104,8 @@ func NewEngine(cfg EngineConfig) *Engine {
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			msg.Nack(err)
-			e.cfg.Logger.Warn("Distributor error",
+			e.cfg.Logger.Warn("Message distribution failed",
+				"component", "distributor",
 				"error", err,
 				"attributes", msg.Attributes)
 			e.cfg.ErrorHandler(msg, err)
@@ -138,7 +139,7 @@ func (e *Engine) Use(m ...Middleware) error {
 // completion. Cancel the context to trigger shutdown.
 func (e *Engine) AddPlugin(plugins ...Plugin) error {
 	for _, p := range plugins {
-		e.cfg.Logger.Info("Adding plugin", "plugin", funcName(p))
+		e.cfg.Logger.Info("Adding plugin", "component", "engine", "plugin", funcName(p))
 		if err := p(e); err != nil {
 			return err
 		}
@@ -151,7 +152,7 @@ func (e *Engine) AddPlugin(plugins ...Plugin) error {
 // Use for internal messaging, testing, or when data is already typed.
 // Can be called before or after Start().
 func (e *Engine) AddInput(name string, matcher Matcher, ch <-chan *Message) (<-chan struct{}, error) {
-	e.cfg.Logger.Info("Adding input", "input", name)
+	e.cfg.Logger.Info("Adding input", "component", "engine", "input", name)
 	filtered := e.applyTypedInputMatcher(name, ch, matcher)
 	wrapped := e.wrapInputChannel(filtered)
 	return e.merger.AddInput(wrapped)
@@ -162,7 +163,7 @@ func (e *Engine) AddInput(name string, matcher Matcher, ch <-chan *Message) (<-c
 // Use for broker integration (Kafka, NATS, RabbitMQ, etc.).
 // Can be called before or after Start().
 func (e *Engine) AddRawInput(name string, matcher Matcher, ch <-chan *RawMessage) (<-chan struct{}, error) {
-	e.cfg.Logger.Info("Adding raw input", "input", name)
+	e.cfg.Logger.Info("Adding raw input", "component", "engine", "input", name)
 	filtered := e.applyRawInputMatcher(name, ch, matcher)
 	wrapped := e.wrapRawInputChannel(filtered)
 	return e.merger.AddInput(e.unmarshal(wrapped))
@@ -172,7 +173,7 @@ func (e *Engine) AddRawInput(name string, matcher Matcher, ch <-chan *RawMessage
 // Loopback inputs are NOT tracked by the message tracker - they are internal cycles.
 // Use the plugin.Loopback variants instead of calling this directly.
 func (e *Engine) AddLoopbackInput(name string, matcher Matcher, ch <-chan *Message) (<-chan struct{}, error) {
-	e.cfg.Logger.Info("Adding loopback input", "input", name)
+	e.cfg.Logger.Info("Adding loopback input", "component", "engine", "input", name)
 	filtered := e.applyTypedInputMatcher(name, ch, matcher)
 	// No wrapping - loopback messages are not tracked
 	return e.merger.AddInput(filtered)
@@ -183,7 +184,7 @@ func (e *Engine) AddLoopbackInput(name string, matcher Matcher, ch <-chan *Messa
 // Use for internal messaging or when you need typed access to messages.
 // Can be called before or after Start().
 func (e *Engine) AddOutput(name string, matcher Matcher) (<-chan *Message, error) {
-	e.cfg.Logger.Info("Adding output", "output", name)
+	e.cfg.Logger.Info("Adding output", "component", "engine", "output", name)
 	out, err := e.distributor.AddOutput(func(msg *Message) bool {
 		return matcher == nil || matcher.Match(msg.Attributes)
 	})
@@ -198,7 +199,7 @@ func (e *Engine) AddOutput(name string, matcher Matcher) (<-chan *Message, error
 // Use for broker integration (Kafka, NATS, RabbitMQ, etc.).
 // Can be called before or after Start().
 func (e *Engine) AddRawOutput(name string, matcher Matcher) (<-chan *RawMessage, error) {
-	e.cfg.Logger.Info("Adding raw output", "output", name)
+	e.cfg.Logger.Info("Adding raw output", "component", "engine", "output", name)
 	out, err := e.distributor.AddOutput(func(msg *Message) bool {
 		return matcher == nil || matcher.Match(msg.Attributes)
 	})
@@ -214,7 +215,7 @@ func (e *Engine) AddRawOutput(name string, matcher Matcher) (<-chan *RawMessage,
 // The Engine wraps these outputs to control when they close during shutdown.
 // Use the plugin.Loopback variants instead of calling this directly.
 func (e *Engine) AddLoopbackOutput(name string, matcher Matcher) (<-chan *Message, error) {
-	e.cfg.Logger.Info("Adding loopback output", "output", name)
+	e.cfg.Logger.Info("Adding loopback output", "component", "engine", "output", name)
 
 	// Use regular distributor output
 	distOut, err := e.distributor.AddOutput(func(msg *Message) bool {
@@ -254,6 +255,7 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 	e.mu.Unlock()
 
 	e.cfg.Logger.Info("Starting engine",
+		"component", "engine",
 		"buffer_size", e.cfg.BufferSize)
 
 	// Shutdown orchestration goroutine
@@ -267,13 +269,13 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		if e.cfg.ShutdownTimeout > 0 {
 			select {
 			case <-e.tracker.drained():
-				e.cfg.Logger.Info("Pipeline drained, closing loopback outputs")
+				e.cfg.Logger.Info("Pipeline drained, closing loopback outputs", "component", "engine")
 			case <-time.After(e.cfg.ShutdownTimeout):
-				e.cfg.Logger.Warn("Shutdown timeout, forcing loopback close")
+				e.cfg.Logger.Warn("Shutdown timeout, forcing loopback close", "component", "engine")
 			}
 		} else {
 			<-e.tracker.drained()
-			e.cfg.Logger.Info("Pipeline drained, closing loopback outputs")
+			e.cfg.Logger.Info("Pipeline drained, closing loopback outputs", "component", "engine")
 		}
 
 		// Close loopback outputs to break cycles
@@ -325,6 +327,8 @@ func (e *Engine) applyTypedInputMatcher(name string, in <-chan *Message, matcher
 		err := ErrInputRejected
 		msg.Nack(err)
 		e.cfg.Logger.Warn("Input message rejected by matcher",
+			"component", "engine",
+			"error", err,
 			"input", name,
 			"attributes", msg.Attributes)
 		e.cfg.ErrorHandler(msg, ErrInputRejected)
@@ -345,6 +349,8 @@ func (e *Engine) applyRawInputMatcher(name string, in <-chan *RawMessage, matche
 		err := ErrInputRejected
 		msg.Nack(err)
 		e.cfg.Logger.Warn("Raw input message rejected by matcher",
+			"component", "engine",
+			"error", err,
 			"input", name,
 			"attributes", msg.Attributes)
 		e.handleRawError(msg, ErrInputRejected)
@@ -371,8 +377,11 @@ func (e *Engine) unmarshal(in <-chan *RawMessage) <-chan *Message {
 		// This prevents race where unmarshal and merger timeout simultaneously,
 		// potentially dropping messages buffered in unmarshal's output.
 		ErrorHandler: func(in any, err error) {
-			e.cfg.Logger.Error("Unmarshaling raw message failed", "error", err)
 			raw := in.(*RawMessage)
+			e.cfg.Logger.Error("Unmarshaling raw message failed",
+				"component", "unmarshaler",
+				"error", err,
+				"attributes", raw.Attributes)
 			raw.Nack(err)
 			e.handleRawError(raw, err)
 		},
@@ -392,7 +401,10 @@ func (e *Engine) marshal(in <-chan *Message) <-chan *RawMessage {
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			msg.Nack(err)
-			e.cfg.Logger.Error("Marshaling message failed", "error", err)
+			e.cfg.Logger.Error("Marshaling message failed",
+				"component", "marshaler",
+				"error", err,
+				"attributes", msg.Attributes)
 			e.cfg.ErrorHandler(msg, err)
 		},
 	})
