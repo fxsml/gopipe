@@ -109,6 +109,15 @@ func NewEngine(cfg EngineConfig) *Engine {
 	e.merger = pipe.NewMerger[*Message](pipe.MergerConfig{
 		Buffer:          cfg.BufferSize,
 		ShutdownTimeout: cfg.ShutdownTimeout,
+		ErrorHandler: func(in any, err error) {
+			msg := in.(*Message)
+			msg.Nack(err)
+			e.cfg.Logger.Warn("Message merge failed",
+				"component", "engine",
+				"error", err,
+				"attributes", msg.Attributes)
+			e.cfg.ErrorHandler(msg, err)
+		},
 	})
 
 	// Create distributor upfront - AddOutput works before Distribute()
@@ -120,7 +129,7 @@ func NewEngine(cfg EngineConfig) *Engine {
 			msg := in.(*Message)
 			msg.Nack(err)
 			e.cfg.Logger.Warn("Message distribution failed",
-				"component", "distributor",
+				"component", "engine",
 				"error", err,
 				"attributes", msg.Attributes)
 			e.cfg.ErrorHandler(msg, err)

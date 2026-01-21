@@ -248,6 +248,14 @@ func (r *Router) pipeMultiPool(ctx context.Context, in <-chan *Message, fn Proce
 
 	merger := pipe.NewMerger[*Message](pipe.MergerConfig{
 		Buffer: r.bufferSize,
+		ErrorHandler: func(in any, err error) {
+			msg := in.(*Message)
+			r.logger.Warn("Message merge failed",
+				"component", "router",
+				"error", err,
+				"attributes", msg.Attributes)
+			r.errorHandler(msg, err)
+		},
 	})
 
 	// Wire: Distributor output(poolMatcher) → ProcessPipe(workers) → Merger input
