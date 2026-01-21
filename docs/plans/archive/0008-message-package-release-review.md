@@ -1,7 +1,8 @@
 # Plan 0008: Message Package Release Review
 
-**Status:** Review
+**Status:** Complete
 **Type:** Summary / Release Checklist
+**Design Evolution:** [0008-marshal-unmarshal-pipes.decisions.md](0008-marshal-unmarshal-pipes.decisions.md), [0008-handler-naming-consistency.decisions.md](0008-handler-naming-consistency.decisions.md)
 
 ## Executive Summary
 

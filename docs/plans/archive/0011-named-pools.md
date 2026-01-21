@@ -1,6 +1,6 @@
-# Named Pools for Per-Handler Concurrency Control
+# Plan 0011: Named Pools for Per-Handler Concurrency Control
 
-**Status:** Implemented
+**Status:** Complete
 
 ## Overview
 

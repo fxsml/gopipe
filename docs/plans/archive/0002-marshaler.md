@@ -1,6 +1,6 @@
 # Plan 0002: Codec and NamingStrategy
 
-**Status:** Proposed
+**Status:** Complete
 **Related ADRs:** [0021](../adr/0021-codec-marshaling-pattern.md), [0022](../adr/0022-message-package-redesign.md)
 **Required By:** [Plan 0001](0001-message-engine.md) (Message Engine)
 

@@ -92,6 +92,72 @@ Large initiatives should be divided into phases using dependencies:
 
 Each plan should be independently implementable after its dependencies.
 
+## Design Evolution Documents
+
+For plans with significant design decisions or options analysis, create companion `.decisions.md` files:
+
+```
+docs/plans/archive/
+├── NNNN-plan-title.md                  # Main plan (required)
+├── NNNN-decision-topic.decisions.md    # Related decision (optional)
+```
+
+**Convention:**
+- Main plan and decisions files share the same number prefix
+- Decisions file name describes the specific topic (may differ from plan title)
+- One plan can have multiple decisions files
+
+**Example:**
+```
+0006-engine-raw-api-simplification.md
+0006-config-convention.decisions.md
+
+0008-message-package-release-review.md
+0008-marshal-unmarshal-pipes.decisions.md
+0008-handler-naming-consistency.decisions.md
+```
+
+### Design Evolution Structure
+
+```markdown
+# Plan NNNN: Title - Design Evolution
+
+**Status:** Resolved | Open | Superseded
+**Related Plan:** [NNNN-title.md](NNNN-title.md)
+
+## Context
+
+Brief description of what design questions were being explored.
+
+## Decision
+
+Summary of what was decided and why (if Resolved).
+
+---
+
+## Options Considered
+
+### Option A: Name
+**Pros:** ...
+**Cons:** ...
+
+### Option B: Name
+...
+
+## Implementation Notes
+
+Any implementation-specific details discovered during development.
+```
+
+### When to Create Design Evolution Documents
+
+- Multiple viable approaches were evaluated
+- Significant trade-offs needed documentation
+- Rejected alternatives should be preserved for future reference
+- Design evolved significantly during implementation
+
+Link from main plan using: `**Design Evolution:** [NNNN-title.decisions.md](NNNN-title.decisions.md)`
+
 ## Related Documentation
 
 - [Documentation Procedures](documentation.md) - Templates

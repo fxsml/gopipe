@@ -1,9 +1,19 @@
-# Plan 0010: Handler Naming Consistency
+# Plan 0008: Handler Naming Consistency - Design Evolution
 
-**Status:** Implemented
-**Created:** 2026-01-02
+**Status:** Resolved
+**Related Plan:** [0008-message-package-release-review.md](0008-message-package-release-review.md)
 
-## Problem
+## Context
+
+Analysis of naming inconsistency between `Handler.NewInput()` and `TypeRegistry.NewInstance()`. Both methods create typed instances for unmarshaling.
+
+## Decision
+
+**Option D: Rename TypeRegistry to InputRegistry** was chosen. Renamed `TypeRegistry` to `InputRegistry` and `NewInstance` to `NewInput` for naming consistency while preserving the meaningful signature difference.
+
+---
+
+## Problem (Historical)
 
 Inconsistent naming between `Handler.NewInput()` and `TypeRegistry.NewInstance()`:
 

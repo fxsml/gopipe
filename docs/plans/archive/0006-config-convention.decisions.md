@@ -1,9 +1,29 @@
-# Config Convention Analysis
+# Plan 0006: Config Convention - Design Evolution
 
-**Status:** Analysis
-**Related:** Plan 0006
+**Status:** Resolved
+**Related Plan:** [0006-engine-raw-api-simplification.md](0006-engine-raw-api-simplification.md)
 
-## Current State
+## Context
+
+Analysis of config struct patterns for Engine methods. Evaluated whether to keep verbose config structs or simplify to direct parameters.
+
+## Decision
+
+**Option 2: Matcher as Parameter** was chosen. The API uses direct Matcher parameters instead of config structs for Add* methods:
+
+```go
+AddOutput(name string, matcher Matcher) (<-chan *Message, error)
+AddInput(name string, matcher Matcher, ch <-chan *Message) (<-chan struct{}, error)
+AddHandler(name string, matcher Matcher, h Handler) error
+```
+
+This provides concise API while `name` parameter enables tracing/metrics.
+
+---
+
+## Analysis (Historical)
+
+### Original State
 
 ### Engine Method Configs
 

@@ -1,6 +1,6 @@
 # Plan 0004: Router Extraction
 
-**Status:** Proposed
+**Status:** Complete
 **Related ADRs:** -
 **Depends On:** [Plan 0001](0001-message-engine.md)
 

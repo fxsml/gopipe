@@ -1,7 +1,15 @@
-# State: Marshal/Unmarshal Public Pipe Components
+# Plan 0008: Marshal/Unmarshal Pipes - Design Evolution
 
-**Status:** Implemented ✅
-**Related:** Plan 0008 (Release Review)
+**Status:** Resolved
+**Related Plan:** [0008-message-package-release-review.md](0008-message-package-release-review.md)
+
+## Context
+
+Design decisions for exposing marshal/unmarshal as standalone public pipes. Focus on simplifying the TypeRegistry interface to minimum viable API.
+
+## Decision
+
+Simplified TypeRegistry to single method `NewInstance(ceType string) any`. Removed overengineered abstractions (TypeEntry, RegistryHandler, etc.).
 
 ---
 
