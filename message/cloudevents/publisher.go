@@ -47,7 +47,8 @@ func NewPublisher(sender protocol.Sender, cfg PublisherConfig) *Publisher {
 		Concurrency: cfg.Concurrency,
 		ErrorHandler: func(in any, err error) {
 			raw, _ := in.(*message.RawMessage)
-			logger.Error("Publisher error",
+			logger.Error("Message send failed",
+				"component", "publisher",
 				"error", err,
 				"attributes", raw.Attributes)
 			if cfg.ErrorHandler != nil {

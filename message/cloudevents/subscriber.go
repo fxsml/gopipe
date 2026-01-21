@@ -55,7 +55,8 @@ func NewSubscriber(receiver protocol.Receiver, cfg SubscriberConfig) *Subscriber
 		Concurrency: cfg.Concurrency,
 		BufferSize:  cfg.Buffer,
 		ErrorHandler: func(_ any, err error) {
-			logger.Error("Subscriber error",
+			logger.Error("Message receive failed",
+				"component", "subscriber",
 				"error", err)
 			if cfg.ErrorHandler != nil {
 				cfg.ErrorHandler(err)
@@ -116,11 +117,15 @@ func (s *Subscriber) receive(ctx context.Context) ([]*message.RawMessage, error)
 	// Convert binding.Message to cloudevents.Event
 	event, err := binding.ToEvent(ctx, ceMsg)
 	if err != nil {
+		s.logger.Error("Event conversion failed", "component", "subscriber", "error", err)
 		if finishErr := ceMsg.Finish(err); finishErr != nil {
-			s.logger.Error("Finish error", "error", finishErr)
+			s.logger.Error("Rejecting message failed", "component", "subscriber", "error", finishErr)
 		}
 		return nil, err
 	}
+
+	// Extract attributes early for consistent error logging
+	attrs := extractAttributes(event)
 
 	// Bridge CloudEvents Finish() to gopipe Acking
 	msg := ceMsg
@@ -128,17 +133,16 @@ func (s *Subscriber) receive(ctx context.Context) ([]*message.RawMessage, error)
 	acking := message.NewAcking(
 		func() {
 			if err := msg.Finish(nil); err != nil {
-				logger.Error("Ack finish error", "error", err)
+				logger.Error("Acknowledging message failed", "component", "subscriber", "error", err, "attributes", attrs)
 			}
 		},
 		func(err error) {
 			if finishErr := msg.Finish(err); finishErr != nil {
-				logger.Error("Nack finish error", "error", finishErr)
+				logger.Error("Rejecting message failed", "component", "subscriber", "error", finishErr, "attributes", attrs)
 			}
 		},
 	)
 
-	attrs := extractAttributes(event)
 	raw := message.NewRaw(event.Data(), attrs, acking)
 
 	return []*message.RawMessage{raw}, nil

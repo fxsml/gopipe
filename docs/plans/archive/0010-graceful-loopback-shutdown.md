@@ -1,6 +1,6 @@
-# Plan: Graceful Loopback Shutdown
+# Plan 0010: Graceful Loopback Shutdown
 
-**Status:** Proposed
+**Status:** Complete
 **Issue:** #81
 **Related ADRs:** None (new feature)
 

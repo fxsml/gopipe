@@ -5,6 +5,29 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-01-21
+
+### Added
+
+- **message:** Named worker pools for per-handler concurrency control (#90)
+  - `PoolConfig` struct for configuring worker pools
+  - `RouterConfig.Pool` for default pool configuration
+  - `Router.AddPoolWithConfig()` to create named pools
+  - `Router.AddHandlerToPool()` to assign handlers to specific pools
+  - `Engine.AddPoolWithConfig()` and `Engine.AddHandlerToPool()` passthrough methods
+  - `EngineConfig.RouterPool` and `EngineConfig.RouterBufferSize` for pool configuration
+  - Enables resource-constrained handlers (e.g., external APIs) to have lower concurrency than fast handlers
+- **message/middleware:** `Recover()` middleware for panic recovery (#88)
+  - Catches panics in handlers and converts them to errors
+  - Logs panic details including stack trace
+  - Prevents single handler panic from crashing the entire engine
+
+### Changed
+
+- **message:** Improved logging consistency across module (#87)
+  - Standardized log levels and message formats
+  - Engine lifecycle events now logged at appropriate levels
+
 ## [0.13.3] - 2026-01-19
 
 ### Fixed

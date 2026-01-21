@@ -1,8 +1,9 @@
 # Plan 0006: Engine Raw API Simplification
 
-**Status:** Completed
+**Status:** Complete
 **Related ADRs:** -
 **Depends On:** [Plan 0005](0005-engine-implementation-review.md)
+**Design Evolution:** [0006-config-convention.decisions.md](0006-config-convention.decisions.md)
 
 ## Overview
 

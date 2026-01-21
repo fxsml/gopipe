@@ -1114,6 +1114,91 @@ func TestEngine_NoGoroutineLeakOnShutdown(t *testing.T) {
 	}
 }
 
+func TestEngine_RouterPool(t *testing.T) {
+	// Verify that RouterPool config is propagated to the router.
+	// With workers=3, messages should be processed in parallel.
+
+	const workers = 3
+	const messageCount = 3
+	const processTime = 50 * time.Millisecond
+
+	engine := NewEngine(EngineConfig{
+		RouterPool: PoolConfig{Workers: workers},
+	})
+
+	var activeCount int
+	var maxActive int
+	var mu sync.Mutex
+
+	handler := NewCommandHandler(
+		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+			mu.Lock()
+			activeCount++
+			if activeCount > maxActive {
+				maxActive = activeCount
+			}
+			mu.Unlock()
+
+			time.Sleep(processTime)
+
+			mu.Lock()
+			activeCount--
+			mu.Unlock()
+
+			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
+		},
+		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+	)
+	_ = engine.AddHandler("test", nil, handler)
+
+	input := make(chan *Message, messageCount)
+	_, _ = engine.AddInput("", nil, input)
+	output, _ := engine.AddOutput("", nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done, _ := engine.Start(ctx)
+
+	// Send all messages at once
+	start := time.Now()
+	for i := 0; i < messageCount; i++ {
+		input <- &Message{
+			Data:       &TestCommand{ID: string(rune('A' + i))},
+			Attributes: Attributes{"type": "test.command"},
+		}
+	}
+
+	// Collect all outputs
+	for i := 0; i < messageCount; i++ {
+		select {
+		case <-output:
+		case <-time.After(time.Second):
+			t.Fatalf("timeout waiting for output %d", i)
+		}
+	}
+	elapsed := time.Since(start)
+
+	// With concurrent processing, total time should be less than sequential
+	// Sequential: messageCount * processTime = 150ms
+	// Concurrent: ~processTime = ~50ms (plus overhead)
+	maxExpected := time.Duration(messageCount) * processTime
+	if elapsed >= maxExpected {
+		t.Errorf("messages processed sequentially: elapsed=%v, expected<%v", elapsed, maxExpected)
+	}
+
+	// Verify concurrent execution actually happened
+	mu.Lock()
+	if maxActive < 2 {
+		t.Errorf("expected concurrent execution (maxActive>=2), got maxActive=%d", maxActive)
+	}
+	mu.Unlock()
+
+	close(input)
+	cancel()
+	<-done
+}
+
 func TestEngine_DefaultMarshaler(t *testing.T) {
 	// Engine should default to JSONMarshaler when Marshaler is not set.
 	// This ensures raw inputs can be processed without explicit marshaler config.
