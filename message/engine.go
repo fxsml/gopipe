@@ -20,10 +20,12 @@ type Plugin func(*Engine) error
 type EngineConfig struct {
 	// Marshaler converts between typed data and raw bytes.
 	Marshaler Marshaler
-	// BufferSize is the channel buffer size (default: 100).
+	// BufferSize is the engine buffer size for merger and distributor (default: 100).
 	BufferSize int
-	// Concurrency is the number of concurrent handler invocations (default: 1).
-	Concurrency int
+	// RouterBufferSize is the router's internal buffer (0 = inherit BufferSize).
+	RouterBufferSize int
+	// RouterPool configures the default worker pool (Workers default: 1, BufferSize 0 = inherit RouterBufferSize).
+	RouterPool PoolConfig
 	// ErrorHandler is called on processing errors (default: no-op).
 	// Errors are logged via Logger; use ErrorHandler for custom handling
 	// like metrics, alerting, or recovery logic.
@@ -49,8 +51,15 @@ func (c EngineConfig) parse() EngineConfig {
 	if c.BufferSize <= 0 {
 		c.BufferSize = 100
 	}
-	if c.Concurrency <= 0 {
-		c.Concurrency = 1
+	// Inheritance: BufferSize → RouterBufferSize → RouterPool.BufferSize
+	if c.RouterBufferSize <= 0 {
+		c.RouterBufferSize = c.BufferSize
+	}
+	if c.RouterPool.BufferSize <= 0 {
+		c.RouterPool.BufferSize = c.RouterBufferSize
+	}
+	if c.RouterPool.Workers <= 0 {
+		c.RouterPool.Workers = 1
 	}
 	return c
 }
@@ -85,8 +94,8 @@ func NewEngine(cfg EngineConfig) *Engine {
 		tracker:          newMessageTracker(),
 		router: NewRouter(RouterConfig{
 			ErrorHandler: cfg.ErrorHandler,
-			BufferSize:   cfg.BufferSize,
-			Concurrency:  cfg.Concurrency,
+			BufferSize:   cfg.RouterBufferSize,
+			Pool:         cfg.RouterPool,
 			Logger:       cfg.Logger,
 		}),
 	}
@@ -121,10 +130,23 @@ func NewEngine(cfg EngineConfig) *Engine {
 	return e
 }
 
-// AddHandler registers a handler for its CE type.
+// AddHandler registers a handler to the default pool.
 // The optional matcher is applied after type matching.
 func (e *Engine) AddHandler(name string, matcher Matcher, h Handler) error {
 	return e.router.AddHandler(name, matcher, h)
+}
+
+// AddPoolWithConfig creates a named worker pool.
+// Must be called before Start().
+func (e *Engine) AddPoolWithConfig(name string, cfg PoolConfig) error {
+	return e.router.AddPoolWithConfig(name, cfg)
+}
+
+// AddHandlerToPool registers a handler to a named pool.
+// The optional matcher is applied after type matching.
+// Must be called before Start().
+func (e *Engine) AddHandlerToPool(name string, matcher Matcher, h Handler, pool string) error {
+	return e.router.AddHandlerToPool(name, matcher, h, pool)
 }
 
 // Use registers middleware to wrap message processing.
@@ -260,14 +282,16 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 	e.started = true
 	e.mu.Unlock()
 
-	e.cfg.Logger.Info("Starting engine",
+	e.cfg.Logger.Info("Starting",
 		"component", "engine",
 		"buffer_size", e.cfg.BufferSize,
-		"concurrency", e.cfg.Concurrency)
+		"router_workers", e.cfg.RouterPool.Workers)
 
 	// Shutdown orchestration goroutine
 	go func() {
 		<-ctx.Done()
+
+		e.cfg.Logger.Info("Shutdown initiated", "component", "engine")
 
 		// Signal no more external inputs expected
 		e.tracker.close()
@@ -276,13 +300,13 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		if e.cfg.ShutdownTimeout > 0 {
 			select {
 			case <-e.tracker.drained():
-				e.cfg.Logger.Info("Pipeline drained, closing loopback outputs", "component", "engine")
+				e.cfg.Logger.Debug("Pipeline drained, closing loopback outputs", "component", "engine")
 			case <-time.After(e.cfg.ShutdownTimeout):
-				e.cfg.Logger.Warn("Shutdown timeout, forcing loopback close", "component", "engine")
+				e.cfg.Logger.Warn("Shutdown timeout reached, forcing loopback close", "component", "engine")
 			}
 		} else {
 			<-e.tracker.drained()
-			e.cfg.Logger.Info("Pipeline drained, closing loopback outputs", "component", "engine")
+			e.cfg.Logger.Debug("Pipeline drained, closing loopback outputs", "component", "engine")
 		}
 
 		// Close loopback outputs to break cycles
@@ -315,6 +339,7 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 	go func() {
 		<-distDone
 		e.wrapperWg.Wait()
+		e.cfg.Logger.Info("Stopped", "component", "engine")
 		close(done)
 	}()
 
