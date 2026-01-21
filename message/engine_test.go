@@ -1114,16 +1114,16 @@ func TestEngine_NoGoroutineLeakOnShutdown(t *testing.T) {
 	}
 }
 
-func TestEngine_Concurrency(t *testing.T) {
-	// Verify that Concurrency config is propagated to the router.
-	// With concurrency=3, messages should be processed in parallel.
+func TestEngine_RouterPool(t *testing.T) {
+	// Verify that RouterPool config is propagated to the router.
+	// With workers=3, messages should be processed in parallel.
 
-	const concurrency = 3
+	const workers = 3
 	const messageCount = 3
 	const processTime = 50 * time.Millisecond
 
 	engine := NewEngine(EngineConfig{
-		Concurrency: concurrency,
+		RouterPool: PoolConfig{Workers: workers},
 	})
 
 	var activeCount int

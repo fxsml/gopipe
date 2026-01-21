@@ -20,6 +20,19 @@ type BenchEvent struct {
 	Step int `json:"step"`
 }
 
+// Step-specific event types for MultiStep benchmark (each handler needs unique input type)
+type BenchStep2Event struct {
+	ID int `json:"id"`
+}
+
+type BenchStep3Event struct {
+	ID int `json:"id"`
+}
+
+type BenchStep4Event struct {
+	ID int `json:"id"`
+}
+
 type BenchFinalEvent struct {
 	ID int `json:"id"`
 }
@@ -111,6 +124,7 @@ func BenchmarkEngine_Loopback_Throughput(b *testing.B) {
 }
 
 // BenchmarkEngine_Loopback_MultiStep measures throughput with chained loopbacks.
+// Flow: BenchCommand → step1 → BenchStep2Event → step2 → BenchStep3Event → step3 → BenchStep4Event → step4 → BenchFinalEvent
 func BenchmarkEngine_Loopback_MultiStep(b *testing.B) {
 	engine := NewEngine(EngineConfig{
 		Marshaler:       NewJSONMarshaler(),
@@ -119,42 +133,44 @@ func BenchmarkEngine_Loopback_MultiStep(b *testing.B) {
 		Logger:          silentLogger{},
 	})
 
-	// 4-step pipeline
+	// 4-step pipeline with unique event types per step
 	_ = engine.AddHandler("step1", nil, NewCommandHandler(
-		func(ctx context.Context, cmd BenchCommand) ([]BenchEvent, error) {
-			return []BenchEvent{{ID: cmd.ID, Step: 1}}, nil
+		func(ctx context.Context, cmd BenchCommand) ([]BenchStep2Event, error) {
+			return []BenchStep2Event{{ID: cmd.ID}}, nil
 		},
 		CommandHandlerConfig{Source: "/bench", Naming: KebabNaming},
 	))
 
 	_ = engine.AddHandler("step2", nil, NewCommandHandler(
-		func(ctx context.Context, cmd BenchEvent) ([]BenchEvent, error) {
-			return []BenchEvent{{ID: cmd.ID, Step: 2}}, nil
+		func(ctx context.Context, cmd BenchStep2Event) ([]BenchStep3Event, error) {
+			return []BenchStep3Event{{ID: cmd.ID}}, nil
 		},
 		CommandHandlerConfig{Source: "/bench", Naming: KebabNaming},
 	))
 
 	_ = engine.AddHandler("step3", nil, NewCommandHandler(
-		func(ctx context.Context, cmd BenchEvent) ([]BenchEvent, error) {
-			return []BenchEvent{{ID: cmd.ID, Step: 3}}, nil
+		func(ctx context.Context, cmd BenchStep3Event) ([]BenchStep4Event, error) {
+			return []BenchStep4Event{{ID: cmd.ID}}, nil
 		},
 		CommandHandlerConfig{Source: "/bench", Naming: KebabNaming},
 	))
 
 	_ = engine.AddHandler("step4", nil, NewCommandHandler(
-		func(ctx context.Context, cmd BenchEvent) ([]BenchFinalEvent, error) {
+		func(ctx context.Context, cmd BenchStep4Event) ([]BenchFinalEvent, error) {
 			return []BenchFinalEvent{{ID: cmd.ID}}, nil
 		},
 		CommandHandlerConfig{Source: "/bench", Naming: KebabNaming},
 	))
 
-	// Create loopbacks using helper
+	// Create loopbacks for each step's output
 	addBenchLoopback := func(name, pattern string) {
 		out, _ := engine.AddLoopbackOutput(name, &benchMatcher{pattern: pattern})
 		_, _ = engine.AddLoopbackInput(name, nil, out)
 	}
 
-	addBenchLoopback("loop1", "bench.event")
+	addBenchLoopback("loop2", "bench.step2.event")
+	addBenchLoopback("loop3", "bench.step3.event")
+	addBenchLoopback("loop4", "bench.step4.event")
 
 	input := make(chan *RawMessage, 1000)
 	_, _ = engine.AddRawInput("input", nil, input)
