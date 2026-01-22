@@ -6,6 +6,7 @@
 |------|--------|-------------|
 | [0007](0007-cesql-pattern-matching.md) | Proposed | CESQL Pattern Matching |
 | [pipe-autoscaling](pipe-autoscaling.md) | In Progress | Dynamic worker pool |
+| [pipe-ordering](pipe-ordering.md) | Proposed | Preserved message ordering |
 
 ## Agent Guidance
 

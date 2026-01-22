@@ -1,14 +1,27 @@
-# Dynamic Concurrency Autoscaling for gopipe
+# Dynamic Worker Pool for gopipe
 
-**Status:** Implemented
+**Status:** In Progress
 
 ## Overview
 
-Replace the static `Concurrency int` configuration with a dynamic autoscaling system that supports min/max bounds and automatically adjusts worker count based on load.
+Provide a unified worker pool abstraction for the `pipe` package that supports:
+1. Static worker configuration (fixed concurrency)
+2. Dynamic autoscaling based on load
+3. Future: Preserved message ordering (see [pipe-ordering](pipe-ordering.md))
+
+The API aligns with the `message` package's `PoolConfig` pattern for consistency.
 
 ## Design Approach
 
-**Backpressure-based scaling** (validated against industry patterns):
+### Naming Convention (aligned with message package)
+
+| message package | pipe package |
+|-----------------|--------------|
+| `PoolConfig.Workers` | `PoolConfig.Workers` |
+| `PoolConfig.BufferSize` | `PoolConfig.BufferSize` |
+| Named pools via `AddPoolWithConfig` | `Pool` struct for internal management |
+
+### Backpressure-based scaling (validated against industry patterns)
 
 | Library | Scale-Up Method | Scale-Down Method |
 |---------|-----------------|-------------------|
@@ -30,10 +43,11 @@ Replace the static `Concurrency int` configuration with a dynamic autoscaling sy
 
 ```
 pipe/
+├── pool.go                   # PoolConfig type with parse() method
 ├── autoscale.go              # AutoscaleConfig type with parse() method
 ├── processing.go             # Dispatcher + startStaticProcessing() + startAutoscaledProcessing()
 └── internal/autoscale/
-    ├── config.go             # Default constants only
+    ├── config.go             # Internal Config + Parse function
     ├── pool.go               # Pool struct, worker management, scaler loop
     └── pool_test.go          # Unit tests
 ```
@@ -41,11 +55,35 @@ pipe/
 ### Configuration API
 
 ```go
-// In pipe/processing.go
-type Config struct {
-    Concurrency int              // Static workers (ignored when Autoscale is set)
-    Autoscale   *AutoscaleConfig // Dynamic scaling config
-    // ... existing fields unchanged ...
+// In pipe/pool.go
+type PoolConfig struct {
+    // Workers sets the number of concurrent workers.
+    // Default is 1. Ignored when Autoscale is set.
+    Workers int
+
+    // Autoscale enables dynamic worker scaling based on load.
+    // When set, Workers is ignored and workers scale between
+    // MinWorkers and MaxWorkers based on backpressure.
+    Autoscale *AutoscaleConfig
+
+    // BufferSize sets the output channel buffer size.
+    // Default is 0 (unbuffered).
+    BufferSize int
+
+    // ErrorHandler is called when processing fails.
+    // Default logs via slog.Error.
+    ErrorHandler func(in any, err error)
+
+    // CleanupHandler is called when processing is complete.
+    CleanupHandler func(ctx context.Context)
+
+    // CleanupTimeout sets the timeout for cleanup operations.
+    CleanupTimeout time.Duration
+
+    // ShutdownTimeout controls shutdown behavior on context cancellation.
+    // If <= 0, waits indefinitely for input to close naturally.
+    // If > 0, waits up to this duration then forces shutdown.
+    ShutdownTimeout time.Duration
 }
 
 // In pipe/autoscale.go
@@ -72,15 +110,21 @@ func (c AutoscaleConfig) parse() AutoscaleConfig { ... }
 ### Usage Examples
 
 ```go
-// Existing usage - unchanged (backward compatible)
-p := pipe.NewProcessPipe(fn, pipe.Config{Concurrency: 4})
+// Static workers (simple case)
+p := pipe.NewProcessPipe(fn, pipe.PoolConfig{Workers: 4})
 
-// New autoscaling usage
-p := pipe.NewProcessPipe(fn, pipe.Config{
+// Autoscaling workers
+p := pipe.NewProcessPipe(fn, pipe.PoolConfig{
     Autoscale: &pipe.AutoscaleConfig{
         MinWorkers: 2,
         MaxWorkers: 16,
     },
+})
+
+// Future: Ordered processing (phase 2)
+p := pipe.NewProcessPipe(fn, pipe.PoolConfig{
+    Workers:       4,
+    PreserveOrder: true,  // Outputs match input order
 })
 ```
 
@@ -100,7 +144,7 @@ func startProcessing[In, Out any](...) <-chan Out {
 ### Internal Pool (pipe/internal/autoscale/pool.go)
 
 ```go
-type PoolConfig struct {
+type Config struct {
     MinWorkers, MaxWorkers        int
     ScaleDownAfter                time.Duration
     ScaleUpCooldown, ScaleDownCooldown time.Duration
@@ -108,7 +152,7 @@ type PoolConfig struct {
 }
 
 type Pool[In, Out any] struct {
-    cfg           PoolConfig
+    cfg           Config
     fn            func(context.Context, In) ([]Out, error)
     workers       map[int]*worker
     totalWorkers  atomic.Int64
@@ -116,7 +160,7 @@ type Pool[In, Out any] struct {
     // ...
 }
 
-func NewPool[In, Out any](cfg PoolConfig, fn func(...), ...) *Pool[In, Out]
+func NewPool[In, Out any](cfg Config, fn func(...), ...) *Pool[In, Out]
 func (p *Pool) Start(ctx context.Context, in <-chan In, bufferSize int) <-chan Out
 func (p *Pool) Stop()
 func (p *Pool) TotalWorkers() int64
@@ -127,6 +171,7 @@ func (p *Pool) ActiveWorkers() int64
 
 | Field | 0 means | Default value |
 |-------|---------|---------------|
+| Workers | use default | 1 |
 | MinWorkers | use default | 1 |
 | MaxWorkers | use default | runtime.NumCPU() |
 | ScaleUpCooldown | use default | 5s |
@@ -140,10 +185,11 @@ The implementation follows repository conventions:
 
 | Pattern | Implementation |
 |---------|----------------|
-| Config defaults | `defaultAutoscaleConfig` variable + `parse()` method |
+| Config naming | `PoolConfig` aligns with message package |
+| Field naming | `Workers` aligns with message package |
+| Config defaults | `parse()` method applies defaults |
 | Internal packages | `pipe/internal/autoscale/` for pool implementation |
 | Dispatcher pattern | `startProcessing()` dispatches to `startStaticProcessing()` or `startAutoscaledProcessing()` |
-| No type duplication | Single `AutoscaleConfig` in pipe package, `PoolConfig` in internal |
 
 ## Verification
 
@@ -151,7 +197,31 @@ The implementation follows repository conventions:
 - **Benchmarks**: Comparison between static and autoscale processing under various loads
 - **All tests pass**: `go test ./...` succeeds
 
-## Future Enhancements (out of scope for v1)
+## Future Enhancements
+
+### Phase 2: Preserved Message Ordering
+
+See [pipe-ordering.md](pipe-ordering.md) for the detailed plan.
+
+The `PoolConfig` will be extended with:
+```go
+type PoolConfig struct {
+    // ... existing fields ...
+
+    // PreserveOrder enables in-order message delivery.
+    // When true, outputs are reordered to match input sequence
+    // despite parallel processing. Has memory/latency overhead.
+    // Default: false
+    PreserveOrder bool
+
+    // OrderBufferSize is the max items to buffer while waiting
+    // for in-sequence items. Only used when PreserveOrder is true.
+    // Default: max(Workers, MaxWorkers) * 2
+    OrderBufferSize int
+}
+```
+
+### Other Future Enhancements (out of scope)
 
 Based on research, these could be added later:
 - **Strategies** (like Pond): Eager/Balanced/Lazy scaling aggressiveness
