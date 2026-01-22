@@ -21,6 +21,21 @@ The API aligns with the `message` package's `PoolConfig` pattern for consistency
 | `PoolConfig.BufferSize` | `PoolConfig.BufferSize` |
 | Named pools via `AddPoolWithConfig` | `Pool` struct for internal management |
 
+### Unified Config: Workers + MaxWorkers
+
+The key insight is that `Workers` serves dual purpose:
+- **Static mode**: The fixed worker count
+- **Autoscale mode**: The minimum worker count (floor)
+
+Autoscaling is enabled when `MaxWorkers > Workers`. This eliminates the need for a separate `MinWorkers` field or nested `AutoscaleConfig` struct.
+
+| Workers | MaxWorkers | Mode | Result |
+|---------|------------|------|--------|
+| 0 | 0 | static | 1 worker (default) |
+| 4 | 0 | static | 4 workers |
+| 4 | 4 | static | 4 workers |
+| 2 | 16 | autoscale | 2-16 workers |
+
 ### Backpressure-based scaling (validated against industry patterns)
 
 | Library | Scale-Up Method | Scale-Down Method |
@@ -31,8 +46,8 @@ The API aligns with the `message` package's `PoolConfig` pattern for consistency
 | **Watermill** | N/A (partition-based, implicit) | N/A |
 
 **Our approach** (aligns with Pond's simpler model):
-- Scale up: when all workers are busy (activeWorkers == totalWorkers) AND workers < max
-- Scale down: when a worker has been idle for `ScaleDownAfter` AND workers > min
+- Scale up: when all workers are busy (activeWorkers == totalWorkers) AND workers < MaxWorkers
+- Scale down: when a worker has been idle for `ScaleDownAfter` AND workers > Workers
 - Cooldown periods prevent thrashing
 
 **Why not Watermill's approach?** Watermill relies on message broker partitions for parallelism. gopipe is a general-purpose pipeline library, so explicit worker management is more appropriate.
@@ -43,11 +58,10 @@ The API aligns with the `message` package's `PoolConfig` pattern for consistency
 
 ```
 pipe/
-├── pool.go                   # PoolConfig type with parse() method
-├── autoscale.go              # AutoscaleConfig type with parse() method
-├── processing.go             # Dispatcher + startStaticProcessing() + startAutoscaledProcessing()
+├── pool.go                   # PoolConfig type with parse() and isAutoscale()
+├── processing.go             # Config + Dispatcher + startStaticProcessing() + startAutoscaledProcessing()
 └── internal/autoscale/
-    ├── config.go             # Internal Config + Parse function
+    ├── config.go             # Default constants
     ├── pool.go               # Pool struct, worker management, scaler loop
     └── pool_test.go          # Unit tests
 ```
@@ -57,18 +71,35 @@ pipe/
 ```go
 // In pipe/pool.go
 type PoolConfig struct {
-    // Workers sets the number of concurrent workers.
-    // Default is 1. Ignored when Autoscale is set.
+    // Workers sets worker count (static mode) or minimum workers (autoscale mode).
+    // Default: 1
     Workers int
 
-    // Autoscale enables dynamic worker scaling based on load.
-    // When set, Workers is ignored and workers scale between
-    // MinWorkers and MaxWorkers based on backpressure.
-    Autoscale *AutoscaleConfig
+    // MaxWorkers enables autoscaling when > Workers.
+    // Workers scale between Workers and MaxWorkers based on backpressure.
+    // If <= Workers (including 0), uses static mode with Workers count.
+    // Default: Workers (static mode)
+    MaxWorkers int
+
+    // Autoscale timing (only used when MaxWorkers > Workers)
+    ScaleDownAfter    time.Duration // Default: 30s
+    ScaleUpCooldown   time.Duration // Default: 5s
+    ScaleDownCooldown time.Duration // Default: 10s
+    CheckInterval     time.Duration // Default: 1s
 
     // BufferSize sets the output channel buffer size.
-    // Default is 0 (unbuffered).
+    // Default: 0 (unbuffered)
     BufferSize int
+}
+
+func (c PoolConfig) isAutoscale() bool {
+    return c.MaxWorkers > c.Workers
+}
+
+// In pipe/processing.go
+type Config struct {
+    // Pool configures the worker pool.
+    Pool PoolConfig
 
     // ErrorHandler is called when processing fails.
     // Default logs via slog.Error.
@@ -85,46 +116,27 @@ type PoolConfig struct {
     // If > 0, waits up to this duration then forces shutdown.
     ShutdownTimeout time.Duration
 }
-
-// In pipe/autoscale.go
-type AutoscaleConfig struct {
-    MinWorkers        int           // Default: 1
-    MaxWorkers        int           // Default: runtime.NumCPU()
-    ScaleDownAfter    time.Duration // Default: 30s
-    ScaleUpCooldown   time.Duration // Default: 5s
-    ScaleDownCooldown time.Duration // Default: 10s
-    CheckInterval     time.Duration // Default: 1s
-}
-
-var defaultAutoscaleConfig = AutoscaleConfig{
-    MinWorkers:        1,
-    ScaleDownAfter:    30 * time.Second,
-    ScaleUpCooldown:   5 * time.Second,
-    ScaleDownCooldown: 10 * time.Second,
-    CheckInterval:     1 * time.Second,
-}
-
-func (c AutoscaleConfig) parse() AutoscaleConfig { ... }
 ```
 
 ### Usage Examples
 
 ```go
 // Static workers (simple case)
-p := pipe.NewProcessPipe(fn, pipe.PoolConfig{Workers: 4})
-
-// Autoscaling workers
-p := pipe.NewProcessPipe(fn, pipe.PoolConfig{
-    Autoscale: &pipe.AutoscaleConfig{
-        MinWorkers: 2,
-        MaxWorkers: 16,
-    },
+p := pipe.NewProcessPipe(fn, pipe.Config{
+    Pool: pipe.PoolConfig{Workers: 4},
 })
 
+// Autoscaling workers (MaxWorkers > Workers enables it)
+p := pipe.NewProcessPipe(fn, pipe.Config{
+    Pool: pipe.PoolConfig{Workers: 2, MaxWorkers: 16},
+})
+
+// Default (1 static worker)
+p := pipe.NewProcessPipe(fn, pipe.Config{})
+
 // Future: Ordered processing (phase 2)
-p := pipe.NewProcessPipe(fn, pipe.PoolConfig{
-    Workers:       4,
-    PreserveOrder: true,  // Outputs match input order
+p := pipe.NewProcessPipe(fn, pipe.Config{
+    Pool: pipe.PoolConfig{Workers: 4, PreserveOrder: true},
 })
 ```
 
@@ -134,7 +146,7 @@ p := pipe.NewProcessPipe(fn, pipe.PoolConfig{
 func startProcessing[In, Out any](...) <-chan Out {
     cfg = cfg.parse()
 
-    if cfg.Autoscale != nil {
+    if cfg.Pool.isAutoscale() {
         return startAutoscaledProcessing(ctx, in, fn, cfg)
     }
     return startStaticProcessing(ctx, in, fn, cfg)
@@ -145,10 +157,10 @@ func startProcessing[In, Out any](...) <-chan Out {
 
 ```go
 type Config struct {
-    MinWorkers, MaxWorkers        int
-    ScaleDownAfter                time.Duration
+    MinWorkers, MaxWorkers             int
+    ScaleDownAfter                     time.Duration
     ScaleUpCooldown, ScaleDownCooldown time.Duration
-    CheckInterval                 time.Duration
+    CheckInterval                      time.Duration
 }
 
 type Pool[In, Out any] struct {
@@ -167,13 +179,14 @@ func (p *Pool) TotalWorkers() int64
 func (p *Pool) ActiveWorkers() int64
 ```
 
-## Default Values (0 = auto)
+Note: Internal pool uses `MinWorkers` which maps from `PoolConfig.Workers`.
+
+## Default Values (0 = use default)
 
 | Field | 0 means | Default value |
 |-------|---------|---------------|
 | Workers | use default | 1 |
-| MinWorkers | use default | 1 |
-| MaxWorkers | use default | runtime.NumCPU() |
+| MaxWorkers | use Workers | Workers (static mode) |
 | ScaleUpCooldown | use default | 5s |
 | ScaleDownCooldown | use default | 10s |
 | ScaleDownAfter | use default | 30s |
@@ -187,9 +200,10 @@ The implementation follows repository conventions:
 |---------|----------------|
 | Config naming | `PoolConfig` aligns with message package |
 | Field naming | `Workers` aligns with message package |
+| Separation of concerns | `PoolConfig` for workers, `Config` for pipe behavior |
 | Config defaults | `parse()` method applies defaults |
 | Internal packages | `pipe/internal/autoscale/` for pool implementation |
-| Dispatcher pattern | `startProcessing()` dispatches to `startStaticProcessing()` or `startAutoscaledProcessing()` |
+| Dispatcher pattern | `startProcessing()` dispatches based on `isAutoscale()` |
 
 ## Verification
 
@@ -216,7 +230,7 @@ type PoolConfig struct {
 
     // OrderBufferSize is the max items to buffer while waiting
     // for in-sequence items. Only used when PreserveOrder is true.
-    // Default: max(Workers, MaxWorkers) * 2
+    // Default: MaxWorkers * 2 (or Workers * 2 if static)
     OrderBufferSize int
 }
 ```

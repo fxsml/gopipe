@@ -2,7 +2,7 @@
 
 **Status:** Proposed
 
-**Depends on:** [pipe-autoscaling](pipe-autoscaling.md) (PoolConfig naming convention)
+**Depends on:** [pipe-autoscaling](pipe-autoscaling.md) (PoolConfig with Workers/MaxWorkers)
 
 ## Overview
 
@@ -119,13 +119,18 @@ func (r *reorderer[T]) emitConsecutive(first []T) []T {
 ### Configuration API
 
 ```go
+// In pipe/pool.go (extends existing PoolConfig)
 type PoolConfig struct {
-    // ... existing fields from pipe-autoscaling.md ...
-    Workers         int
-    Autoscale       *AutoscaleConfig
-    BufferSize      int
-    ErrorHandler    func(in any, err error)
-    // ...
+    // Existing fields from pipe-autoscaling.md
+    Workers           int
+    MaxWorkers        int
+    ScaleDownAfter    time.Duration
+    ScaleUpCooldown   time.Duration
+    ScaleDownCooldown time.Duration
+    CheckInterval     time.Duration
+    BufferSize        int
+
+    // NEW: Ordering fields
 
     // PreserveOrder enables in-order message delivery.
     // When true, outputs are reordered to match input sequence
@@ -136,7 +141,7 @@ type PoolConfig struct {
     // OrderBufferSize is the max items to buffer while waiting
     // for in-sequence items. Only used when PreserveOrder is true.
     // When buffer fills, workers block (backpressure).
-    // Default: max(Workers, MaxWorkers) * 2
+    // Default: MaxWorkers * 2 (or Workers * 2 if static)
     OrderBufferSize int
 }
 ```
@@ -147,10 +152,10 @@ type PoolConfig struct {
 func startProcessing[In, Out any](...) <-chan Out {
     cfg = cfg.parse()
 
-    if cfg.PreserveOrder {
+    if cfg.Pool.PreserveOrder {
         return startOrderedProcessing(ctx, in, fn, cfg)
     }
-    if cfg.Autoscale != nil {
+    if cfg.Pool.isAutoscale() {
         return startAutoscaledProcessing(ctx, in, fn, cfg)
     }
     return startStaticProcessing(ctx, in, fn, cfg)
@@ -171,14 +176,14 @@ func startOrderedProcessing[In, Out any](...) <-chan Out {
 
     // 3. Process using existing workers (static or autoscale)
     var seqOut <-chan sequencedResult[Out]
-    if cfg.Autoscale != nil {
+    if cfg.Pool.isAutoscale() {
         seqOut = startAutoscaledProcessing(ctx, seqIn, seqFn, cfg)
     } else {
         seqOut = startStaticProcessing(ctx, seqIn, seqFn, cfg)
     }
 
     // 4. Reorder outputs
-    return reorderOutputs(seqOut, cfg.OrderBufferSize)
+    return reorderOutputs(seqOut, cfg.Pool.OrderBufferSize)
 }
 ```
 
@@ -230,22 +235,24 @@ Result: ~5s apparent stall, then burst of 100 outputs
 ### Works with Static Workers
 
 ```go
-p := pipe.NewProcessPipe(fn, pipe.PoolConfig{
-    Workers:       4,
-    PreserveOrder: true,
+p := pipe.NewProcessPipe(fn, pipe.Config{
+    Pool: pipe.PoolConfig{
+        Workers:       4,
+        PreserveOrder: true,
+    },
 })
 ```
 
 ### Works with Autoscaling
 
 ```go
-p := pipe.NewProcessPipe(fn, pipe.PoolConfig{
-    Autoscale: &pipe.AutoscaleConfig{
-        MinWorkers: 2,
-        MaxWorkers: 16,
+p := pipe.NewProcessPipe(fn, pipe.Config{
+    Pool: pipe.PoolConfig{
+        Workers:         2,
+        MaxWorkers:      16,
+        PreserveOrder:   true,
+        OrderBufferSize: 32,  // 2x MaxWorkers
     },
-    PreserveOrder:   true,
-    OrderBufferSize: 32,  // 2x MaxWorkers
 })
 ```
 
