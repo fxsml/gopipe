@@ -156,7 +156,9 @@ func TestSubscriber(t *testing.T) {
 		event.SetID("test-id")
 		event.SetType("test.type")
 		event.SetSource("/test")
-		event.SetData("application/json", []byte(`{}`))
+		if err := event.SetData("application/json", []byte(`{}`)); err != nil {
+			t.Fatalf("failed to set data: %v", err)
+		}
 
 		receiver := newMockReceiver(&event)
 		source := NewSubscriber(receiver, SubscriberConfig{Buffer: 10})
