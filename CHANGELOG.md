@@ -5,6 +5,25 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-01-23
+
+### Fixed
+
+- **message:** Handler context no longer canceled during graceful shutdown
+  - Handlers now receive a separate context that only cancels when ShutdownTimeout fires
+  - In-flight handlers complete successfully instead of failing with "context canceled"
+  - App context cancellation signals shutdown but doesn't interrupt handler work
+- **message:** Distributor no longer hangs when output channels are full during shutdown
+  - Distributor now uses ShutdownTimeout to force-close after timeout
+  - Prevents engine from hanging indefinitely when raw output consumers are blocked
+- **message:** Router worker pools no longer hang during shutdown
+  - Router now propagates ShutdownTimeout to internal ProcessPipes, Distributor, and Merger
+  - Workers blocked on full output channels unblock after timeout
+- **pipe/message:** No silent message loss during shutdown timeout
+  - ProcessPipe, Merger, and Distributor now drain input channels after workers exit
+  - All buffered messages reported to ErrorHandler with `ErrShutdownDropped`
+  - Engine wrappers also drain and report dropped messages
+
 ## [0.15.0] - 2026-01-23
 
 ### Added

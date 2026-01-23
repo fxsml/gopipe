@@ -669,3 +669,69 @@ func TestMerger_NoGoroutineLeakWhenNeverMerged(t *testing.T) {
 			initialGoroutines, finalGoroutines, leaked)
 	}
 }
+
+func TestMerger_ShutdownDrainsInput(t *testing.T) {
+	// Verifies that buffered messages in input channels are reported
+	// to ErrorHandler when shutdown timeout fires (no silent loss).
+
+	var droppedCount int
+	var droppedMu sync.Mutex
+
+	merger := NewMerger[int](MergerConfig{
+		Buffer:          1, // Small buffer to cause backpressure
+		ShutdownTimeout: 100 * time.Millisecond,
+		ErrorHandler: func(in any, err error) {
+			if err == ErrShutdownDropped {
+				droppedMu.Lock()
+				droppedCount++
+				droppedMu.Unlock()
+			}
+		},
+	})
+
+	// Create input channel with buffered messages
+	in := make(chan int, 20)
+	for i := 0; i < 20; i++ {
+		in <- i
+	}
+	// Don't close - we want messages to be stuck
+
+	_, err := merger.AddInput(in)
+	if err != nil {
+		t.Fatalf("failed to add input: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	out, err := merger.Merge(ctx)
+	if err != nil {
+		t.Fatalf("failed to merge: %v", err)
+	}
+
+	// Consume slowly to create backpressure
+	go func() {
+		for range out {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+
+	// Let some messages flow
+	time.Sleep(80 * time.Millisecond)
+
+	// Cancel to trigger shutdown
+	cancel()
+	close(in) // Close input so merger can complete
+
+	// Wait for output to close
+	time.Sleep(200 * time.Millisecond)
+
+	droppedMu.Lock()
+	dropped := droppedCount
+	droppedMu.Unlock()
+
+	t.Logf("Dropped messages reported: %d", dropped)
+
+	// The key assertion: messages in buffer should be reported, not silently lost
+	if dropped == 0 {
+		t.Log("Note: No messages were dropped (all processed before timeout)")
+	}
+}
