@@ -9,22 +9,22 @@ import (
 func TestMessageTracker_EnterExit(t *testing.T) {
 	tracker := newMessageTracker()
 
-	tracker.enter()
+	tracker.enter(1)
 	if tracker.inFlight() != 1 {
 		t.Errorf("expected InFlight=1, got %d", tracker.inFlight())
 	}
 
-	tracker.enter()
+	tracker.enter(1)
 	if tracker.inFlight() != 2 {
 		t.Errorf("expected InFlight=2, got %d", tracker.inFlight())
 	}
 
-	tracker.exit()
+	tracker.exit(1)
 	if tracker.inFlight() != 1 {
 		t.Errorf("expected InFlight=1, got %d", tracker.inFlight())
 	}
 
-	tracker.exit()
+	tracker.exit(1)
 	if tracker.inFlight() != 0 {
 		t.Errorf("expected InFlight=0, got %d", tracker.inFlight())
 	}
@@ -33,10 +33,10 @@ func TestMessageTracker_EnterExit(t *testing.T) {
 func TestMessageTracker_Drained_ClosesWhenZeroAndClosed(t *testing.T) {
 	tracker := newMessageTracker()
 
-	tracker.enter()
-	tracker.enter()
-	tracker.exit()
-	tracker.exit()
+	tracker.enter(1)
+	tracker.enter(1)
+	tracker.exit(1)
+	tracker.exit(1)
 
 	// Count is zero but Close() not called yet
 	select {
@@ -107,9 +107,9 @@ func TestMessageTracker_Concurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			tracker.enter()
+			tracker.enter(1)
 			time.Sleep(time.Millisecond)
-			tracker.exit()
+			tracker.exit(1)
 		}()
 	}
 
@@ -132,7 +132,7 @@ func TestMessageTracker_Concurrent(t *testing.T) {
 func TestMessageTracker_DrainedClosesOnExit(t *testing.T) {
 	tracker := newMessageTracker()
 
-	tracker.enter()
+	tracker.enter(1)
 	tracker.close()
 
 	// Drained should not close yet (count = 1)
@@ -143,7 +143,7 @@ func TestMessageTracker_DrainedClosesOnExit(t *testing.T) {
 		// Expected
 	}
 
-	tracker.exit()
+	tracker.exit(1)
 
 	// Now Drained should close (count = 0 and closed)
 	select {
@@ -158,13 +158,13 @@ func TestMessageTracker_OnlyClosesOnce(t *testing.T) {
 	tracker := newMessageTracker()
 
 	// Multiple zero crossings should not panic
-	tracker.enter()
-	tracker.exit()
-	tracker.enter()
-	tracker.exit()
-	tracker.enter()
+	tracker.enter(1)
+	tracker.exit(1)
+	tracker.enter(1)
+	tracker.exit(1)
+	tracker.enter(1)
 	tracker.close()
-	tracker.exit()
+	tracker.exit(1)
 
 	// Should not panic - Drained is already closed
 	select {
@@ -179,12 +179,12 @@ func TestMessageTracker_NegativeCount(t *testing.T) {
 	// This tests the multiply case where count can temporarily go below expected
 	tracker := newMessageTracker()
 
-	tracker.enter()  // 1
-	tracker.enter()  // 2
-	tracker.enter()  // 3 (handler multiplied)
-	tracker.exit()   // 2
-	tracker.exit()   // 1
-	tracker.exit()   // 0
+	tracker.enter(1)  // 1
+	tracker.enter(1)  // 2
+	tracker.enter(1)  // 3 (handler multiplied)
+	tracker.exit(1)   // 2
+	tracker.exit(1)   // 1
+	tracker.exit(1)   // 0
 
 	tracker.close()
 

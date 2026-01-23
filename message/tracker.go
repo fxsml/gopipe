@@ -6,8 +6,8 @@ import (
 )
 
 // messageTracker tracks in-flight messages for graceful shutdown.
-// enter() increments count, exit() decrements. drained() closes when
-// count reaches zero AND close() has been called.
+// enter(n) increments count by n, exit(n) decrements by n. drained() closes
+// when count reaches zero AND close() has been called.
 //
 // Thread-safe for concurrent use.
 type messageTracker struct {
@@ -23,12 +23,12 @@ func newMessageTracker() *messageTracker {
 	}
 }
 
-func (t *messageTracker) enter() {
-	t.count.Add(1)
+func (t *messageTracker) enter(n int64) {
+	t.count.Add(n)
 }
 
-func (t *messageTracker) exit() {
-	if t.count.Add(-1) == 0 && t.closed.Load() {
+func (t *messageTracker) exit(n int64) {
+	if t.count.Add(-n) <= 0 && t.closed.Load() {
 		t.once.Do(func() { close(t.drainedCh) })
 	}
 }

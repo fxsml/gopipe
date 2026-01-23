@@ -2,13 +2,17 @@ package cloudevents
 
 import (
 	"context"
+	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/cloudevents/sdk-go/v2/binding"
 	"github.com/cloudevents/sdk-go/v2/protocol"
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/pipe"
+	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 // mockSender implements protocol.Sender for testing.
@@ -188,6 +192,60 @@ func TestPublisher(t *testing.T) {
 		_, err = pub.Publish(context.Background(), in)
 		if err == nil {
 			t.Error("expected error on second call")
+		}
+	})
+
+	t.Run("Use applies middleware", func(t *testing.T) {
+		sender := newMockSender(protocol.ResultACK)
+		pub := NewPublisher(sender, PublisherConfig{})
+
+		var calls atomic.Int32
+		countingMiddleware := func(next middleware.ProcessFunc[*message.RawMessage, struct{}]) middleware.ProcessFunc[*message.RawMessage, struct{}] {
+			return func(ctx context.Context, in *message.RawMessage) ([]struct{}, error) {
+				calls.Add(1)
+				return next(ctx, in)
+			}
+		}
+
+		if err := pub.Use(countingMiddleware); err != nil {
+			t.Fatalf("Use failed: %v", err)
+		}
+
+		in := make(chan *message.RawMessage, 1)
+		raw := message.NewRaw(
+			[]byte(`{}`),
+			message.Attributes{"id": "test", "type": "test", "source": "/test"},
+			nil,
+		)
+		in <- raw
+		close(in)
+
+		done, err := pub.Publish(context.Background(), in)
+		if err != nil {
+			t.Fatalf("Publish failed: %v", err)
+		}
+
+		<-done
+
+		if calls.Load() != 1 {
+			t.Errorf("expected middleware called once, got %d", calls.Load())
+		}
+	})
+
+	t.Run("Use returns error after Publish", func(t *testing.T) {
+		sender := newMockSender()
+		pub := NewPublisher(sender, PublisherConfig{})
+
+		in := make(chan *message.RawMessage)
+		close(in)
+
+		_, _ = pub.Publish(context.Background(), in)
+
+		err := pub.Use(func(next middleware.ProcessFunc[*message.RawMessage, struct{}]) middleware.ProcessFunc[*message.RawMessage, struct{}] {
+			return next
+		})
+		if !errors.Is(err, pipe.ErrAlreadyStarted) {
+			t.Errorf("expected ErrAlreadyStarted, got %v", err)
 		}
 	})
 }

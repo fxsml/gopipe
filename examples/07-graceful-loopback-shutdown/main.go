@@ -1,15 +1,17 @@
-// Example: Graceful loopback shutdown with orchestrated multi-step pipeline.
+// Example: Graceful loopback shutdown with batching (fan-in).
 //
-// Demonstrates graceful shutdown of a pipeline with multiple loopback steps:
-// - Step 1: Order Received -> Validate Order (loopback)
-// - Step 2: Validate Order -> Reserve Inventory (loopback)
-// - Step 3: Reserve Inventory -> Process Payment (loopback)
-// - Step 4: Process Payment -> Ship Order (loopback)
-// - Step 5: Ship Order -> Order Completed (output)
+// Demonstrates graceful shutdown with BatchLoopback that collapses multiple
+// messages into one (fan-in). The engine correctly tracks in-flight messages
+// even when N inputs become M outputs (where M < N).
 //
-// The engine tracks in-flight messages and waits for the pipeline to drain
-// before closing loopback outputs. This ensures all messages complete their
-// journey through the pipeline without deadlock.
+// Pipeline:
+//   - Orders enter individually
+//   - BatchLoopback collects orders and produces a single batch reservation
+//   - Batch is processed and individual confirmations are sent
+//
+// Key insight: Without proper tracking, 10 orders batched into 1 would leave
+// the tracker stuck at count=9, causing shutdown to timeout. The engine's
+// AdjustInFlight mechanism ensures the tracker stays balanced.
 //
 // Run: go run ./examples/07-graceful-loopback-shutdown
 package main
@@ -19,155 +21,103 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
+	"github.com/fxsml/gopipe/message/match"
 	"github.com/fxsml/gopipe/message/plugin"
-	"github.com/google/uuid"
 )
 
-// Order flow events
-type OrderReceived struct {
+// Order represents an incoming order.
+type Order struct {
 	OrderID string  `json:"order_id"`
 	Amount  float64 `json:"amount"`
 }
 
-type OrderValidated struct {
-	OrderID string `json:"order_id"`
-	Valid   bool   `json:"valid"`
+// BatchReservation represents a batched inventory check for multiple orders.
+type BatchReservation struct {
+	OrderIDs  []string `json:"order_ids"`
+	Warehouse string   `json:"warehouse"`
 }
 
-type InventoryReserved struct {
+// OrderConfirmed is the final output for each order.
+type OrderConfirmed struct {
 	OrderID   string `json:"order_id"`
-	Reserved  bool   `json:"reserved"`
 	Warehouse string `json:"warehouse"`
-}
-
-type PaymentProcessed struct {
-	OrderID       string `json:"order_id"`
-	Paid          bool   `json:"paid"`
-	TransactionID string `json:"transaction_id"`
-}
-
-type OrderShipped struct {
-	OrderID    string `json:"order_id"`
-	TrackingID string `json:"tracking_id"`
-}
-
-type OrderCompleted struct {
-	OrderID    string `json:"order_id"`
-	Status     string `json:"status"`
-	TrackingID string `json:"tracking_id"`
-}
-
-// typeMatcher matches messages by CloudEvents type attribute.
-type typeMatcher struct {
-	pattern string
-}
-
-func (m *typeMatcher) Match(attrs message.Attributes) bool {
-	t, _ := attrs["type"].(string)
-	return t == m.pattern
+	Status    string `json:"status"`
 }
 
 func main() {
-	// Create engine with a shutdown timeout to ensure graceful drain
 	engine := message.NewEngine(message.EngineConfig{
 		Marshaler:       message.NewJSONMarshaler(),
-		ShutdownTimeout: 5 * time.Second, // Wait up to 5s for pipeline to drain
+		ShutdownTimeout: 5 * time.Second,
 	})
 
-	// Step 1: Order Received -> Order Validated
-	engine.AddHandler("validate-order", nil, message.NewCommandHandler(
-		func(ctx context.Context, cmd OrderReceived) ([]OrderValidated, error) {
-			fmt.Printf("[Step 1] Validating order %s (amount: $%.2f)\n", cmd.OrderID, cmd.Amount)
-			return []OrderValidated{{
-				OrderID: cmd.OrderID,
-				Valid:   cmd.Amount > 0,
-			}}, nil
+	// Step 1: Receive orders (pass-through to loopback)
+	engine.AddHandler("receive-order", nil, message.NewCommandHandler(
+		func(ctx context.Context, cmd Order) ([]Order, error) {
+			fmt.Printf("[Receive] Order %s ($%.2f)\n", cmd.OrderID, cmd.Amount)
+			return []Order{cmd}, nil
 		},
 		message.CommandHandlerConfig{Source: "/orders", Naming: message.KebabNaming},
 	))
 
-	// Step 2: Order Validated -> Inventory Reserved
-	engine.AddHandler("reserve-inventory", nil, message.NewCommandHandler(
-		func(ctx context.Context, cmd OrderValidated) ([]InventoryReserved, error) {
-			fmt.Printf("[Step 2] Reserving inventory for order %s\n", cmd.OrderID)
-			if !cmd.Valid {
-				return nil, fmt.Errorf("invalid order")
+	// Step 2: Process batch reservation -> fan-out to individual confirmations
+	engine.AddHandler("process-batch", nil, message.NewCommandHandler(
+		func(ctx context.Context, cmd BatchReservation) ([]OrderConfirmed, error) {
+			fmt.Printf("[Batch] Processing %d orders for %s\n", len(cmd.OrderIDs), cmd.Warehouse)
+
+			// Fan-out: one batch -> multiple confirmations
+			var confirmations []OrderConfirmed
+			for _, orderID := range cmd.OrderIDs {
+				confirmations = append(confirmations, OrderConfirmed{
+					OrderID:   orderID,
+					Warehouse: cmd.Warehouse,
+					Status:    "confirmed",
+				})
 			}
-			return []InventoryReserved{{
-				OrderID:   cmd.OrderID,
-				Reserved:  true,
-				Warehouse: "WH-NYC",
-			}}, nil
+			return confirmations, nil
 		},
 		message.CommandHandlerConfig{Source: "/inventory", Naming: message.KebabNaming},
 	))
 
-	// Step 3: Inventory Reserved -> Payment Processed
-	engine.AddHandler("process-payment", nil, message.NewCommandHandler(
-		func(ctx context.Context, cmd InventoryReserved) ([]PaymentProcessed, error) {
-			fmt.Printf("[Step 3] Processing payment for order %s (warehouse: %s)\n", cmd.OrderID, cmd.Warehouse)
-			if !cmd.Reserved {
-				return nil, fmt.Errorf("inventory not reserved")
+	// BatchLoopback: Collect orders and batch them (fan-in: N orders -> 1 batch)
+	// This is where the tracker adjustment is critical for graceful shutdown.
+	engine.AddPlugin(plugin.BatchLoopback(
+		"order-batcher",
+		match.Types("order"),
+		func(msgs []*message.Message) []*message.Message {
+			var orderIDs []string
+			for _, m := range msgs {
+				order := m.Data.(Order)
+				orderIDs = append(orderIDs, order.OrderID)
 			}
-			return []PaymentProcessed{{
-				OrderID:       cmd.OrderID,
-				Paid:          true,
-				TransactionID: "TXN-" + uuid.NewString()[:8],
-			}}, nil
+			fmt.Printf("[BatchLoopback] Batching %d orders: %s\n", len(orderIDs), strings.Join(orderIDs, ", "))
+
+			// Fan-in: N orders -> 1 batch reservation
+			return []*message.Message{{
+				Data:       BatchReservation{OrderIDs: orderIDs, Warehouse: "WH-CENTRAL"},
+				Attributes: message.Attributes{"type": "batch.reservation"},
+			}}
 		},
-		message.CommandHandlerConfig{Source: "/payments", Naming: message.KebabNaming},
+		plugin.BatchLoopbackConfig{
+			MaxSize:     5,                    // Batch up to 5 orders
+			MaxDuration: 200 * time.Millisecond, // Or flush after 200ms
+		},
 	))
 
-	// Step 4: Payment Processed -> Order Shipped
-	engine.AddHandler("ship-order", nil, message.NewCommandHandler(
-		func(ctx context.Context, cmd PaymentProcessed) ([]OrderShipped, error) {
-			fmt.Printf("[Step 4] Shipping order %s (txn: %s)\n", cmd.OrderID, cmd.TransactionID)
-			if !cmd.Paid {
-				return nil, fmt.Errorf("payment not completed")
-			}
-			return []OrderShipped{{
-				OrderID:    cmd.OrderID,
-				TrackingID: "TRACK-" + uuid.NewString()[:8],
-			}}, nil
-		},
-		message.CommandHandlerConfig{Source: "/shipping", Naming: message.KebabNaming},
-	))
-
-	// Step 5: Order Shipped -> Order Completed
-	engine.AddHandler("complete-order", nil, message.NewCommandHandler(
-		func(ctx context.Context, cmd OrderShipped) ([]OrderCompleted, error) {
-			fmt.Printf("[Step 5] Completing order %s (tracking: %s)\n", cmd.OrderID, cmd.TrackingID)
-			return []OrderCompleted{{
-				OrderID:    cmd.OrderID,
-				Status:     "completed",
-				TrackingID: cmd.TrackingID,
-			}}, nil
-		},
-		message.CommandHandlerConfig{Source: "/orders", Naming: message.KebabNaming},
-	))
-
-	// Configure loopbacks: each intermediate step loops back to continue the pipeline
-	// Loopback 1: OrderValidated -> back to engine (for Step 2)
-	engine.AddPlugin(plugin.Loopback("validate-loop", &typeMatcher{pattern: "order.validated"}))
-
-	// Loopback 2: InventoryReserved -> back to engine (for Step 3)
-	engine.AddPlugin(plugin.Loopback("inventory-loop", &typeMatcher{pattern: "inventory.reserved"}))
-
-	// Loopback 3: PaymentProcessed -> back to engine (for Step 4)
-	engine.AddPlugin(plugin.Loopback("payment-loop", &typeMatcher{pattern: "payment.processed"}))
-
-	// Loopback 4: OrderShipped -> back to engine (for Step 5)
-	engine.AddPlugin(plugin.Loopback("shipping-loop", &typeMatcher{pattern: "order.shipped"}))
-
-	// External input for orders
-	input := make(chan *message.RawMessage, 10)
+	// Setup I/O using channel utilities
+	// FromRange(1,11) produces 1..10, Transform converts to RawMessage
+	input := channel.Transform(channel.FromRange(1, 11), func(i int) *message.RawMessage {
+		order := Order{OrderID: fmt.Sprintf("ORD-%03d", i), Amount: float64(i) * 10}
+		data, _ := json.Marshal(order)
+		return message.NewRaw(data, message.Attributes{"type": "order"}, nil)
+	})
 	engine.AddRawInput("orders", nil, input)
-
-	// External output for completed orders
-	output, _ := engine.AddRawOutput("completed", &typeMatcher{pattern: "order.completed"})
+	output, _ := engine.AddRawOutput("confirmed", match.Types("order.confirmed"))
 
 	// Start engine
 	ctx, cancel := context.WithCancel(context.Background())
@@ -176,59 +126,44 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("=== Starting Order Processing Pipeline ===")
+	fmt.Println("=== Order Batching Pipeline (10 orders -> 2 batches -> 10 confirmations) ===")
 	fmt.Println()
 
-	// Process multiple orders
-	orders := []OrderReceived{
-		{OrderID: "ORD-001", Amount: 99.99},
-		{OrderID: "ORD-002", Amount: 149.50},
-		{OrderID: "ORD-003", Amount: 75.00},
-	}
+	// Collect confirmations using Sink (processes in background)
+	fmt.Println("=== Confirmations ===")
+	const expectedConfirmations = 10
+	var count atomic.Int32
+	allReceived := make(chan struct{})
 
-	for _, order := range orders {
-		data, _ := json.Marshal(order)
-		input <- message.NewRaw(data, message.Attributes{
-			message.AttrSpecVersion: "1.0",
-			message.AttrType:        "order.received",
-			message.AttrSource:      "/external",
-			message.AttrID:          uuid.NewString(),
-		}, nil)
-	}
-
-	// Collect completed orders
-	fmt.Println()
-	fmt.Println("=== Completed Orders ===")
-	for i := 0; i < len(orders); i++ {
-		select {
-		case result := <-output:
-			var completed OrderCompleted
-			json.Unmarshal(result.Data, &completed)
-			fmt.Printf("Order %s completed with tracking %s\n", completed.OrderID, completed.TrackingID)
-		case <-time.After(5 * time.Second):
-			log.Fatal("timeout waiting for completed order")
+	channel.Sink(output, func(raw *message.RawMessage) {
+		var confirmed OrderConfirmed
+		json.Unmarshal(raw.Data, &confirmed)
+		fmt.Printf("✓ %s -> %s (%s)\n", confirmed.OrderID, confirmed.Warehouse, confirmed.Status)
+		if count.Add(1) == expectedConfirmations {
+			close(allReceived)
 		}
-	}
+	})
 
-	// Graceful shutdown demonstration
+	// Wait for all confirmations before initiating shutdown
+	<-allReceived
+	fmt.Printf("\nReceived %d confirmations\n", count.Load())
+
+	// Graceful shutdown - should complete quickly, not wait for timeout
 	fmt.Println()
-	fmt.Println("=== Initiating Graceful Shutdown ===")
-
-	// Close input first (best practice)
-	close(input)
-
-	// Cancel context - engine will:
-	// 1. Signal tracker that no more external inputs are expected
-	// 2. Wait for all in-flight messages to drain through loopbacks
-	// 3. Close loopback outputs to break cycles
-	// 4. Complete shutdown cleanly
+	fmt.Println("=== Graceful Shutdown ===")
+	shutdownStart := time.Now()
 	cancel()
 
-	// Wait for engine to stop
 	select {
 	case <-done:
-		fmt.Println("Engine shut down gracefully")
+		elapsed := time.Since(shutdownStart)
+		fmt.Printf("Shutdown completed in %v\n", elapsed)
+		if elapsed < time.Second {
+			fmt.Println("✓ Tracker correctly adjusted for fan-in (no timeout)")
+		} else {
+			fmt.Println("✗ Shutdown took too long - tracker may be stuck")
+		}
 	case <-time.After(10 * time.Second):
-		log.Fatal("shutdown timeout")
+		log.Fatal("shutdown timeout - tracker stuck!")
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/cloudevents/sdk-go/v2/protocol"
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/pipe"
+	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 // PublisherConfig configures a Publisher.
@@ -58,6 +59,13 @@ func NewPublisher(sender protocol.Sender, cfg PublisherConfig) *Publisher {
 	})
 
 	return p
+}
+
+// Use adds middleware to the publisher's internal pipe. Middleware wraps the
+// send function, enabling retry logic, circuit breaking, or backoff on errors.
+// Must be called before Publish. Returns ErrAlreadyStarted if called after.
+func (p *Publisher) Use(mw ...middleware.Middleware[*message.RawMessage, struct{}]) error {
+	return p.sink.Use(mw...)
 }
 
 // Publish starts consuming messages from the channel and sending them via CloudEvents.

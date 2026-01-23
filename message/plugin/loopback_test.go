@@ -898,6 +898,344 @@ func TestBatchLoopback(t *testing.T) {
 	})
 }
 
+// TestBatchLoopback_GracefulShutdown_FanIn verifies that BatchLoopback correctly
+// tracks fan-in for graceful shutdown (issue #95).
+//
+// When N messages are batched into M outputs (M < N), the tracker must be
+// adjusted so that shutdown completes without waiting for the full timeout.
+func TestBatchLoopback_GracefulShutdown_FanIn(t *testing.T) {
+	engine := message.NewEngine(message.EngineConfig{
+		Marshaler:       message.NewJSONMarshaler(),
+		ShutdownTimeout: 5 * time.Second,
+	})
+
+	// Handler: command -> intermediate event (1:1 pass-through)
+	handler := message.NewCommandHandler(
+		func(ctx context.Context, cmd testCommand) ([]intermediateEvent, error) {
+			return []intermediateEvent{{ID: cmd.ID, Step: 1}}, nil
+		},
+		message.CommandHandlerConfig{Source: "/test", Naming: message.KebabNaming},
+	)
+	_ = engine.AddHandler("handler", nil, handler)
+
+	// Handler: final event pass-through
+	handler2 := message.NewCommandHandler(
+		func(ctx context.Context, e finalEvent) ([]finalEvent, error) {
+			return []finalEvent{e}, nil
+		},
+		message.CommandHandlerConfig{Source: "/test", Naming: message.KebabNaming},
+	)
+	_ = engine.AddHandler("handler2", nil, handler2)
+
+	// BatchLoopback: 10 messages → 1 output (fan-in)
+	err := engine.AddPlugin(BatchLoopback(
+		"fanin-batch",
+		&typeMatcher{pattern: "intermediate.event"},
+		func(msgs []*message.Message) []*message.Message {
+			// Collapse all messages into one
+			return []*message.Message{{
+				Data:       finalEvent{ID: "batched", Status: "aggregated"},
+				Attributes: message.Attributes{"type": "final.event"},
+			}}
+		},
+		BatchLoopbackConfig{MaxSize: 10, MaxDuration: 100 * time.Millisecond},
+	))
+	if err != nil {
+		t.Fatalf("AddPlugin failed: %v", err)
+	}
+
+	input := make(chan *message.Message, 20)
+	_, _ = engine.AddInput("", nil, input)
+
+	output, _ := engine.AddOutput("", &typeMatcher{pattern: "final.event"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done, _ := engine.Start(ctx)
+
+	// Send 10 messages - these will be batched into 1 output
+	for i := 0; i < 10; i++ {
+		input <- &message.Message{
+			Data:       &testCommand{ID: string(rune('a' + i))},
+			Attributes: message.Attributes{"type": "test.command"},
+		}
+	}
+
+	// Wait for batched output
+	select {
+	case <-output:
+		// Got the batched result
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for batched output")
+	}
+
+	// Initiate graceful shutdown
+	close(input)
+	shutdownStart := time.Now()
+	cancel()
+
+	// Wait for engine to stop
+	select {
+	case <-done:
+		elapsed := time.Since(shutdownStart)
+		// Should complete quickly, not wait for full timeout
+		// Allow 1 second buffer for batch timer + processing
+		if elapsed > time.Second {
+			t.Errorf("shutdown took too long: %v (expected < 1s)", elapsed)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("engine did not shut down - tracker likely stuck due to fan-in")
+	}
+}
+
+// TestGroupLoopback_GracefulShutdown_FanIn verifies that GroupLoopback correctly
+// tracks fan-in for graceful shutdown (issue #95).
+func TestGroupLoopback_GracefulShutdown_FanIn(t *testing.T) {
+	type groupedCmd struct {
+		ID    string `json:"id"`
+		Group string `json:"group"`
+	}
+
+	engine := message.NewEngine(message.EngineConfig{
+		Marshaler:       message.NewJSONMarshaler(),
+		ShutdownTimeout: 5 * time.Second,
+	})
+
+	// Handler: command pass-through
+	handler := message.NewCommandHandler(
+		func(ctx context.Context, cmd groupedCmd) ([]groupedCmd, error) {
+			return []groupedCmd{cmd}, nil
+		},
+		message.CommandHandlerConfig{Source: "/test", Naming: message.KebabNaming},
+	)
+	_ = engine.AddHandler("handler", nil, handler)
+
+	// Handler: final event pass-through
+	handler2 := message.NewCommandHandler(
+		func(ctx context.Context, e finalEvent) ([]finalEvent, error) {
+			return []finalEvent{e}, nil
+		},
+		message.CommandHandlerConfig{Source: "/test", Naming: message.KebabNaming},
+	)
+	_ = engine.AddHandler("handler2", nil, handler2)
+
+	// GroupLoopback: 5 messages per group → 1 output per group (fan-in)
+	err := engine.AddPlugin(GroupLoopback(
+		"fanin-group",
+		&typeMatcher{pattern: "grouped.cmd"},
+		func(group string, msgs []*message.Message) []*message.Message {
+			// Collapse all messages in group into one
+			return []*message.Message{{
+				Data:       finalEvent{ID: group, Status: "grouped"},
+				Attributes: message.Attributes{"type": "final.event"},
+			}}
+		},
+		func(m *message.Message) string { return m.Data.(groupedCmd).Group },
+		GroupLoopbackConfig{MaxSize: 5, MaxDuration: 100 * time.Millisecond},
+	))
+	if err != nil {
+		t.Fatalf("AddPlugin failed: %v", err)
+	}
+
+	input := make(chan *message.Message, 20)
+	_, _ = engine.AddInput("", nil, input)
+
+	output, _ := engine.AddOutput("", &typeMatcher{pattern: "final.event"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done, _ := engine.Start(ctx)
+
+	// Send 10 messages: 5 in group A, 5 in group B
+	for i := 0; i < 5; i++ {
+		input <- &message.Message{
+			Data:       &groupedCmd{ID: string(rune('a' + i)), Group: "A"},
+			Attributes: message.Attributes{"type": "grouped.cmd"},
+		}
+		input <- &message.Message{
+			Data:       &groupedCmd{ID: string(rune('f' + i)), Group: "B"},
+			Attributes: message.Attributes{"type": "grouped.cmd"},
+		}
+	}
+
+	// Wait for 2 grouped outputs
+	for i := 0; i < 2; i++ {
+		select {
+		case <-output:
+		case <-time.After(time.Second):
+			t.Fatalf("timeout waiting for grouped output %d", i+1)
+		}
+	}
+
+	// Initiate graceful shutdown
+	close(input)
+	shutdownStart := time.Now()
+	cancel()
+
+	// Wait for engine to stop
+	select {
+	case <-done:
+		elapsed := time.Since(shutdownStart)
+		if elapsed > time.Second {
+			t.Errorf("shutdown took too long: %v (expected < 1s)", elapsed)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("engine did not shut down - tracker likely stuck due to fan-in")
+	}
+}
+
+// TestProcessLoopback_GracefulShutdown_FanOut verifies that ProcessLoopback correctly
+// tracks fan-out (1 input → N outputs) for graceful shutdown.
+func TestProcessLoopback_GracefulShutdown_FanOut(t *testing.T) {
+	engine := message.NewEngine(message.EngineConfig{
+		Marshaler:       message.NewJSONMarshaler(),
+		ShutdownTimeout: 5 * time.Second,
+	})
+
+	// Handler: command -> intermediate event
+	handler := message.NewCommandHandler(
+		func(ctx context.Context, cmd testCommand) ([]intermediateEvent, error) {
+			return []intermediateEvent{{ID: cmd.ID, Step: 1}}, nil
+		},
+		message.CommandHandlerConfig{Source: "/test", Naming: message.KebabNaming},
+	)
+	_ = engine.AddHandler("handler", nil, handler)
+
+	// Handler: final event pass-through
+	handler2 := message.NewCommandHandler(
+		func(ctx context.Context, e finalEvent) ([]finalEvent, error) {
+			return []finalEvent{e}, nil
+		},
+		message.CommandHandlerConfig{Source: "/test", Naming: message.KebabNaming},
+	)
+	_ = engine.AddHandler("handler2", nil, handler2)
+
+	// ProcessLoopback: expand 1 → 5 (fan-out)
+	err := engine.AddPlugin(ProcessLoopback(
+		"fanout-loopback",
+		&typeMatcher{pattern: "intermediate.event"},
+		func(msg *message.Message) []*message.Message {
+			event := msg.Data.(intermediateEvent)
+			// Expand 1 message into 5
+			var results []*message.Message
+			for i := 0; i < 5; i++ {
+				results = append(results, &message.Message{
+					Data:       finalEvent{ID: event.ID, Status: string(rune('a' + i))},
+					Attributes: message.Attributes{"type": "final.event"},
+				})
+			}
+			return results
+		},
+	))
+	if err != nil {
+		t.Fatalf("AddPlugin failed: %v", err)
+	}
+
+	input := make(chan *message.Message, 20)
+	_, _ = engine.AddInput("", nil, input)
+
+	output, _ := engine.AddOutput("", &typeMatcher{pattern: "final.event"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done, _ := engine.Start(ctx)
+
+	// Send 2 messages - each will expand to 5, so 10 total outputs
+	for i := 0; i < 2; i++ {
+		input <- &message.Message{
+			Data:       &testCommand{ID: string(rune('A' + i))},
+			Attributes: message.Attributes{"type": "test.command"},
+		}
+	}
+
+	// Collect all 10 outputs
+	for i := 0; i < 10; i++ {
+		select {
+		case <-output:
+		case <-time.After(time.Second):
+			t.Fatalf("timeout waiting for output %d", i+1)
+		}
+	}
+
+	// Initiate graceful shutdown
+	close(input)
+	shutdownStart := time.Now()
+	cancel()
+
+	// Wait for engine to stop
+	select {
+	case <-done:
+		elapsed := time.Since(shutdownStart)
+		if elapsed > time.Second {
+			t.Errorf("shutdown took too long: %v (expected < 1s)", elapsed)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("engine did not shut down - tracker likely broken due to fan-out")
+	}
+}
+
+// TestProcessLoopback_GracefulShutdown_Drop verifies that ProcessLoopback correctly
+// tracks dropped messages for graceful shutdown.
+func TestProcessLoopback_GracefulShutdown_Drop(t *testing.T) {
+	engine := message.NewEngine(message.EngineConfig{
+		Marshaler:       message.NewJSONMarshaler(),
+		ShutdownTimeout: 5 * time.Second,
+	})
+
+	// Handler: command -> intermediate event
+	handler := message.NewCommandHandler(
+		func(ctx context.Context, cmd testCommand) ([]intermediateEvent, error) {
+			return []intermediateEvent{{ID: cmd.ID, Step: 1}}, nil
+		},
+		message.CommandHandlerConfig{Source: "/test", Naming: message.KebabNaming},
+	)
+	_ = engine.AddHandler("handler", nil, handler)
+
+	// ProcessLoopback: drop all messages (1 → 0)
+	err := engine.AddPlugin(ProcessLoopback(
+		"drop-loopback",
+		&typeMatcher{pattern: "intermediate.event"},
+		func(msg *message.Message) []*message.Message {
+			return nil // Drop
+		},
+	))
+	if err != nil {
+		t.Fatalf("AddPlugin failed: %v", err)
+	}
+
+	input := make(chan *message.Message, 20)
+	_, _ = engine.AddInput("", nil, input)
+
+	// No output needed - messages are dropped
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done, _ := engine.Start(ctx)
+
+	// Send 10 messages - all will be dropped
+	for i := 0; i < 10; i++ {
+		input <- &message.Message{
+			Data:       &testCommand{ID: string(rune('a' + i))},
+			Attributes: message.Attributes{"type": "test.command"},
+		}
+	}
+
+	// Give time for messages to be processed and dropped
+	time.Sleep(100 * time.Millisecond)
+
+	// Initiate graceful shutdown
+	close(input)
+	shutdownStart := time.Now()
+	cancel()
+
+	// Wait for engine to stop
+	select {
+	case <-done:
+		elapsed := time.Since(shutdownStart)
+		if elapsed > time.Second {
+			t.Errorf("shutdown took too long: %v (expected < 1s)", elapsed)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("engine did not shut down - tracker likely stuck due to dropped messages")
+	}
+}
+
 func TestGroupLoopback(t *testing.T) {
 	type groupedCommand struct {
 		ID          string `json:"id"`
