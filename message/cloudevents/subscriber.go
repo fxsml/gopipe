@@ -10,6 +10,7 @@ import (
 	"github.com/cloudevents/sdk-go/v2/protocol"
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/pipe"
+	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 // SubscriberConfig configures a Subscriber.
@@ -72,6 +73,13 @@ func NewSubscriber(receiver protocol.Receiver, cfg SubscriberConfig) *Subscriber
 
 	s.gen = pipe.NewGenerator(s.receive, pipeCfg)
 	return s
+}
+
+// Use adds middleware to the subscriber's internal pipe. Middleware wraps the
+// receive function, enabling retry logic, circuit breaking, or backoff on errors.
+// Must be called before Subscribe. Returns ErrAlreadyStarted if called after.
+func (s *Subscriber) Use(mw ...middleware.Middleware[struct{}, *message.RawMessage]) error {
+	return s.gen.Use(mw...)
 }
 
 // Subscribe starts receiving messages from the CloudEvents receiver and returns
