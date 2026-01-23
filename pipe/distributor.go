@@ -100,6 +100,9 @@ func (d *Distributor[T]) Distribute(ctx context.Context, input <-chan T) (<-chan
 		for {
 			select {
 			case <-d.done:
+				drainChannel(input, func(msg T) {
+					d.cfg.ErrorHandler(msg, ErrShutdownDropped)
+				})
 				return
 			case msg, ok := <-input:
 				if !ok {

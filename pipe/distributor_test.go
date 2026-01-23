@@ -646,3 +646,71 @@ func TestDistributor_NoGoroutineLeakWhenDistributedAndStopped(t *testing.T) {
 			initialGoroutines, finalGoroutines, leaked)
 	}
 }
+
+func TestDistributor_ShutdownDrainsInput(t *testing.T) {
+	// Verifies that buffered messages in input channel are reported
+	// to ErrorHandler when shutdown timeout fires (no silent loss).
+
+	var droppedCount int
+	var droppedMu sync.Mutex
+
+	dist := NewDistributor[int](DistributorConfig[int]{
+		Buffer:          1, // Small buffer to cause backpressure
+		ShutdownTimeout: 100 * time.Millisecond,
+		ErrorHandler: func(in any, err error) {
+			if err == ErrShutdownDropped {
+				droppedMu.Lock()
+				droppedCount++
+				droppedMu.Unlock()
+			}
+		},
+	})
+
+	// Add output that never consumes (causes backpressure)
+	out, err := dist.AddOutput(nil)
+	if err != nil {
+		t.Fatalf("failed to add output: %v", err)
+	}
+
+	// Create input with buffered messages
+	in := make(chan int, 20)
+	for i := 0; i < 20; i++ {
+		in <- i
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done, err := dist.Distribute(ctx, in)
+	if err != nil {
+		t.Fatalf("failed to distribute: %v", err)
+	}
+
+	// Let some messages try to route (will block on full output)
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel to trigger shutdown
+	cancel()
+	close(in)
+
+	// Wait for completion
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("distributor did not complete")
+	}
+
+	// Drain output
+	for range out {
+	}
+
+	droppedMu.Lock()
+	dropped := droppedCount
+	droppedMu.Unlock()
+
+	t.Logf("Dropped messages reported: %d", dropped)
+
+	// The key assertion: messages in buffer should be reported, not silently lost
+	// With 20 messages, small buffer, and short timeout, we expect drops
+	if dropped == 0 {
+		t.Error("expected some messages to be reported as dropped, but none were")
+	}
+}

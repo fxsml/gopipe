@@ -11,6 +11,21 @@ import (
 // It takes a context and an input value, and returns a slice of output values or an error.
 type ProcessFunc[In, Out any] func(ctx context.Context, in In) ([]Out, error)
 
+// drainChannel performs non-blocking drain of a channel, calling onDrop for each value.
+func drainChannel[T any](ch <-chan T, onDrop func(T)) {
+	for {
+		select {
+		case v, ok := <-ch:
+			if !ok {
+				return
+			}
+			onDrop(v)
+		default:
+			return
+		}
+	}
+}
+
 // Config configures behavior of a Pipe.
 type Config struct {
 	// Concurrency sets the number of concurrent workers.
@@ -127,6 +142,11 @@ func startProcessing[In, Out any](
 			// Workers finished naturally (input closed)
 		}
 		<-wgDone
+
+		// Non-blocking drain of remaining input - report as dropped
+		drainChannel(in, func(val In) {
+			cfg.ErrorHandler(val, ErrShutdownDropped)
+		})
 
 		if cfg.CleanupHandler != nil {
 			cleanupCtx := context.Background()

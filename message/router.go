@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fxsml/gopipe/pipe"
 )
@@ -55,13 +56,14 @@ type poolEntry struct {
 type Router struct {
 	logger Logger
 
-	mu           sync.RWMutex
-	handlers     map[string]handlerEntry
-	pools        map[string]poolEntry
-	errorHandler ErrorHandler
-	bufferSize   int
-	middleware   []Middleware
-	started      bool
+	mu              sync.RWMutex
+	handlers        map[string]handlerEntry
+	pools           map[string]poolEntry
+	errorHandler    ErrorHandler
+	bufferSize      int
+	shutdownTimeout time.Duration
+	middleware      []Middleware
+	started         bool
 }
 
 // RouterConfig configures the message router.
@@ -74,6 +76,10 @@ type RouterConfig struct {
 	ErrorHandler ErrorHandler
 	// Logger for router events (default: slog.Default()).
 	Logger Logger
+	// ShutdownTimeout controls shutdown behavior on context cancellation.
+	// If <= 0, waits indefinitely for handlers to finish naturally.
+	// If > 0, waits up to this duration then forces shutdown.
+	ShutdownTimeout time.Duration
 }
 
 func (c RouterConfig) parse() RouterConfig {
@@ -94,11 +100,12 @@ func (c RouterConfig) parse() RouterConfig {
 func NewRouter(cfg RouterConfig) *Router {
 	cfg = cfg.parse()
 	r := &Router{
-		handlers:     make(map[string]handlerEntry),
-		pools:        make(map[string]poolEntry),
-		bufferSize:   cfg.BufferSize,
-		errorHandler: cfg.ErrorHandler,
-		logger:       cfg.Logger,
+		handlers:        make(map[string]handlerEntry),
+		pools:           make(map[string]poolEntry),
+		bufferSize:      cfg.BufferSize,
+		shutdownTimeout: cfg.ShutdownTimeout,
+		errorHandler:    cfg.ErrorHandler,
+		logger:          cfg.Logger,
 	}
 	// Create default pool from config (cannot fail: valid name, not started, no duplicates)
 	_ = r.AddPoolWithConfig("default", cfg.Pool)
@@ -212,8 +219,9 @@ func (r *Router) pipeSinglePool(ctx context.Context, in <-chan *Message, fn Proc
 	r.mu.RUnlock()
 
 	cfg := pipe.Config{
-		BufferSize:  defaultPool.cfg.BufferSize,
-		Concurrency: defaultPool.cfg.Workers,
+		BufferSize:      defaultPool.cfg.BufferSize,
+		Concurrency:     defaultPool.cfg.Workers,
+		ShutdownTimeout: r.shutdownTimeout,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			r.errorHandler(msg, err)
@@ -235,7 +243,8 @@ func (r *Router) pipeMultiPool(ctx context.Context, in <-chan *Message, fn Proce
 	r.mu.RUnlock()
 
 	dist := pipe.NewDistributor[*Message](pipe.DistributorConfig[*Message]{
-		Buffer: r.bufferSize,
+		Buffer:          r.bufferSize,
+		ShutdownTimeout: r.shutdownTimeout,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			r.logger.Error("Routing message failed",
@@ -247,7 +256,8 @@ func (r *Router) pipeMultiPool(ctx context.Context, in <-chan *Message, fn Proce
 	})
 
 	merger := pipe.NewMerger[*Message](pipe.MergerConfig{
-		Buffer: r.bufferSize,
+		Buffer:          r.bufferSize,
+		ShutdownTimeout: r.shutdownTimeout,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			r.logger.Warn("Message merge failed",
@@ -266,8 +276,9 @@ func (r *Router) pipeMultiPool(ctx context.Context, in <-chan *Message, fn Proce
 		}
 
 		cfg := pipe.Config{
-			BufferSize:  pool.cfg.BufferSize,
-			Concurrency: pool.cfg.Workers,
+			BufferSize:      pool.cfg.BufferSize,
+			Concurrency:     pool.cfg.Workers,
+			ShutdownTimeout: r.shutdownTimeout,
 			ErrorHandler: func(in any, err error) {
 				msg := in.(*Message)
 				r.errorHandler(msg, err)

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1260,6 +1262,316 @@ func TestEngine_DefaultMarshaler(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for engine to stop")
+	}
+}
+
+func TestEngine_Shutdown_DistributorDoesNotHang(t *testing.T) {
+	// This test verifies that shutdown completes even when output channels are full.
+	// Previously, the distributor had no ShutdownTimeout, causing it to block
+	// indefinitely when trying to route to full output channels.
+
+	engine := NewEngine(EngineConfig{
+		Marshaler:       NewJSONMarshaler(),
+		ShutdownTimeout: 500 * time.Millisecond,
+		BufferSize:      1, // Small buffer to easily fill
+	})
+
+	// Handler that produces output
+	handler := NewCommandHandler(
+		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
+		},
+		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+	)
+	_ = engine.AddHandler("test-handler", nil, handler)
+
+	input := make(chan *RawMessage, 10)
+	_, _ = engine.AddRawInput("test-input", nil, input)
+	output, _ := engine.AddRawOutput("test-output", nil) // Never consume from this!
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done, err := engine.Start(ctx)
+	if err != nil {
+		t.Fatalf("failed to start engine: %v", err)
+	}
+
+	// Send multiple messages to fill buffers
+	for i := 0; i < 5; i++ {
+		data, _ := json.Marshal(TestCommand{ID: "123", Name: "test"})
+		input <- &RawMessage{Data: data, Attributes: Attributes{"type": "test.command"}}
+	}
+	close(input)
+
+	// Give some time for messages to flow through
+	time.Sleep(100 * time.Millisecond)
+
+	// Cancel context - distributor should NOT hang even though output is not consumed
+	cancel()
+
+	// Shutdown should complete within reasonable time (ShutdownTimeout + buffer)
+	select {
+	case <-done:
+		// Success - shutdown completed
+	case <-time.After(3 * time.Second):
+		t.Fatal("shutdown hung - distributor likely blocked on full output channel")
+	}
+
+	// Drain output to avoid goroutine leak
+	for range output {
+	}
+}
+
+func TestEngine_Shutdown_ErrorHandlerCalledForDroppedMessages(t *testing.T) {
+	// This test verifies that ErrorHandler is called for messages that are
+	// dropped during shutdown timeout (when buffers are full and can't drain).
+
+	var droppedMessages sync.Map
+	var droppedCount atomic.Int32
+
+	engine := NewEngine(EngineConfig{
+		Marshaler:       NewJSONMarshaler(),
+		ShutdownTimeout: 200 * time.Millisecond,
+		BufferSize:      5, // Small buffer to fill up
+		ErrorHandler: func(msg *Message, err error) {
+			droppedCount.Add(1)
+			droppedMessages.Store(msg.ID(), err)
+		},
+	})
+
+	// Handler that produces output for every input
+	handler := NewCommandHandler(
+		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
+		},
+		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+	)
+	_ = engine.AddHandler("test-handler", nil, handler)
+
+	input := make(chan *RawMessage, 20)
+	_, _ = engine.AddRawInput("test-input", nil, input)
+	output, _ := engine.AddRawOutput("test-output", nil) // Never consume - this blocks!
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done, err := engine.Start(ctx)
+	if err != nil {
+		t.Fatalf("failed to start engine: %v", err)
+	}
+
+	// Send enough messages to fill all buffers in the pipeline
+	// Pipeline: input -> merger -> router -> distributor -> output (blocked)
+	for i := 0; i < 15; i++ {
+		data, _ := json.Marshal(TestCommand{ID: fmt.Sprintf("msg-%d", i), Name: "test"})
+		select {
+		case input <- &RawMessage{Data: data, Attributes: Attributes{"type": "test.command"}}:
+		case <-time.After(100 * time.Millisecond):
+			// Input buffer full, that's fine - we've filled it
+		}
+	}
+	close(input)
+
+	// Give time for messages to flow through and fill buffers
+	time.Sleep(100 * time.Millisecond)
+
+	// Cancel context - shutdown timeout will fire and drop buffered messages
+	cancel()
+
+	// Wait for shutdown
+	select {
+	case <-done:
+		// Success - shutdown completed
+	case <-time.After(3 * time.Second):
+		t.Fatal("shutdown hung")
+	}
+
+	// ErrorHandler should have been called for messages stuck in buffers
+	dropped := droppedCount.Load()
+	t.Logf("ErrorHandler called %d times for dropped messages", dropped)
+
+	// We expect at least some messages to be dropped (exact count depends on timing)
+	// The important thing is that ErrorHandler WAS called, not that it was called
+	// a specific number of times
+	if dropped == 0 {
+		t.Error("expected ErrorHandler to be called for dropped messages during shutdown, but it was never called")
+	}
+
+	// Verify the errors indicate shutdown/timeout
+	droppedMessages.Range(func(key, value any) bool {
+		t.Logf("  dropped message %v: %v", key, value)
+		return true
+	})
+
+	// Drain output to avoid goroutine leak
+	for range output {
+	}
+}
+
+func TestEngine_Shutdown_NoSilentMessageLoss(t *testing.T) {
+	// This test validates that ALL messages are accounted for during shutdown:
+	// - Successfully output
+	// - Reported to ErrorHandler
+	// - NO messages should be silently lost
+
+	var errorCount atomic.Int32
+	var outputCount atomic.Int32
+	var sentCount atomic.Int32
+
+	engine := NewEngine(EngineConfig{
+		Marshaler:       NewJSONMarshaler(),
+		ShutdownTimeout: 200 * time.Millisecond,
+		BufferSize:      3, // Very small to easily fill
+		ErrorHandler: func(msg *Message, err error) {
+			errorCount.Add(1)
+			t.Logf("ErrorHandler: %s - %v", msg.ID(), err)
+		},
+	})
+
+	// Handler that produces one output per input
+	handler := NewCommandHandler(
+		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
+		},
+		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+	)
+	_ = engine.AddHandler("test-handler", nil, handler)
+
+	input := make(chan *RawMessage, 10)
+	_, _ = engine.AddRawInput("test-input", nil, input)
+	output, _ := engine.AddRawOutput("test-output", nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done, err := engine.Start(ctx)
+	if err != nil {
+		t.Fatalf("failed to start engine: %v", err)
+	}
+
+	// Consume output in background (but slowly, to cause backpressure)
+	outputDone := make(chan struct{})
+	go func() {
+		defer close(outputDone)
+		for range output {
+			outputCount.Add(1)
+			time.Sleep(50 * time.Millisecond) // Slow consumer
+		}
+	}()
+
+	// Send messages
+	for i := 0; i < 20; i++ {
+		data, _ := json.Marshal(TestCommand{ID: fmt.Sprintf("msg-%02d", i), Name: "test"})
+		select {
+		case input <- &RawMessage{Data: data, Attributes: Attributes{"type": "test.command"}}:
+			sentCount.Add(1)
+		case <-time.After(50 * time.Millisecond):
+			// Can't send more, buffers full
+			t.Logf("Could not send message %d - buffers full", i)
+		}
+	}
+	t.Logf("Sent %d messages", sentCount.Load())
+
+	// Let some messages flow through
+	time.Sleep(150 * time.Millisecond)
+
+	// Cancel context to trigger shutdown
+	cancel()
+	close(input)
+
+	// Wait for shutdown
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("shutdown hung")
+	}
+
+	// Wait for output consumer to finish
+	<-outputDone
+
+	sent := sentCount.Load()
+	received := outputCount.Load()
+	errored := errorCount.Load()
+	accounted := received + errored
+	silentlyLost := sent - accounted
+
+	t.Logf("Summary:")
+	t.Logf("  Sent:           %d", sent)
+	t.Logf("  Received:       %d", received)
+	t.Logf("  ErrorHandler:   %d", errored)
+	t.Logf("  Accounted for:  %d", accounted)
+	t.Logf("  Silently lost:  %d", silentlyLost)
+
+	if silentlyLost > 0 {
+		t.Errorf("FOUND SILENT MESSAGE LOSS: %d messages were lost without ErrorHandler being called", silentlyLost)
+	}
+}
+
+func TestEngine_GracefulShutdown_HandlerContextNotCanceled(t *testing.T) {
+	// This test verifies that handlers don't see context cancellation during
+	// graceful shutdown. The handler context should only be canceled when
+	// ShutdownTimeout fires (force drain), not when the app context is canceled.
+
+	engine := NewEngine(EngineConfig{
+		Marshaler:       NewJSONMarshaler(),
+		ShutdownTimeout: 5 * time.Second,
+	})
+
+	handlerStarted := make(chan struct{})
+	handlerCtxCanceled := make(chan bool, 1)
+	handlerDone := make(chan struct{})
+
+	// Handler that checks if its context is canceled during execution
+	handler := NewCommandHandler(
+		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+			close(handlerStarted)
+
+			// Simulate slow work
+			time.Sleep(200 * time.Millisecond)
+
+			// Check if context was canceled during our work
+			handlerCtxCanceled <- ctx.Err() != nil
+
+			close(handlerDone)
+			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
+		},
+		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+	)
+	_ = engine.AddHandler("slow-handler", nil, handler)
+
+	input := make(chan *RawMessage, 1)
+	_, _ = engine.AddRawInput("test-input", nil, input)
+	output, _ := engine.AddRawOutput("test-output", nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done, err := engine.Start(ctx)
+	if err != nil {
+		t.Fatalf("failed to start engine: %v", err)
+	}
+
+	// Send message
+	data, _ := json.Marshal(TestCommand{ID: "123", Name: "test"})
+	input <- &RawMessage{Data: data, Attributes: Attributes{"type": "test.command"}}
+	close(input)
+
+	// Wait for handler to start
+	<-handlerStarted
+
+	// Cancel app context while handler is processing
+	cancel()
+
+	// Wait for handler to complete
+	<-handlerDone
+
+	// Verify handler context was NOT canceled during graceful shutdown
+	if wasCanceled := <-handlerCtxCanceled; wasCanceled {
+		t.Error("handler context should not be canceled during graceful shutdown")
+	}
+
+	// Drain output
+	<-output
+
+	// Verify clean shutdown
+	select {
+	case <-done:
+		// Success
+	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for engine to stop")
 	}
 }

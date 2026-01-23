@@ -93,10 +93,11 @@ func NewEngine(cfg EngineConfig) *Engine {
 		loopbackShutdown: make(chan struct{}),
 		tracker:          newMessageTracker(),
 		router: NewRouter(RouterConfig{
-			ErrorHandler: cfg.ErrorHandler,
-			BufferSize:   cfg.RouterBufferSize,
-			Pool:         cfg.RouterPool,
-			Logger:       cfg.Logger,
+			ErrorHandler:    cfg.ErrorHandler,
+			BufferSize:      cfg.RouterBufferSize,
+			Pool:            cfg.RouterPool,
+			Logger:          cfg.Logger,
+			ShutdownTimeout: cfg.ShutdownTimeout,
 		}),
 	}
 
@@ -121,10 +122,11 @@ func NewEngine(cfg EngineConfig) *Engine {
 	})
 
 	// Create distributor upfront - AddOutput works before Distribute()
-	// Distributor has no ShutdownTimeout - it waits for input to close naturally,
-	// ensuring all messages that pass the merger are delivered to outputs.
+	// ShutdownTimeout ensures distributor stops routing after timeout,
+	// preventing hang when output channels are full.
 	e.distributor = pipe.NewDistributor(pipe.DistributorConfig[*Message]{
-		Buffer: cfg.BufferSize,
+		Buffer:          cfg.BufferSize,
+		ShutdownTimeout: cfg.ShutdownTimeout,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			msg.Nack(err)
@@ -324,6 +326,11 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		"buffer_size", e.cfg.BufferSize,
 		"router_workers", e.cfg.RouterPool.Workers)
 
+	// Create handler context that only cancels on force drain.
+	// This allows handlers to complete in-flight work during graceful shutdown
+	// instead of immediately failing with "context canceled".
+	handlerCtx, cancelHandlers := context.WithCancel(context.Background())
+
 	// Shutdown orchestration goroutine
 	go func() {
 		<-ctx.Done()
@@ -340,6 +347,7 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 				e.cfg.Logger.Debug("Pipeline drained, closing loopback outputs", "component", "engine")
 			case <-time.After(e.cfg.ShutdownTimeout):
 				e.cfg.Logger.Warn("Shutdown timeout reached, forcing loopback close", "component", "engine")
+				cancelHandlers() // Force handlers to stop
 			}
 		} else {
 			<-e.tracker.drained()
@@ -351,6 +359,9 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 
 		// Close shutdown channel to trigger marshal/unmarshal cleanup
 		close(e.shutdown)
+
+		// Clean up handler context after shutdown completes
+		cancelHandlers()
 	}()
 
 	// 1. Start merger
@@ -360,7 +371,8 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 	}
 
 	// 2. Route messages to handlers (with tracking middleware)
-	handled, err := e.router.Pipe(ctx, merged)
+	// Uses handlerCtx so handlers can complete in-flight work during graceful shutdown
+	handled, err := e.router.Pipe(handlerCtx, merged)
 	if err != nil {
 		return nil, err
 	}
@@ -511,17 +523,25 @@ func (e *Engine) shutdownIfTimeout() <-chan struct{} {
 	return nil
 }
 
-// wrapChannel forwards values from in, calling onReceive for each.
-// Stops when in closes or done closes (if non-nil).
-func wrapChannel[T any](in <-chan T, done <-chan struct{}, onReceive func(), wg *sync.WaitGroup, bufSize int) <-chan T {
-	out := make(chan T, bufSize)
-	wg.Add(1)
+// wrapMessageChannel forwards messages, with built-in logging on shutdown drop.
+func (e *Engine) wrapMessageChannel(in <-chan *Message, done <-chan struct{}, onReceive func(), component string, bufSize int) <-chan *Message {
+	out := make(chan *Message, bufSize)
+	e.wrapperWg.Add(1)
+
+	onDrop := func(msg *Message) {
+		e.cfg.Logger.Warn("Message dropped",
+			"component", component,
+			"error", pipe.ErrShutdownDropped,
+			"attributes", msg.Attributes)
+		e.cfg.ErrorHandler(msg, pipe.ErrShutdownDropped)
+	}
+
 	go func() {
-		defer wg.Done()
+		defer e.wrapperWg.Done()
 		defer close(out)
 		for {
 			select {
-			case val, ok := <-in:
+			case msg, ok := <-in:
 				if !ok {
 					return
 				}
@@ -529,11 +549,14 @@ func wrapChannel[T any](in <-chan T, done <-chan struct{}, onReceive func(), wg 
 					onReceive()
 				}
 				select {
-				case out <- val:
+				case out <- msg:
 				case <-done:
+					onDrop(msg)
+					drainMessages(in, onDrop)
 					return
 				}
 			case <-done:
+				drainMessages(in, onDrop)
 				return
 			}
 		}
@@ -541,25 +564,94 @@ func wrapChannel[T any](in <-chan T, done <-chan struct{}, onReceive func(), wg 
 	return out
 }
 
+// wrapRawChannel forwards raw messages, with built-in logging on shutdown drop.
+func (e *Engine) wrapRawChannel(in <-chan *RawMessage, done <-chan struct{}, onReceive func(), component string, bufSize int) <-chan *RawMessage {
+	out := make(chan *RawMessage, bufSize)
+	e.wrapperWg.Add(1)
+
+	onDrop := func(msg *RawMessage) {
+		e.cfg.Logger.Warn("Message dropped",
+			"component", component,
+			"error", pipe.ErrShutdownDropped,
+			"attributes", msg.Attributes)
+		e.cfg.ErrorHandler(&Message{Attributes: msg.Attributes}, pipe.ErrShutdownDropped)
+	}
+
+	go func() {
+		defer e.wrapperWg.Done()
+		defer close(out)
+		for {
+			select {
+			case msg, ok := <-in:
+				if !ok {
+					return
+				}
+				if onReceive != nil {
+					onReceive()
+				}
+				select {
+				case out <- msg:
+				case <-done:
+					onDrop(msg)
+					drainRawMessages(in, onDrop)
+					return
+				}
+			case <-done:
+				drainRawMessages(in, onDrop)
+				return
+			}
+		}
+	}()
+	return out
+}
+
+func drainMessages(ch <-chan *Message, onDrop func(*Message)) {
+	for {
+		select {
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			onDrop(msg)
+		default:
+			return
+		}
+	}
+}
+
+func drainRawMessages(ch <-chan *RawMessage, onDrop func(*RawMessage)) {
+	for {
+		select {
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			onDrop(msg)
+		default:
+			return
+		}
+	}
+}
+
 // wrapInputChannel wraps an input channel to track message entry.
 func (e *Engine) wrapInputChannel(ch <-chan *Message) <-chan *Message {
-	return wrapChannel(ch, e.shutdownIfTimeout(), func() { e.tracker.enter(1) }, &e.wrapperWg, 0)
+	return e.wrapMessageChannel(ch, e.shutdownIfTimeout(), func() { e.tracker.enter(1) }, "input", 0)
 }
 
 // wrapRawInputChannel wraps a raw input channel to track message entry.
 func (e *Engine) wrapRawInputChannel(ch <-chan *RawMessage) <-chan *RawMessage {
-	return wrapChannel(ch, e.shutdownIfTimeout(), func() { e.tracker.enter(1) }, &e.wrapperWg, 0)
+	return e.wrapRawChannel(ch, e.shutdownIfTimeout(), func() { e.tracker.enter(1) }, "raw-input", 0)
 }
 
 // wrapOutputChannel wraps an output channel to track message exit.
 func (e *Engine) wrapOutputChannel(ch <-chan *Message) <-chan *Message {
-	return wrapChannel(ch, e.shutdown, func() { e.tracker.exit(1) }, &e.wrapperWg, e.cfg.BufferSize)
+	return e.wrapMessageChannel(ch, e.shutdown, func() { e.tracker.exit(1) }, "output", e.cfg.BufferSize)
 }
 
 // wrapLoopbackOutputChannel wraps a loopback output channel.
 // Loopback outputs are NOT tracked (no Exit call) since they form internal cycles.
 func (e *Engine) wrapLoopbackOutputChannel(ch <-chan *Message) <-chan *Message {
-	return wrapChannel(ch, e.loopbackShutdown, nil, &e.wrapperWg, e.cfg.BufferSize)
+	return e.wrapMessageChannel(ch, e.loopbackShutdown, nil, "loopback", e.cfg.BufferSize)
 }
 
 // trackingMiddleware creates middleware that adjusts the message tracker

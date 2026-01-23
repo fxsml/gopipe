@@ -17,7 +17,7 @@ type Merger[T any] struct {
 	done      chan struct{}
 	cfg       MergerConfig
 	closed    bool
-	inputs    []<-chan T
+	inputs    []<-chan T // pre-Merge inputs (nil after started)
 	inputDone map[<-chan T]chan struct{}
 }
 
@@ -132,9 +132,11 @@ func (m *Merger[T]) startInput(ch <-chan T, done chan struct{}) {
 		if done != nil {
 			defer close(done)
 		}
+		onDrop := func(v T) { m.cfg.ErrorHandler(v, ErrShutdownDropped) }
 		for {
 			select {
 			case <-m.done:
+				drainChannel(ch, onDrop)
 				return
 			case v, ok := <-ch:
 				if !ok {
@@ -144,6 +146,7 @@ func (m *Merger[T]) startInput(ch <-chan T, done chan struct{}) {
 				case m.out <- v:
 				case <-m.done:
 					m.cfg.ErrorHandler(v, ErrShutdownDropped)
+					drainChannel(ch, onDrop)
 					return
 				}
 			}
