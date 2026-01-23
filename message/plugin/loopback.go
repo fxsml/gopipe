@@ -28,6 +28,9 @@ func Loopback(name string, matcher message.Matcher) message.Plugin {
 // ProcessLoopback routes matching output messages back after transformation.
 // The handle function returns zero or more messages; return nil to drop.
 // Uses graceful shutdown coordination.
+//
+// Tracks fan-in: if handle returns fewer messages than input (e.g., drops),
+// the tracker is adjusted to ensure proper graceful shutdown.
 func ProcessLoopback(
 	name string,
 	matcher message.Matcher,
@@ -39,7 +42,14 @@ func ProcessLoopback(
 			return fmt.Errorf("process loopback output: %w", err)
 		}
 
-		processed := channel.Process(out, handle)
+		// Wrap handle to track fan-in/fan-out
+		trackedHandle := func(msg *message.Message) []*message.Message {
+			results := handle(msg)
+			e.AdjustInFlight(1 - len(results))
+			return results
+		}
+
+		processed := channel.Process(out, trackedHandle)
 
 		_, err = e.AddLoopbackInput(name, nil, processed)
 		if err != nil {
@@ -69,6 +79,9 @@ func (c BatchLoopbackConfig) applyDefaults() BatchLoopbackConfig {
 // Batches are sent when MaxSize is reached or MaxDuration elapses.
 // The handle function returns zero or more messages; return nil to drop.
 // Uses graceful shutdown coordination.
+//
+// Tracks fan-in: when N messages are batched into M outputs (where M < N),
+// the tracker is adjusted to ensure proper graceful shutdown.
 func BatchLoopback(
 	name string,
 	matcher message.Matcher,
@@ -82,7 +95,14 @@ func BatchLoopback(
 			return fmt.Errorf("batch loopback output: %w", err)
 		}
 
-		processed := channel.Batch(out, handle, config.MaxSize, config.MaxDuration)
+		// Wrap handle to track fan-in/fan-out
+		trackedHandle := func(batch []*message.Message) []*message.Message {
+			results := handle(batch)
+			e.AdjustInFlight(len(batch) - len(results))
+			return results
+		}
+
+		processed := channel.Batch(out, trackedHandle, config.MaxSize, config.MaxDuration)
 
 		_, err = e.AddLoopbackInput(name, nil, processed)
 		if err != nil {
@@ -103,6 +123,9 @@ type GroupLoopbackConfig struct {
 // Messages with the same key are batched together until config limits are reached.
 // The handle function receives the key and grouped messages; return nil to drop.
 // Uses graceful shutdown coordination.
+//
+// Tracks fan-in: when N grouped messages produce M outputs (where M < N),
+// the tracker is adjusted to ensure proper graceful shutdown.
 func GroupLoopback[K comparable](
 	name string,
 	matcher message.Matcher,
@@ -121,8 +144,12 @@ func GroupLoopback[K comparable](
 			MaxDuration:         config.MaxDuration,
 			MaxConcurrentGroups: config.MaxConcurrentGroups,
 		})
+
+		// Wrap transform to track fan-in/fan-out
 		transformed := channel.Transform(groups, func(g channel.Group[K, *message.Message]) []*message.Message {
-			return handle(g.Key, g.Items)
+			results := handle(g.Key, g.Items)
+			e.AdjustInFlight(len(g.Items) - len(results))
+			return results
 		})
 		processed := channel.Flatten(transformed)
 

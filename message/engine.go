@@ -184,6 +184,26 @@ func (e *Engine) AddPlugin(plugins ...Plugin) error {
 	return nil
 }
 
+// AdjustInFlight adjusts the in-flight message count for fan-in or fan-out
+// operations in loopback plugins. Call with (inputCount - outputCount):
+//
+//   - Positive delta (fan-in): more messages consumed than produced
+//   - Negative delta (fan-out): more messages produced than consumed
+//   - Zero: no adjustment needed
+//
+// Example usage in a loopback handler:
+//
+//	results := handle(batch)
+//	e.AdjustInFlight(len(batch) - len(results))
+func (e *Engine) AdjustInFlight(delta int) {
+	switch {
+	case delta > 0:
+		e.tracker.exit(int64(delta)) // Fan-in: consumed more than produced
+	case delta < 0:
+		e.tracker.enter(int64(-delta)) // Fan-out: produced more than consumed
+	}
+}
+
 // AddInput registers a typed input channel.
 // Typed inputs go directly to the merger, bypassing unmarshaling.
 // Use for internal messaging, testing, or when data is already typed.
@@ -208,7 +228,11 @@ func (e *Engine) AddRawInput(name string, matcher Matcher, ch <-chan *RawMessage
 
 // AddLoopbackInput registers a loopback input channel.
 // Loopback inputs are NOT tracked by the message tracker - they are internal cycles.
-// Use the plugin.Loopback variants instead of calling this directly.
+//
+// For custom loopbacks with fan-in/fan-out, call AdjustInFlight(inputCount - outputCount)
+// after processing to ensure graceful shutdown works correctly.
+//
+// Prefer using the plugin.Loopback variants which handle tracking automatically.
 func (e *Engine) AddLoopbackInput(name string, matcher Matcher, ch <-chan *Message) (<-chan struct{}, error) {
 	e.cfg.Logger.Info("Adding loopback input", "component", "engine", "input", name)
 	filtered := e.applyTypedInputMatcher(name, ch, matcher)
@@ -249,8 +273,12 @@ func (e *Engine) AddRawOutput(name string, matcher Matcher) (<-chan *RawMessage,
 
 // AddLoopbackOutput registers a loopback output for graceful shutdown coordination.
 // Loopback outputs are NOT tracked - they form internal cycles.
-// The Engine wraps these outputs to control when they close during shutdown.
-// Use the plugin.Loopback variants instead of calling this directly.
+// The engine wraps these outputs to control when they close during shutdown.
+//
+// For custom loopbacks with fan-in/fan-out, call AdjustInFlight(inputCount - outputCount)
+// after processing to ensure graceful shutdown works correctly.
+//
+// Prefer using the plugin.Loopback variants which handle tracking automatically.
 func (e *Engine) AddLoopbackOutput(name string, matcher Matcher) (<-chan *Message, error) {
 	e.cfg.Logger.Info("Adding loopback output", "component", "engine", "output", name)
 
@@ -515,17 +543,17 @@ func wrapChannel[T any](in <-chan T, done <-chan struct{}, onReceive func(), wg 
 
 // wrapInputChannel wraps an input channel to track message entry.
 func (e *Engine) wrapInputChannel(ch <-chan *Message) <-chan *Message {
-	return wrapChannel(ch, e.shutdownIfTimeout(), e.tracker.enter, &e.wrapperWg, 0)
+	return wrapChannel(ch, e.shutdownIfTimeout(), func() { e.tracker.enter(1) }, &e.wrapperWg, 0)
 }
 
 // wrapRawInputChannel wraps a raw input channel to track message entry.
 func (e *Engine) wrapRawInputChannel(ch <-chan *RawMessage) <-chan *RawMessage {
-	return wrapChannel(ch, e.shutdownIfTimeout(), e.tracker.enter, &e.wrapperWg, 0)
+	return wrapChannel(ch, e.shutdownIfTimeout(), func() { e.tracker.enter(1) }, &e.wrapperWg, 0)
 }
 
 // wrapOutputChannel wraps an output channel to track message exit.
 func (e *Engine) wrapOutputChannel(ch <-chan *Message) <-chan *Message {
-	return wrapChannel(ch, e.shutdown, e.tracker.exit, &e.wrapperWg, e.cfg.BufferSize)
+	return wrapChannel(ch, e.shutdown, func() { e.tracker.exit(1) }, &e.wrapperWg, e.cfg.BufferSize)
 }
 
 // wrapLoopbackOutputChannel wraps a loopback output channel.
@@ -543,21 +571,19 @@ func (e *Engine) trackingMiddleware() Middleware {
 
 			if err != nil {
 				// Error = message consumed without producing output
-				e.tracker.exit()
+				e.tracker.exit(1)
 				return nil, err
 			}
 
-			switch len(results) {
+			switch n := len(results); n {
 			case 0:
 				// Dropped - message consumed without producing output
-				e.tracker.exit()
+				e.tracker.exit(1)
 			case 1:
 				// 1:1 transform - no change to count
 			default:
 				// Multiplied - N-1 new messages added
-				for i := 1; i < len(results); i++ {
-					e.tracker.enter()
-				}
+				e.tracker.enter(int64(n - 1))
 			}
 
 			return results, nil
