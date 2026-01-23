@@ -5,6 +5,22 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-01-23
+
+### Added
+
+- **message/cloudevents:** Middleware support for Subscriber and Publisher (#96)
+  - `Subscriber.Use()` and `Publisher.Use()` methods for applying `pipe/middleware`
+  - Optional variadic middleware params in `SubscriberPlugin` and `PublisherPlugin`
+  - Enables retry logic, circuit breaking, and backoff on connection errors
+
+### Fixed
+
+- **message:** Track fan-in/fan-out in loopback plugins for graceful shutdown (#95)
+  - Added `Engine.AdjustInFlight()` for loopback plugins to adjust in-flight message count
+  - `BatchLoopback`, `GroupLoopback`, and `ProcessLoopback` now track fan-in/fan-out
+  - Graceful shutdown completes immediately instead of waiting for timeout when batching
+
 ## [0.14.1] - 2026-01-21
 
 ### Fixed
