@@ -121,10 +121,11 @@ func NewEngine(cfg EngineConfig) *Engine {
 	})
 
 	// Create distributor upfront - AddOutput works before Distribute()
-	// Distributor has no ShutdownTimeout - it waits for input to close naturally,
-	// ensuring all messages that pass the merger are delivered to outputs.
+	// Long ShutdownTimeout ensures distributor waits for input to close naturally.
+	// Engine-level timeout handles forced shutdown by closing loopbacks.
 	e.distributor = pipe.NewDistributor(pipe.DistributorConfig[*Message]{
-		Buffer: cfg.BufferSize,
+		Buffer:          cfg.BufferSize,
+		ShutdownTimeout: time.Hour,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			msg.Nack(err)
@@ -437,14 +438,11 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 }
 
 // unmarshal processes raw messages into typed messages.
-// No ShutdownTimeout - waits for input to close naturally, ensuring all
-// received messages are forwarded to the merger before exiting.
-// Users should close input channels for graceful shutdown.
+// Long ShutdownTimeout ensures unmarshal waits for input to close naturally.
+// Engine-level timeout handles forced shutdown by closing loopbacks.
 func (e *Engine) unmarshal(in <-chan *RawMessage) <-chan *Message {
 	p := NewUnmarshalPipe(e.router, e.cfg.Marshaler, pipe.Config{
-		// No ShutdownTimeout: relies on input closing for natural completion.
-		// This prevents race where unmarshal and merger timeout simultaneously,
-		// potentially dropping messages buffered in unmarshal's output.
+		ShutdownTimeout: time.Hour,
 		ErrorHandler: func(in any, err error) {
 			raw := in.(*RawMessage)
 			e.cfg.Logger.Error("Unmarshaling raw message failed",
@@ -460,13 +458,11 @@ func (e *Engine) unmarshal(in <-chan *RawMessage) <-chan *Message {
 }
 
 // marshal processes typed messages into raw messages.
-// No ShutdownTimeout - waits for distributor to close its output naturally.
-// This ensures all messages that reach the distributor are marshaled and delivered.
+// Long ShutdownTimeout ensures marshal waits for distributor to close its output.
+// Engine-level timeout handles forced shutdown by closing loopbacks.
 func (e *Engine) marshal(in <-chan *Message) <-chan *RawMessage {
 	p := NewMarshalPipe(e.cfg.Marshaler, pipe.Config{
-		// No ShutdownTimeout: relies on distributor closing its output.
-		// Distributor has no timeout and waits for router to complete,
-		// which waits for merger. This creates cascading drain.
+		ShutdownTimeout: time.Hour,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			msg.Nack(err)

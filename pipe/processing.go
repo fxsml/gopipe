@@ -32,8 +32,12 @@ type Config struct {
 	CleanupTimeout time.Duration
 
 	// ShutdownTimeout controls shutdown behavior on context cancellation.
-	// If <= 0, waits indefinitely for input to close naturally.
-	// If > 0, waits up to this duration then forces shutdown.
+	// If <= 0, forces immediate shutdown (no grace period).
+	// If > 0, waits up to this duration for natural completion, then forces shutdown.
+	// On forced shutdown:
+	//   - Workers stop forwarding (escape blocked sends)
+	//   - Workers drain remaining input, calling ErrorHandler for each
+	//   - Workers exit when input closes
 	ShutdownTimeout time.Duration
 }
 
@@ -54,8 +58,10 @@ func (c Config) parse() Config {
 // and returns a channel that will receive the processed outputs.
 //
 // Processing continues until the input channel is closed or the context is canceled.
-// With ShutdownTimeout > 0, workers exit after timeout on context cancellation.
-// The output channel is closed when processing is complete.
+// On context cancellation, ShutdownTimeout controls the grace period before forced shutdown.
+// On forced shutdown, workers stop forwarding and drain remaining input, calling
+// ErrorHandler with ErrShutdownDropped for each drained message.
+// Workers exit when input closes. The output channel is closed when processing is complete.
 //
 // This function does not apply middleware. Users should call Use
 // on the pipe before calling Start to add middleware like retry, logging, etc.
@@ -77,6 +83,10 @@ func startProcessing[In, Out any](
 			for {
 				select {
 				case <-done:
+					// Drain remaining input, reporting each as dropped
+					for val := range in {
+						cfg.ErrorHandler(val, ErrShutdownDropped)
+					}
 					return
 				case val, ok := <-in:
 					if !ok {
@@ -85,13 +95,15 @@ func startProcessing[In, Out any](
 					if res, err := fn(ctx, val); err != nil {
 						cfg.ErrorHandler(val, err)
 					} else {
-						for i, r := range res {
+						for _, r := range res {
 							select {
 							case out <- r:
 							case <-done:
-								// Report this and remaining outputs as dropped
-								for _, dropped := range res[i:] {
-									cfg.ErrorHandler(dropped, ErrShutdownDropped)
+								// Report original input as dropped (outputs couldn't be fully delivered)
+								cfg.ErrorHandler(val, ErrShutdownDropped)
+								// Drain remaining input
+								for val := range in {
+									cfg.ErrorHandler(val, ErrShutdownDropped)
 								}
 								return
 							}
@@ -113,16 +125,18 @@ func startProcessing[In, Out any](
 		select {
 		case <-ctx.Done():
 			if cfg.ShutdownTimeout > 0 {
-				// Wait for natural completion or timeout
+				// Grace period - wait for natural completion or timeout
 				select {
 				case <-wgDone:
-					// Workers finished naturally
+					// Workers finished naturally within grace period
 				case <-time.After(cfg.ShutdownTimeout):
-					// Force shutdown after timeout
+					// Force shutdown after grace period
 					close(done)
 				}
+			} else {
+				// No grace period - force shutdown immediately
+				close(done)
 			}
-			// If timeout <= 0, wait indefinitely for workers to finish naturally
 		case <-wgDone:
 			// Workers finished naturally (input closed)
 		}

@@ -97,7 +97,7 @@ func TestMerger_AddAfterClosed(t *testing.T) {
 
 	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
-		ShutdownTimeout: 1,
+		ShutdownTimeout: 50 * time.Millisecond,
 	})
 	out, err := merger.Merge(ctx)
 	if err != nil {
@@ -113,8 +113,11 @@ func TestMerger_AddAfterClosed(t *testing.T) {
 	// Close context to trigger shutdown
 	cancel()
 
+	// Close ch1 to allow drain to complete (user's responsibility)
+	close(ch1)
+
 	// Wait a bit for shutdown to complete
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	// Try adding after closed - should return nil, error
 	ch2 := make(chan int, 1)
@@ -136,8 +139,7 @@ func TestMerger_AddAfterClosed(t *testing.T) {
 		}
 	}
 
-	// Assert done channel is closed (ch1 was added before shutdown)
-	close(ch1) // Close ch1 so done1 can close
+	// Assert done channel is closed
 	assertDoneClosed(t, done1, 1*time.Second, "ch1")
 }
 
@@ -188,12 +190,21 @@ func TestMerger_ContextCancellation(t *testing.T) {
 func TestMerger_ShutdownDuration(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	var dropped int
+	var mu sync.Mutex
 	merger := NewMerger[int](MergerConfig{
-		Buffer:          10,
-		ShutdownTimeout: 100 * time.Millisecond,
+		Buffer:          1, // Small buffer to cause blocking
+		ShutdownTimeout: 50 * time.Millisecond,
+		ErrorHandler: func(in any, err error) {
+			if err == ErrShutdownDropped {
+				mu.Lock()
+				dropped++
+				mu.Unlock()
+			}
+		},
 	})
 
-	// Channel that won't close naturally
+	// Channel with buffered messages
 	ch := make(chan int, 100)
 	for i := 0; i < 50; i++ {
 		ch <- i
@@ -208,12 +219,16 @@ func TestMerger_ShutdownDuration(t *testing.T) {
 		t.Fatalf("unexpected error starting merger: %v", err)
 	}
 
-	// Read a few values
+	// Read one value to start, then let output fill and worker block
 	<-out
-	<-out
+	time.Sleep(10 * time.Millisecond)
 
 	start := time.Now()
 	cancel()
+
+	// Wait for timeout to fire before closing input
+	time.Sleep(60 * time.Millisecond)
+	close(ch)
 
 	// Drain output
 	count := 0
@@ -223,7 +238,7 @@ func TestMerger_ShutdownDuration(t *testing.T) {
 
 	elapsed := time.Since(start)
 
-	// Should shutdown within ShutdownDuration
+	// Should shutdown within ShutdownDuration + drain time
 	if elapsed > 200*time.Millisecond {
 		t.Errorf("shutdown took too long: %v", elapsed)
 	}
@@ -233,16 +248,30 @@ func TestMerger_ShutdownDuration(t *testing.T) {
 		t.Error("expected to receive some values during shutdown")
 	}
 
-	// Assert done channel is closed (should be closed after shutdown timeout)
+	// Verify some messages were reported as dropped during drain
+	mu.Lock()
+	d := dropped
+	mu.Unlock()
+	if d == 0 {
+		t.Error("expected some messages to be reported as dropped")
+	}
+
+	// Assert done channel is closed
 	assertDoneClosed(t, done, 500*time.Millisecond, "ch")
 }
 
 func TestMerger_ForcedShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	var dropped int
 	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
 		ShutdownTimeout: 50 * time.Millisecond, // Force after 50ms
+		ErrorHandler: func(in any, err error) {
+			if err == ErrShutdownDropped {
+				dropped++
+			}
+		},
 	})
 
 	ch := make(chan int, 10)
@@ -255,14 +284,17 @@ func TestMerger_ForcedShutdown(t *testing.T) {
 		t.Fatalf("unexpected error starting merger: %v", err)
 	}
 
-	// Send some values before cancel (don't close ch)
+	// Send some values before cancel
 	ch <- 1
 	ch <- 2
 
-	// Cancel - should force shutdown after timeout since ch isn't closed
+	// Cancel - should force shutdown after timeout
 	cancel()
 
-	// Output should close after timeout
+	// Close input to allow drain to complete (user's responsibility)
+	close(ch)
+
+	// Output should close after timeout + drain
 	timeout := time.After(500 * time.Millisecond)
 	select {
 	case <-out:
@@ -282,7 +314,7 @@ func TestMerger_NaturalCompletion(t *testing.T) {
 
 	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
-		ShutdownTimeout: 0, // Wait for natural completion
+		ShutdownTimeout: 1 * time.Second, // Grace period for natural completion
 	})
 
 	ch := make(chan int, 10)
@@ -392,7 +424,7 @@ func TestMerger_EmptyChannel(t *testing.T) {
 
 	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
-		ShutdownTimeout: 0,
+		ShutdownTimeout: 1 * time.Second, // Grace period for natural completion
 	})
 
 	ch := make(chan int)
@@ -428,7 +460,7 @@ func TestMerger_MultipleInputsOneCloses(t *testing.T) {
 
 	merger := NewMerger[int](MergerConfig{
 		Buffer:          10,
-		ShutdownTimeout: 0,
+		ShutdownTimeout: 1 * time.Second, // Grace period for natural completion
 	})
 
 	ch1 := make(chan int)
