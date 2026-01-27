@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fxsml/gopipe/pipe"
 )
@@ -212,8 +213,9 @@ func (r *Router) pipeSinglePool(ctx context.Context, in <-chan *Message, fn Proc
 	r.mu.RUnlock()
 
 	cfg := pipe.Config{
-		BufferSize:  defaultPool.cfg.BufferSize,
-		Concurrency: defaultPool.cfg.Workers,
+		BufferSize:      defaultPool.cfg.BufferSize,
+		Concurrency:     defaultPool.cfg.Workers,
+		ShutdownTimeout: time.Hour,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			r.errorHandler(msg, err)
@@ -235,7 +237,8 @@ func (r *Router) pipeMultiPool(ctx context.Context, in <-chan *Message, fn Proce
 	r.mu.RUnlock()
 
 	dist := pipe.NewDistributor[*Message](pipe.DistributorConfig[*Message]{
-		Buffer: r.bufferSize,
+		Buffer:          r.bufferSize,
+		ShutdownTimeout: time.Hour,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			r.logger.Error("Routing message failed",
@@ -247,7 +250,8 @@ func (r *Router) pipeMultiPool(ctx context.Context, in <-chan *Message, fn Proce
 	})
 
 	merger := pipe.NewMerger[*Message](pipe.MergerConfig{
-		Buffer: r.bufferSize,
+		Buffer:          r.bufferSize,
+		ShutdownTimeout: time.Hour,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			r.logger.Warn("Message merge failed",
@@ -266,8 +270,9 @@ func (r *Router) pipeMultiPool(ctx context.Context, in <-chan *Message, fn Proce
 		}
 
 		cfg := pipe.Config{
-			BufferSize:  pool.cfg.BufferSize,
-			Concurrency: pool.cfg.Workers,
+			BufferSize:      pool.cfg.BufferSize,
+			Concurrency:     pool.cfg.Workers,
+			ShutdownTimeout: time.Hour,
 			ErrorHandler: func(in any, err error) {
 				msg := in.(*Message)
 				r.errorHandler(msg, err)
