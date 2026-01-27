@@ -365,29 +365,55 @@ func TestProcessing_MultipleErrors(t *testing.T) {
 }
 
 func TestProcessing_ShutdownTimeout_ForcedExit(t *testing.T) {
-	// Test that workers exit after ShutdownTimeout when context is cancelled
-	// and input doesn't close.
+	// Test that workers stop forwarding after ShutdownTimeout, drain input,
+	// and exit when input closes.
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	in := make(chan int) // Never closed
+	var dropped int
+	var mu sync.Mutex
+	in := make(chan int, 10)
+	for i := 0; i < 10; i++ {
+		in <- i
+	}
+
 	process := func(ctx context.Context, v int) ([]int, error) {
 		return []int{v}, nil
 	}
 
 	out := startProcessing(ctx, in, process, Config{
 		ShutdownTimeout: 50 * time.Millisecond,
+		BufferSize:      1, // Small buffer to cause blocking
+		ErrorHandler: func(in any, err error) {
+			if err == ErrShutdownDropped {
+				mu.Lock()
+				dropped++
+				mu.Unlock()
+			}
+		},
 	})
+
+	// Read one to start processing, then let output fill
+	<-out
+	time.Sleep(10 * time.Millisecond)
 
 	// Cancel context - should trigger forced shutdown after 50ms
 	cancel()
 
-	// Output should close after timeout
-	select {
-	case <-out:
-		// Expected - output closed
-	case <-time.After(200 * time.Millisecond):
-		t.Fatal("output channel not closed after shutdown timeout")
+	// Wait for timeout to fire before closing input
+	time.Sleep(60 * time.Millisecond)
+	close(in)
+
+	// Drain remaining output
+	for range out {
+	}
+
+	// Verify some messages were reported as dropped during drain
+	mu.Lock()
+	d := dropped
+	mu.Unlock()
+	if d == 0 {
+		t.Error("expected some messages to be reported as dropped")
 	}
 }
 
@@ -425,16 +451,24 @@ func TestProcessing_ShutdownTimeout_NaturalCompletion(t *testing.T) {
 }
 
 func TestProcessing_ShutdownTimeout_BlockedOnOutput(t *testing.T) {
-	// Test that workers blocked on output write exit after ShutdownTimeout.
+	// Test that workers blocked on output write escape after ShutdownTimeout,
+	// then drain remaining input.
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	in := make(chan int, 1)
-	in <- 1
+	var dropped int
+	var mu sync.Mutex
+	in := make(chan int, 5)
+	for i := 0; i < 5; i++ {
+		in <- i
+	}
 
-	aboutToWrite := make(chan struct{})
+	aboutToWrite := make(chan struct{}, 1)
 	process := func(ctx context.Context, v int) ([]int, error) {
-		close(aboutToWrite) // Signal we're about to return (worker will then try to write)
+		select {
+		case aboutToWrite <- struct{}{}:
+		default:
+		}
 		return []int{v}, nil
 	}
 
@@ -442,6 +476,13 @@ func TestProcessing_ShutdownTimeout_BlockedOnOutput(t *testing.T) {
 	out := startProcessing(ctx, in, process, Config{
 		BufferSize:      0,
 		ShutdownTimeout: 50 * time.Millisecond,
+		ErrorHandler: func(in any, err error) {
+			if err == ErrShutdownDropped {
+				mu.Lock()
+				dropped++
+				mu.Unlock()
+			}
+		},
 	})
 
 	// Wait for worker to be about to write to output
@@ -454,12 +495,14 @@ func TestProcessing_ShutdownTimeout_BlockedOnOutput(t *testing.T) {
 	start := time.Now()
 	cancel()
 
-	// Wait for output to close (don't read from it - keep worker blocked)
-	// Use a separate goroutine to drain and detect close
+	// Wait for timeout to fire before closing input
+	time.Sleep(60 * time.Millisecond)
+	close(in)
+
+	// Drain output and detect close
 	closed := make(chan struct{})
 	go func() {
 		for range out {
-			// Drain any values (shouldn't be any since we never read before)
 		}
 		close(closed)
 	}()
@@ -473,40 +516,195 @@ func TestProcessing_ShutdownTimeout_BlockedOnOutput(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("output channel not closed after shutdown timeout (worker blocked on output)")
 	}
+
+	// Verify remaining messages were reported as dropped
+	mu.Lock()
+	d := dropped
+	mu.Unlock()
+	if d == 0 {
+		t.Error("expected some messages to be reported as dropped")
+	}
 }
 
-func TestProcessing_NoShutdownTimeout_WaitsIndefinitely(t *testing.T) {
-	// Test that with ShutdownTimeout <= 0, workers wait indefinitely for input to close.
+func TestProcessing_ZeroShutdownTimeout_ImmediateShutdown(t *testing.T) {
+	// Test that with ShutdownTimeout <= 0, shutdown is immediate (no grace period).
+	// Workers enter drain mode right away and report drops.
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	in := make(chan int)
+	var dropped int
+	var mu sync.Mutex
+
+	in := make(chan int, 10)
+	for i := 0; i < 10; i++ {
+		in <- i
+	}
+
+	started := make(chan struct{})
+	var startedOnce sync.Once
+
+	// Use slow processing so we can cancel during processing
 	process := func(ctx context.Context, v int) ([]int, error) {
+		startedOnce.Do(func() { close(started) })
+		time.Sleep(20 * time.Millisecond) // Slow enough for cancel to happen
 		return []int{v}, nil
 	}
 
 	out := startProcessing(ctx, in, process, Config{
-		ShutdownTimeout: 0, // Wait indefinitely
+		ShutdownTimeout: 0, // Immediate shutdown, no grace period
+		BufferSize:      10,
+		ErrorHandler: func(val any, err error) {
+			if err == ErrShutdownDropped {
+				mu.Lock()
+				dropped++
+				mu.Unlock()
+			}
+		},
 	})
 
-	// Cancel context
+	// Wait for processing to start
+	<-started
+
+	// Cancel immediately - done will close before first item finishes processing
 	cancel()
 
-	// Output should NOT close immediately (workers waiting for input)
-	select {
-	case <-out:
-		t.Fatal("output closed but should wait indefinitely for input")
-	case <-time.After(100 * time.Millisecond):
-		// Expected - still waiting
-	}
-
-	// Now close input - should complete
+	// Close input to allow drain to complete
 	close(in)
 
-	select {
-	case <-out:
-		// Expected - output closed after input closed
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("output not closed after input closed")
+	// Drain output
+	for range out {
 	}
+
+	// With timeout=0, shutdown is immediate - remaining messages should be dropped
+	mu.Lock()
+	d := dropped
+	mu.Unlock()
+
+	if d == 0 {
+		t.Error("expected drops with ShutdownTimeout=0 (immediate shutdown)")
+	}
+}
+
+func TestProcessing_ShutdownDrain_ComprehensiveBehavior(t *testing.T) {
+	// This test verifies the complete shutdown/drain behavior:
+	// - ShutdownTimeout > 0: grace period, then forced shutdown with drain
+	// - ShutdownTimeout <= 0: immediate forced shutdown with drain (no grace)
+	// - All drained messages are reported via ErrorHandler with ErrShutdownDropped
+	// - Input must be closed by user for drain to complete
+
+	t.Run("grace period then drain", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		var dropped []int
+		var mu sync.Mutex
+
+		in := make(chan int, 20)
+		for i := 0; i < 20; i++ {
+			in <- i
+		}
+
+		processed := make(chan int, 5)
+		process := func(ctx context.Context, v int) ([]int, error) {
+			processed <- v
+			return []int{v}, nil
+		}
+
+		out := startProcessing(ctx, in, process, Config{
+			ShutdownTimeout: 50 * time.Millisecond, // 50ms grace period
+			BufferSize:      1,                     // Small buffer to cause blocking
+			ErrorHandler: func(val any, err error) {
+				if err == ErrShutdownDropped {
+					mu.Lock()
+					dropped = append(dropped, val.(int))
+					mu.Unlock()
+				}
+			},
+		})
+
+		// Read one output to start processing
+		<-out
+
+		// Wait for a few to be processed
+		time.Sleep(10 * time.Millisecond)
+
+		// Cancel - grace period starts, timeout will fire after 50ms
+		cancel()
+
+		// Wait for timeout to fire
+		time.Sleep(60 * time.Millisecond)
+
+		// Close input to allow drain to complete
+		close(in)
+
+		// Drain output
+		for range out {
+		}
+
+		// Verify drops were reported
+		mu.Lock()
+		droppedCount := len(dropped)
+		mu.Unlock()
+
+		if droppedCount == 0 {
+			t.Error("expected some messages to be reported as dropped during drain")
+		}
+
+		close(processed)
+	})
+
+	t.Run("zero timeout means immediate drain", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		var dropped int
+		var mu sync.Mutex
+
+		in := make(chan int, 10)
+		for i := 0; i < 10; i++ {
+			in <- i
+		}
+
+		started := make(chan struct{})
+		var startedOnce sync.Once
+
+		// Use slow processing so we can cancel during processing
+		process := func(ctx context.Context, v int) ([]int, error) {
+			startedOnce.Do(func() { close(started) })
+			time.Sleep(20 * time.Millisecond) // Slow enough for cancel to happen
+			return []int{v}, nil
+		}
+
+		out := startProcessing(ctx, in, process, Config{
+			ShutdownTimeout: 0, // No grace period - immediate shutdown
+			BufferSize:      10,
+			ErrorHandler: func(val any, err error) {
+				if err == ErrShutdownDropped {
+					mu.Lock()
+					dropped++
+					mu.Unlock()
+				}
+			},
+		})
+
+		// Wait for processing to start
+		<-started
+
+		// Cancel immediately - done will close before first item finishes processing
+		cancel()
+
+		// Close input to allow drain to complete
+		close(in)
+
+		// Drain output
+		for range out {
+		}
+
+		// With timeout=0, shutdown is immediate - should have drops
+		mu.Lock()
+		d := dropped
+		mu.Unlock()
+
+		if d == 0 {
+			t.Error("expected drops with ShutdownTimeout=0 (immediate shutdown)")
+		}
+	})
 }
