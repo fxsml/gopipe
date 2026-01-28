@@ -4,8 +4,6 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	"github.com/fxsml/gopipe/pipe"
 )
 
 type PipeTestData struct {
@@ -20,7 +18,7 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		}
 		marshaler := NewJSONMarshaler()
 
-		p := NewUnmarshalPipe(registry, marshaler, pipe.Config{})
+		p := NewUnmarshalPipe(registry, marshaler, PipeConfig{})
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -57,8 +55,8 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		marshaler := NewJSONMarshaler()
 
 		var lastErr error
-		p := NewUnmarshalPipe(registry, marshaler, pipe.Config{
-			ErrorHandler: func(in any, err error) {
+		p := NewUnmarshalPipe(registry, marshaler, PipeConfig{
+			ErrorHandler: func(msg *Message, err error) {
 				lastErr = err
 			},
 		})
@@ -84,13 +82,42 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		}
 	})
 
+	t.Run("auto-nacks on error", func(t *testing.T) {
+		registry := FactoryMap{}
+		marshaler := NewJSONMarshaler()
+
+		var nacked bool
+		acking := NewAcking(func() {}, func(err error) { nacked = true })
+
+		p := NewUnmarshalPipe(registry, marshaler, PipeConfig{})
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		in := make(chan *RawMessage, 1)
+		in <- &RawMessage{
+			Data:       []byte(`{}`),
+			Attributes: Attributes{"type": "unknown.type"},
+			acking:     acking,
+		}
+		close(in)
+
+		out, _ := p.Pipe(ctx, in)
+		for range out {
+		}
+
+		if !nacked {
+			t.Error("expected message to be auto-nacked on error")
+		}
+	})
+
 	t.Run("preserves attributes", func(t *testing.T) {
 		registry := FactoryMap{
 			"test.data": func() any { return &PipeTestData{} },
 		}
 		marshaler := NewJSONMarshaler()
 
-		p := NewUnmarshalPipe(registry, marshaler, pipe.Config{})
+		p := NewUnmarshalPipe(registry, marshaler, PipeConfig{})
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -122,7 +149,7 @@ func TestNewMarshalPipe(t *testing.T) {
 	t.Run("marshals data to JSON", func(t *testing.T) {
 		marshaler := NewJSONMarshaler()
 
-		p := NewMarshalPipe(marshaler, pipe.Config{})
+		p := NewMarshalPipe(marshaler, PipeConfig{})
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -150,10 +177,39 @@ func TestNewMarshalPipe(t *testing.T) {
 		}
 	})
 
+	t.Run("auto-nacks on error", func(t *testing.T) {
+		// Use a marshaler that will fail
+		marshaler := &failingMarshaler{}
+
+		var nacked bool
+		acking := NewAcking(func() {}, func(err error) { nacked = true })
+
+		p := NewMarshalPipe(marshaler, PipeConfig{})
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &PipeTestData{},
+			Attributes: Attributes{"type": "test.data"},
+			acking:     acking,
+		}
+		close(in)
+
+		out, _ := p.Pipe(ctx, in)
+		for range out {
+		}
+
+		if !nacked {
+			t.Error("expected message to be auto-nacked on marshal error")
+		}
+	})
+
 	t.Run("sets datacontenttype", func(t *testing.T) {
 		marshaler := NewJSONMarshaler()
 
-		p := NewMarshalPipe(marshaler, pipe.Config{})
+		p := NewMarshalPipe(marshaler, PipeConfig{})
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -176,7 +232,7 @@ func TestNewMarshalPipe(t *testing.T) {
 	t.Run("creates attributes if nil", func(t *testing.T) {
 		marshaler := NewJSONMarshaler()
 
-		p := NewMarshalPipe(marshaler, pipe.Config{})
+		p := NewMarshalPipe(marshaler, PipeConfig{})
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -202,7 +258,7 @@ func TestNewMarshalPipe(t *testing.T) {
 	t.Run("preserves attributes", func(t *testing.T) {
 		marshaler := NewJSONMarshaler()
 
-		p := NewMarshalPipe(marshaler, pipe.Config{})
+		p := NewMarshalPipe(marshaler, PipeConfig{})
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -237,8 +293,8 @@ func TestPipeRoundtrip(t *testing.T) {
 		}
 		marshaler := NewJSONMarshaler()
 
-		unmarshal := NewUnmarshalPipe(registry, marshaler, pipe.Config{})
-		marshal := NewMarshalPipe(marshaler, pipe.Config{})
+		unmarshal := NewUnmarshalPipe(registry, marshaler, PipeConfig{})
+		marshal := NewMarshalPipe(marshaler, PipeConfig{})
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -274,4 +330,34 @@ func TestPipeRoundtrip(t *testing.T) {
 			t.Errorf("datacontenttype = %v, want application/json", result.DataContentType())
 		}
 	})
+}
+
+func TestPipeConfigDefaults(t *testing.T) {
+	t.Run("pool defaults", func(t *testing.T) {
+		cfg := PipeConfig{}.parse()
+		if cfg.Pool.Workers != 1 {
+			t.Errorf("expected Workers=1, got %d", cfg.Pool.Workers)
+		}
+		if cfg.Pool.BufferSize != 100 {
+			t.Errorf("expected BufferSize=100, got %d", cfg.Pool.BufferSize)
+		}
+		if cfg.Logger == nil {
+			t.Error("expected default Logger")
+		}
+	})
+}
+
+// failingMarshaler always fails to marshal
+type failingMarshaler struct{}
+
+func (m *failingMarshaler) Marshal(v any) ([]byte, error) {
+	return nil, ErrUnknownType // Reuse existing error
+}
+
+func (m *failingMarshaler) Unmarshal(data []byte, v any) error {
+	return ErrUnknownType
+}
+
+func (m *failingMarshaler) DataContentType() string {
+	return "application/json"
 }

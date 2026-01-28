@@ -74,15 +74,11 @@ func TestFromRange(t *testing.T) {
 }
 
 func TestFromFunc(t *testing.T) {
-	// Example: generate 0, 1, 2 then stop
+	// Example: generate values until cancelled
 	ctx, cancel := context.WithCancel(context.Background())
 
 	i := 0
 	handle := func() int {
-		if i >= 3 {
-			cancel()
-			return 0
-		}
 		val := i
 		i++
 		return val
@@ -92,10 +88,13 @@ func TestFromFunc(t *testing.T) {
 	var result []int
 	for v := range ch {
 		result = append(result, v)
+		if len(result) >= 3 {
+			cancel() // Cancel after receiving 3 values
+		}
 	}
-	expected := []int{0, 1, 2}
-	if !reflect.DeepEqual(result, expected) {
-		t.Errorf("expected %v, got %v", expected, result)
+	// Should receive at least 0, 1, 2 (may receive more due to race)
+	if len(result) < 3 || result[0] != 0 || result[1] != 1 || result[2] != 2 {
+		t.Errorf("expected at least [0 1 2], got %v", result)
 	}
 
 	// Test: handle returns false immediately

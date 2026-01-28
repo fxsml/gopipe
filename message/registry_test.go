@@ -41,7 +41,7 @@ func TestFactoryMap(t *testing.T) {
 
 func TestRouter_InputRegistry(t *testing.T) {
 	t.Run("NewInput returns instance for registered handler", func(t *testing.T) {
-		router := NewRouter(RouterConfig{})
+		router := NewRouter(PipeConfig{})
 		handler := NewHandler[TestOrder](
 			func(ctx context.Context, msg *Message) ([]*Message, error) {
 				return nil, nil
@@ -65,7 +65,7 @@ func TestRouter_InputRegistry(t *testing.T) {
 	})
 
 	t.Run("NewInput returns nil for unknown type", func(t *testing.T) {
-		router := NewRouter(RouterConfig{})
+		router := NewRouter(PipeConfig{})
 
 		instance := router.NewInput("unknown.type")
 		if instance != nil {

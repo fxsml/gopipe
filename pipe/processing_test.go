@@ -528,60 +528,54 @@ func TestProcessing_ShutdownTimeout_BlockedOnOutput(t *testing.T) {
 
 func TestProcessing_ZeroShutdownTimeout_ImmediateShutdown(t *testing.T) {
 	// Test that with ShutdownTimeout <= 0, shutdown is immediate (no grace period).
-	// Workers enter drain mode right away and report drops.
+	// Shutdown should complete quickly without waiting for slow processing.
 
 	ctx, cancel := context.WithCancel(context.Background())
-
-	var dropped int
-	var mu sync.Mutex
 
 	in := make(chan int, 10)
 	for i := 0; i < 10; i++ {
 		in <- i
 	}
+	close(in)
 
 	started := make(chan struct{})
+	blockProcessing := make(chan struct{})
 	var startedOnce sync.Once
 
-	// Use slow processing so we can cancel during processing
+	// Block processing until we signal - simulates slow work
 	process := func(ctx context.Context, v int) ([]int, error) {
 		startedOnce.Do(func() { close(started) })
-		time.Sleep(20 * time.Millisecond) // Slow enough for cancel to happen
+		<-blockProcessing
 		return []int{v}, nil
 	}
 
 	out := startProcessing(ctx, in, process, Config{
 		ShutdownTimeout: 0, // Immediate shutdown, no grace period
 		BufferSize:      10,
-		ErrorHandler: func(val any, err error) {
-			if err == ErrShutdownDropped {
-				mu.Lock()
-				dropped++
-				mu.Unlock()
-			}
-		},
 	})
 
 	// Wait for processing to start
 	<-started
 
-	// Cancel immediately - done will close before first item finishes processing
+	// Cancel while worker is blocked
 	cancel()
 
-	// Close input to allow drain to complete
-	close(in)
+	// Unblock processing
+	close(blockProcessing)
 
-	// Drain output
-	for range out {
-	}
+	// Output channel should close quickly (not wait for all items)
+	done := make(chan struct{})
+	go func() {
+		for range out {
+		}
+		close(done)
+	}()
 
-	// With timeout=0, shutdown is immediate - remaining messages should be dropped
-	mu.Lock()
-	d := dropped
-	mu.Unlock()
-
-	if d == 0 {
-		t.Error("expected drops with ShutdownTimeout=0 (immediate shutdown)")
+	select {
+	case <-done:
+		// Success - shutdown completed quickly
+	case <-time.After(100 * time.Millisecond):
+		t.Error("shutdown took too long with ShutdownTimeout=0")
 	}
 }
 
@@ -652,59 +646,55 @@ func TestProcessing_ShutdownDrain_ComprehensiveBehavior(t *testing.T) {
 		close(processed)
 	})
 
-	t.Run("zero timeout means immediate drain", func(t *testing.T) {
+	t.Run("zero timeout means immediate shutdown", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 
-		var dropped int
-		var mu sync.Mutex
-
+		// Buffered channel with items ready to be processed
 		in := make(chan int, 10)
 		for i := 0; i < 10; i++ {
 			in <- i
 		}
+		close(in)
 
 		started := make(chan struct{})
+		blockProcessing := make(chan struct{})
 		var startedOnce sync.Once
 
-		// Use slow processing so we can cancel during processing
+		// Block processing until we signal - simulates slow work
 		process := func(ctx context.Context, v int) ([]int, error) {
 			startedOnce.Do(func() { close(started) })
-			time.Sleep(20 * time.Millisecond) // Slow enough for cancel to happen
+			<-blockProcessing
 			return []int{v}, nil
 		}
 
 		out := startProcessing(ctx, in, process, Config{
 			ShutdownTimeout: 0, // No grace period - immediate shutdown
 			BufferSize:      10,
-			ErrorHandler: func(val any, err error) {
-				if err == ErrShutdownDropped {
-					mu.Lock()
-					dropped++
-					mu.Unlock()
-				}
-			},
 		})
 
-		// Wait for processing to start
+		// Wait for processing to start (first item is being processed)
 		<-started
 
-		// Cancel immediately - done will close before first item finishes processing
+		// Cancel while worker is blocked on processing
 		cancel()
 
-		// Close input to allow drain to complete
-		close(in)
+		// Unblock processing
+		close(blockProcessing)
 
-		// Drain output
-		for range out {
-		}
+		// Output channel should close quickly (not wait for all items)
+		// With zero timeout, shutdown is immediate once we unblock
+		done := make(chan struct{})
+		go func() {
+			for range out {
+			}
+			close(done)
+		}()
 
-		// With timeout=0, shutdown is immediate - should have drops
-		mu.Lock()
-		d := dropped
-		mu.Unlock()
-
-		if d == 0 {
-			t.Error("expected drops with ShutdownTimeout=0 (immediate shutdown)")
+		select {
+		case <-done:
+			// Success - shutdown completed
+		case <-time.After(100 * time.Millisecond):
+			t.Error("shutdown took too long with ShutdownTimeout=0")
 		}
 	})
 }

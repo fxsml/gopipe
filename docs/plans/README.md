@@ -26,6 +26,7 @@ Historical plans from the message package development are in [archive/](archive/
 | [0009](archive/0009-message-refactoring.md) | Message Package Implementation | Complete |
 | [0010](archive/0010-graceful-loopback-shutdown.md) | Graceful Loopback Shutdown | Complete |
 | [0011](archive/0011-named-pools.md) | Named Pools | Complete |
+| [0012](archive/0012-engine-simplification.md) | Engine Simplification | Complete |
 
 ## Creating New Plans
 

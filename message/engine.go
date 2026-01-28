@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/channel"
-	"github.com/fxsml/gopipe/pipe"
 )
 
 // ErrorHandler processes engine errors.
@@ -22,9 +21,7 @@ type EngineConfig struct {
 	Marshaler Marshaler
 	// BufferSize is the engine buffer size for merger and distributor (default: 100).
 	BufferSize int
-	// RouterBufferSize is the router's internal buffer (0 = inherit BufferSize).
-	RouterBufferSize int
-	// RouterPool configures the default worker pool (Workers default: 1, BufferSize 0 = inherit RouterBufferSize).
+	// RouterPool configures the router's worker pool (default: 1 worker, 100 buffer).
 	RouterPool PoolConfig
 	// ErrorHandler is called on processing errors (default: no-op).
 	// Errors are logged via Logger; use ErrorHandler for custom handling
@@ -33,8 +30,9 @@ type EngineConfig struct {
 	// Logger for engine events (default: slog.Default()).
 	Logger Logger
 	// ShutdownTimeout controls shutdown behavior on context cancellation.
-	// If <= 0, waits indefinitely for inputs to close naturally.
-	// If > 0, waits up to this duration then forces shutdown.
+	// If <= 0, forces immediate shutdown (no grace period).
+	// If > 0, waits up to this duration for natural completion, then forces shutdown.
+	// On forced shutdown, remaining messages are drained and reported via ErrorHandler.
 	ShutdownTimeout time.Duration
 }
 
@@ -51,16 +49,7 @@ func (c EngineConfig) parse() EngineConfig {
 	if c.BufferSize <= 0 {
 		c.BufferSize = 100
 	}
-	// Inheritance: BufferSize → RouterBufferSize → RouterPool.BufferSize
-	if c.RouterBufferSize <= 0 {
-		c.RouterBufferSize = c.BufferSize
-	}
-	if c.RouterPool.BufferSize <= 0 {
-		c.RouterPool.BufferSize = c.RouterBufferSize
-	}
-	if c.RouterPool.Workers <= 0 {
-		c.RouterPool.Workers = 1
-	}
+	c.RouterPool = c.RouterPool.parse()
 	return c
 }
 
@@ -73,14 +62,9 @@ type Engine struct {
 
 	mu          sync.Mutex
 	started     bool
-	merger      *pipe.Merger[*Message]
-	distributor *pipe.Distributor[*Message]
-	shutdown    chan struct{}
-
-	// Graceful shutdown support
-	tracker          *messageTracker
-	wrapperWg        sync.WaitGroup
-	loopbackShutdown chan struct{} // Closed to break loopback cycles
+	merger      *Merger
+	distributor *Distributor
+	shutdown    chan struct{} // Signals marshal/unmarshal pipes to stop
 }
 
 // NewEngine creates a new message engine.
@@ -88,53 +72,31 @@ func NewEngine(cfg EngineConfig) *Engine {
 	cfg = cfg.parse()
 
 	e := &Engine{
-		cfg:              cfg,
-		shutdown:         make(chan struct{}),
-		loopbackShutdown: make(chan struct{}),
-		tracker:          newMessageTracker(),
-		router: NewRouter(RouterConfig{
-			ErrorHandler: cfg.ErrorHandler,
-			BufferSize:   cfg.RouterBufferSize,
-			Pool:         cfg.RouterPool,
-			Logger:       cfg.Logger,
+		cfg:      cfg,
+		shutdown: make(chan struct{}),
+		router: NewRouter(PipeConfig{
+			Pool:            cfg.RouterPool,
+			ShutdownTimeout: cfg.ShutdownTimeout,
+			Logger:          cfg.Logger,
+			ErrorHandler:    cfg.ErrorHandler,
 		}),
 	}
 
-	// Add tracking middleware as innermost (applied last, runs first after handler)
-	// This tracks when handlers drop or multiply messages
-	_ = e.router.Use(e.trackingMiddleware())
-
 	// Create merger upfront - AddInput works before Merge()
 	// ShutdownTimeout ensures merger closes output on context cancel
-	e.merger = pipe.NewMerger[*Message](pipe.MergerConfig{
-		Buffer:          cfg.BufferSize,
+	e.merger = NewMerger(MergerConfig{
+		BufferSize:      cfg.BufferSize,
 		ShutdownTimeout: cfg.ShutdownTimeout,
-		ErrorHandler: func(in any, err error) {
-			msg := in.(*Message)
-			msg.Nack(err)
-			e.cfg.Logger.Warn("Message merge failed",
-				"component", "engine",
-				"error", err,
-				"attributes", msg.Attributes)
-			e.cfg.ErrorHandler(msg, err)
-		},
+		Logger:          cfg.Logger,
+		ErrorHandler:    cfg.ErrorHandler,
 	})
 
 	// Create distributor upfront - AddOutput works before Distribute()
-	// Long ShutdownTimeout ensures distributor waits for input to close naturally.
-	// Engine-level timeout handles forced shutdown by closing loopbacks.
-	e.distributor = pipe.NewDistributor(pipe.DistributorConfig[*Message]{
-		Buffer:          cfg.BufferSize,
-		ShutdownTimeout: time.Hour,
-		ErrorHandler: func(in any, err error) {
-			msg := in.(*Message)
-			msg.Nack(err)
-			e.cfg.Logger.Warn("Message distribution failed",
-				"component", "engine",
-				"error", err,
-				"attributes", msg.Attributes)
-			e.cfg.ErrorHandler(msg, err)
-		},
+	e.distributor = NewDistributor(DistributorConfig{
+		BufferSize:      cfg.BufferSize,
+		ShutdownTimeout: cfg.ShutdownTimeout,
+		Logger:          cfg.Logger,
+		ErrorHandler:    cfg.ErrorHandler,
 	})
 
 	return e
@@ -144,19 +106,6 @@ func NewEngine(cfg EngineConfig) *Engine {
 // The optional matcher is applied after type matching.
 func (e *Engine) AddHandler(name string, matcher Matcher, h Handler) error {
 	return e.router.AddHandler(name, matcher, h)
-}
-
-// AddPoolWithConfig creates a named worker pool.
-// Must be called before Start().
-func (e *Engine) AddPoolWithConfig(name string, cfg PoolConfig) error {
-	return e.router.AddPoolWithConfig(name, cfg)
-}
-
-// AddHandlerToPool registers a handler to a named pool.
-// The optional matcher is applied after type matching.
-// Must be called before Start().
-func (e *Engine) AddHandlerToPool(name string, matcher Matcher, h Handler, pool string) error {
-	return e.router.AddHandlerToPool(name, matcher, h, pool)
 }
 
 // Use registers middleware to wrap message processing.
@@ -172,9 +121,6 @@ func (e *Engine) Use(m ...Middleware) error {
 //
 // Ordering: Plugins that add outputs are matched first-wins. Call AddPlugin
 // before AddOutput if the plugin should have priority when matchers overlap.
-//
-// Loopback plugins create cycles in message flow - the engine cannot detect
-// completion. Cancel the context to trigger shutdown.
 func (e *Engine) AddPlugin(plugins ...Plugin) error {
 	for _, p := range plugins {
 		e.cfg.Logger.Info("Adding plugin", "component", "engine", "plugin", funcName(p))
@@ -185,26 +131,6 @@ func (e *Engine) AddPlugin(plugins ...Plugin) error {
 	return nil
 }
 
-// AdjustInFlight adjusts the in-flight message count for fan-in or fan-out
-// operations in loopback plugins. Call with (inputCount - outputCount):
-//
-//   - Positive delta (fan-in): more messages consumed than produced
-//   - Negative delta (fan-out): more messages produced than consumed
-//   - Zero: no adjustment needed
-//
-// Example usage in a loopback handler:
-//
-//	results := handle(batch)
-//	e.AdjustInFlight(len(batch) - len(results))
-func (e *Engine) AdjustInFlight(delta int) {
-	switch {
-	case delta > 0:
-		e.tracker.exit(int64(delta)) // Fan-in: consumed more than produced
-	case delta < 0:
-		e.tracker.enter(int64(-delta)) // Fan-out: produced more than consumed
-	}
-}
-
 // AddInput registers a typed input channel.
 // Typed inputs go directly to the merger, bypassing unmarshaling.
 // Use for internal messaging, testing, or when data is already typed.
@@ -212,8 +138,7 @@ func (e *Engine) AdjustInFlight(delta int) {
 func (e *Engine) AddInput(name string, matcher Matcher, ch <-chan *Message) (<-chan struct{}, error) {
 	e.cfg.Logger.Info("Adding input", "component", "engine", "input", name)
 	filtered := e.applyTypedInputMatcher(name, ch, matcher)
-	wrapped := e.wrapInputChannel(filtered)
-	return e.merger.AddInput(wrapped)
+	return e.merger.AddInput(filtered)
 }
 
 // AddRawInput registers a raw input channel.
@@ -223,22 +148,7 @@ func (e *Engine) AddInput(name string, matcher Matcher, ch <-chan *Message) (<-c
 func (e *Engine) AddRawInput(name string, matcher Matcher, ch <-chan *RawMessage) (<-chan struct{}, error) {
 	e.cfg.Logger.Info("Adding raw input", "component", "engine", "input", name)
 	filtered := e.applyRawInputMatcher(name, ch, matcher)
-	wrapped := e.wrapRawInputChannel(filtered)
-	return e.merger.AddInput(e.unmarshal(wrapped))
-}
-
-// AddLoopbackInput registers a loopback input channel.
-// Loopback inputs are NOT tracked by the message tracker - they are internal cycles.
-//
-// For custom loopbacks with fan-in/fan-out, call AdjustInFlight(inputCount - outputCount)
-// after processing to ensure graceful shutdown works correctly.
-//
-// Prefer using the plugin.Loopback variants which handle tracking automatically.
-func (e *Engine) AddLoopbackInput(name string, matcher Matcher, ch <-chan *Message) (<-chan struct{}, error) {
-	e.cfg.Logger.Info("Adding loopback input", "component", "engine", "input", name)
-	filtered := e.applyTypedInputMatcher(name, ch, matcher)
-	// No wrapping - loopback messages are not tracked
-	return e.merger.AddInput(filtered)
+	return e.merger.AddInput(e.unmarshal(filtered))
 }
 
 // AddOutput registers a typed output and returns the channel to consume from.
@@ -247,13 +157,7 @@ func (e *Engine) AddLoopbackInput(name string, matcher Matcher, ch <-chan *Messa
 // Can be called before or after Start().
 func (e *Engine) AddOutput(name string, matcher Matcher) (<-chan *Message, error) {
 	e.cfg.Logger.Info("Adding output", "component", "engine", "output", name)
-	out, err := e.distributor.AddOutput(func(msg *Message) bool {
-		return matcher == nil || matcher.Match(msg.Attributes)
-	})
-	if err != nil {
-		return nil, err
-	}
-	return e.wrapOutputChannel(out), nil
+	return e.distributor.AddOutput(matcher)
 }
 
 // AddRawOutput registers a raw output and returns the channel to consume from.
@@ -262,37 +166,11 @@ func (e *Engine) AddOutput(name string, matcher Matcher) (<-chan *Message, error
 // Can be called before or after Start().
 func (e *Engine) AddRawOutput(name string, matcher Matcher) (<-chan *RawMessage, error) {
 	e.cfg.Logger.Info("Adding raw output", "component", "engine", "output", name)
-	out, err := e.distributor.AddOutput(func(msg *Message) bool {
-		return matcher == nil || matcher.Match(msg.Attributes)
-	})
+	out, err := e.distributor.AddOutput(matcher)
 	if err != nil {
 		return nil, err
 	}
-	wrapped := e.wrapOutputChannel(out)
-	return e.marshal(wrapped), nil
-}
-
-// AddLoopbackOutput registers a loopback output for graceful shutdown coordination.
-// Loopback outputs are NOT tracked - they form internal cycles.
-// The engine wraps these outputs to control when they close during shutdown.
-//
-// For custom loopbacks with fan-in/fan-out, call AdjustInFlight(inputCount - outputCount)
-// after processing to ensure graceful shutdown works correctly.
-//
-// Prefer using the plugin.Loopback variants which handle tracking automatically.
-func (e *Engine) AddLoopbackOutput(name string, matcher Matcher) (<-chan *Message, error) {
-	e.cfg.Logger.Info("Adding loopback output", "component", "engine", "output", name)
-
-	// Use regular distributor output
-	distOut, err := e.distributor.AddOutput(func(msg *Message) bool {
-		return matcher == nil || matcher.Match(msg.Attributes)
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// Wrap with Engine-controlled shutdown
-	return e.wrapLoopbackOutputChannel(distOut), nil
+	return e.marshal(out), nil
 }
 
 // Start begins processing messages. Returns a done channel that closes
@@ -304,13 +182,13 @@ func (e *Engine) AddLoopbackOutput(name string, matcher Matcher) (<-chan *Messag
 // This allows the pipeline to drain naturally without message loss.
 //
 // If context is cancelled with inputs still open:
-//   - ShutdownTimeout <= 0: waits indefinitely for inputs to close
-//   - ShutdownTimeout > 0: merger forces shutdown after timeout, may drop
-//     messages still in input channels
+//   - ShutdownTimeout <= 0: forces immediate shutdown, drops messages in inputs
+//   - ShutdownTimeout > 0: waits up to timeout for natural completion, then
+//     forces shutdown and drops messages still in input channels
 //
 // Messages that pass the merger are guaranteed to be delivered to outputs.
-// The router, distributor, and marshal pipes wait for their inputs to close,
-// creating a cascading drain that ensures delivery.
+// The router, distributor, and marshal pipes use the same ShutdownTimeout,
+// creating a cascading drain that ensures delivery after the merger.
 func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 	e.mu.Lock()
 	if e.started {
@@ -325,42 +203,13 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		"buffer_size", e.cfg.BufferSize,
 		"router_workers", e.cfg.RouterPool.Workers)
 
-	// Shutdown orchestration goroutine
-	go func() {
-		<-ctx.Done()
-
-		e.cfg.Logger.Info("Shutdown initiated", "component", "engine")
-
-		// Signal no more external inputs expected
-		e.tracker.close()
-
-		// Wait for pipeline to drain or timeout
-		if e.cfg.ShutdownTimeout > 0 {
-			select {
-			case <-e.tracker.drained():
-				e.cfg.Logger.Debug("Pipeline drained, closing loopback outputs", "component", "engine")
-			case <-time.After(e.cfg.ShutdownTimeout):
-				e.cfg.Logger.Warn("Shutdown timeout reached, forcing loopback close", "component", "engine")
-			}
-		} else {
-			<-e.tracker.drained()
-			e.cfg.Logger.Debug("Pipeline drained, closing loopback outputs", "component", "engine")
-		}
-
-		// Close loopback outputs to break cycles
-		close(e.loopbackShutdown)
-
-		// Close shutdown channel to trigger marshal/unmarshal cleanup
-		close(e.shutdown)
-	}()
-
 	// 1. Start merger
 	merged, err := e.merger.Merge(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Route messages to handlers (with tracking middleware)
+	// 2. Route messages to handlers
 	handled, err := e.router.Pipe(ctx, merged)
 	if err != nil {
 		return nil, err
@@ -372,11 +221,15 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 		return nil, err
 	}
 
-	// 4. Create done channel that waits for both distributor and wrapper cleanup
+	// 4. Create done channel that closes when distributor finishes.
+	// Shutdown flow: ctx.Done() → merger timeout → merger closes output →
+	// router drains → distributor drains → distDone → e.shutdown → done
 	done := make(chan struct{})
 	go func() {
+		<-ctx.Done()
+		e.cfg.Logger.Info("Shutdown initiated", "component", "engine")
 		<-distDone
-		e.wrapperWg.Wait()
+		close(e.shutdown) // Signals marshal/unmarshal pipes
 		e.cfg.Logger.Info("Stopped", "component", "engine")
 		close(done)
 	}()
@@ -438,40 +291,22 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 }
 
 // unmarshal processes raw messages into typed messages.
-// Long ShutdownTimeout ensures unmarshal waits for input to close naturally.
-// Engine-level timeout handles forced shutdown by closing loopbacks.
 func (e *Engine) unmarshal(in <-chan *RawMessage) <-chan *Message {
-	p := NewUnmarshalPipe(e.router, e.cfg.Marshaler, pipe.Config{
-		ShutdownTimeout: time.Hour,
-		ErrorHandler: func(in any, err error) {
-			raw := in.(*RawMessage)
-			e.cfg.Logger.Error("Unmarshaling raw message failed",
-				"component", "unmarshaler",
-				"error", err,
-				"attributes", raw.Attributes)
-			raw.Nack(err)
-			e.handleRawError(raw, err)
-		},
+	p := NewUnmarshalPipe(e.router, e.cfg.Marshaler, PipeConfig{
+		ShutdownTimeout: e.cfg.ShutdownTimeout,
+		Logger:          e.cfg.Logger,
+		ErrorHandler:    e.cfg.ErrorHandler,
 	})
 	out, _ := p.Pipe(chanContext(e.shutdown), in)
 	return out
 }
 
 // marshal processes typed messages into raw messages.
-// Long ShutdownTimeout ensures marshal waits for distributor to close its output.
-// Engine-level timeout handles forced shutdown by closing loopbacks.
 func (e *Engine) marshal(in <-chan *Message) <-chan *RawMessage {
-	p := NewMarshalPipe(e.cfg.Marshaler, pipe.Config{
-		ShutdownTimeout: time.Hour,
-		ErrorHandler: func(in any, err error) {
-			msg := in.(*Message)
-			msg.Nack(err)
-			e.cfg.Logger.Error("Marshaling message failed",
-				"component", "marshaler",
-				"error", err,
-				"attributes", msg.Attributes)
-			e.cfg.ErrorHandler(msg, err)
-		},
+	p := NewMarshalPipe(e.cfg.Marshaler, PipeConfig{
+		ShutdownTimeout: e.cfg.ShutdownTimeout,
+		Logger:          e.cfg.Logger,
+		ErrorHandler:    e.cfg.ErrorHandler,
 	})
 	out, _ := p.Pipe(chanContext(e.shutdown), in)
 	return out
@@ -496,93 +331,5 @@ func (c *channelContext) Err() error {
 		return context.Canceled
 	default:
 		return nil
-	}
-}
-
-// shutdownIfTimeout returns e.shutdown if ShutdownTimeout > 0, else nil.
-func (e *Engine) shutdownIfTimeout() <-chan struct{} {
-	if e.cfg.ShutdownTimeout > 0 {
-		return e.shutdown
-	}
-	return nil
-}
-
-// wrapChannel forwards values from in, calling onReceive for each.
-// Stops when in closes or done closes (if non-nil).
-func wrapChannel[T any](in <-chan T, done <-chan struct{}, onReceive func(), wg *sync.WaitGroup, bufSize int) <-chan T {
-	out := make(chan T, bufSize)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer close(out)
-		for {
-			select {
-			case val, ok := <-in:
-				if !ok {
-					return
-				}
-				if onReceive != nil {
-					onReceive()
-				}
-				select {
-				case out <- val:
-				case <-done:
-					return
-				}
-			case <-done:
-				return
-			}
-		}
-	}()
-	return out
-}
-
-// wrapInputChannel wraps an input channel to track message entry.
-func (e *Engine) wrapInputChannel(ch <-chan *Message) <-chan *Message {
-	return wrapChannel(ch, e.shutdownIfTimeout(), func() { e.tracker.enter(1) }, &e.wrapperWg, 0)
-}
-
-// wrapRawInputChannel wraps a raw input channel to track message entry.
-func (e *Engine) wrapRawInputChannel(ch <-chan *RawMessage) <-chan *RawMessage {
-	return wrapChannel(ch, e.shutdownIfTimeout(), func() { e.tracker.enter(1) }, &e.wrapperWg, 0)
-}
-
-// wrapOutputChannel wraps an output channel to track message exit.
-func (e *Engine) wrapOutputChannel(ch <-chan *Message) <-chan *Message {
-	return wrapChannel(ch, e.shutdown, func() { e.tracker.exit(1) }, &e.wrapperWg, e.cfg.BufferSize)
-}
-
-// wrapLoopbackOutputChannel wraps a loopback output channel.
-// Loopback outputs are NOT tracked (no Exit call) since they form internal cycles.
-func (e *Engine) wrapLoopbackOutputChannel(ch <-chan *Message) <-chan *Message {
-	return wrapChannel(ch, e.loopbackShutdown, nil, &e.wrapperWg, e.cfg.BufferSize)
-}
-
-// trackingMiddleware creates middleware that adjusts the message tracker
-// when handlers drop messages (return 0) or multiply them (return N > 1).
-func (e *Engine) trackingMiddleware() Middleware {
-	return func(next ProcessFunc) ProcessFunc {
-		return func(ctx context.Context, msg *Message) ([]*Message, error) {
-			results, err := next(ctx, msg)
-
-			if err != nil {
-				// Error = message consumed without producing output
-				e.tracker.exit(1)
-				return nil, err
-			}
-
-			switch n := len(results); n {
-			case 0:
-				// Dropped - message consumed without producing output
-				e.tracker.exit(1)
-			case 1:
-				// 1:1 transform - no change to count
-			default:
-				// Multiplied - N-1 new messages added
-				e.tracker.enter(int64(n - 1))
-			}
-
-			return results, nil
-		}
 	}
 }

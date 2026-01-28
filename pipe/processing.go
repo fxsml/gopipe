@@ -83,10 +83,8 @@ func startProcessing[In, Out any](
 			for {
 				select {
 				case <-done:
-					// Drain remaining input, reporting each as dropped
-					for val := range in {
-						cfg.ErrorHandler(val, ErrShutdownDropped)
-					}
+					// Forced shutdown - exit immediately without draining
+					// (draining blocks if input channel is still open)
 					return
 				case val, ok := <-in:
 					if !ok {
@@ -99,12 +97,8 @@ func startProcessing[In, Out any](
 							select {
 							case out <- r:
 							case <-done:
-								// Report original input as dropped (outputs couldn't be fully delivered)
+								// Forced shutdown - report current input and exit
 								cfg.ErrorHandler(val, ErrShutdownDropped)
-								// Drain remaining input
-								for val := range in {
-									cfg.ErrorHandler(val, ErrShutdownDropped)
-								}
 								return
 							}
 						}

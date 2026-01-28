@@ -41,9 +41,6 @@
 // unmarshal pipe that feeds typed messages into the shared merger. Typed inputs
 // feed directly into the merger, then route to handlers via the router.
 //
-// Loopback is not built into Engine—use [plugin.Loopback] which connects a
-// TypedOutput back to TypedInput via the existing Add* APIs.
-//
 // See README.md in this package for detailed architecture diagrams.
 //
 // # Design Notes
@@ -62,6 +59,57 @@
 // For rejected alternatives and common mistakes, see AGENTS.md in the
 // repository root.
 //
+// # Acknowledgment
+//
+// Messages support acknowledgment callbacks for broker integration. All pipeline
+// components auto-nack on failure (unmarshal error, no handler, handler error,
+// distribution failure, shutdown). Acking on success is explicit.
+//
+// Basic pattern - ack after output delivery:
+//
+//	// Input source sets up acking
+//	raw := message.NewRaw(data, attrs, message.NewAcking(
+//		func() { broker.Ack(msgID) },
+//		func(err error) { broker.Nack(msgID) },
+//	))
+//
+//	// Output consumer acks after successful delivery
+//	for msg := range output {
+//		if err := broker.Publish(msg); err == nil {
+//			msg.Ack()
+//		}
+//	}
+//
+// For automatic ack-on-handler-success, use [middleware.AutoAck]:
+//
+//	engine.Use(middleware.AutoAck())
+//
+// # Batch Processing
+//
+// When flattening batches (1 input → N outputs), use [NewSharedAcking] for
+// all-or-nothing semantics:
+//
+//	func flatten(batch *Message) []*Message {
+//		items := extractItems(batch.Data)
+//		shared := message.NewSharedAcking(
+//			func() { batch.Ack() },
+//			func(err error) { batch.Nack(err) },
+//			len(items),
+//		)
+//		outputs := make([]*Message, len(items))
+//		for i, item := range items {
+//			outputs[i] = message.New(item, batch.Attributes, shared)
+//		}
+//		return outputs
+//	}
+//
+// Alternative strategies for batches:
+//   - Ack immediately, track failures via metrics/DLQ (high throughput)
+//   - Route failures to dead-letter queue, ack individual items
+//   - Threshold-based: nack batch only if failure rate exceeds threshold
+//
+// [Copy] shares the acking pointer, preserving acknowledgment through transforms.
+//
 // # Message Types
 //
 // [TypedMessage] is the generic base type. [Message] (any data) and [RawMessage]
@@ -72,7 +120,7 @@
 //   - [cloudevents]: Integration with CloudEvents SDK protocol bindings
 //   - [match]: Matchers for filtering messages by attributes
 //   - [middleware]: Cross-cutting concerns (correlation ID, logging)
-//   - [plugin]: Reusable engine plugins (Loopback, ProcessLoopback)
+//   - [plugin]: Reusable engine plugins
 //
 // [cloudevents]: https://pkg.go.dev/github.com/fxsml/gopipe/message/cloudevents
 // [match]: https://pkg.go.dev/github.com/fxsml/gopipe/message/match
