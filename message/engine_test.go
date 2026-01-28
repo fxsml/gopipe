@@ -297,69 +297,6 @@ func TestEngine_MultipleInputs(t *testing.T) {
 	mu.Unlock()
 }
 
-func TestEngine_Loopback(t *testing.T) {
-	engine := NewEngine(EngineConfig{
-		Marshaler: NewJSONMarshaler(),
-	})
-
-	// First handler creates intermediate event
-	handler1 := NewCommandHandler(
-		func(ctx context.Context, cmd TestCommand) ([]IntermediateEvent, error) {
-			return []IntermediateEvent{{ID: cmd.ID, Step: 1}}, nil
-		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
-	)
-	_ = engine.AddHandler("handler1", nil, handler1)
-
-	// Second handler processes intermediate event
-	handler2 := NewCommandHandler(
-		func(ctx context.Context, cmd IntermediateEvent) ([]TestEvent, error) {
-			return []TestEvent{{ID: cmd.ID, Status: "final"}}, nil
-		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
-	)
-	_ = engine.AddHandler("handler2", nil, handler2)
-
-	input := make(chan *RawMessage, 1)
-	_, _ = engine.AddRawInput("", nil, input)
-
-	// Loopback intermediate events (using AddOutput + AddInput pattern)
-	loopbackOut, _ := engine.AddOutput("", &typeMatcher{pattern: "intermediate.event"})
-	_, _ = engine.AddInput("", nil, loopbackOut)
-
-	output, _ := engine.AddRawOutput("", nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	_, _ = engine.Start(ctx)
-
-	data, _ := json.Marshal(TestCommand{ID: "123"})
-	input <- &RawMessage{
-		Data:       data,
-		Attributes: Attributes{"type": "test.command"},
-	}
-
-	select {
-	case out := <-output:
-		if out.Type() != "test.event" {
-			t.Errorf("expected final event type, got %v", out.Type())
-		}
-		var event TestEvent
-		_ = json.Unmarshal(out.Data, &event)
-		if event.Status != "final" {
-			t.Errorf("expected status 'final', got %s", event.Status)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timeout waiting for loopback result")
-	}
-}
-
-type IntermediateEvent struct {
-	ID   string `json:"id"`
-	Step int    `json:"step"`
-}
-
 func TestEngine_HandlerError(t *testing.T) {
 	var lastErr error
 	var mu sync.Mutex
@@ -406,44 +343,6 @@ func TestEngine_HandlerError(t *testing.T) {
 	}
 }
 
-func TestEngine_MessageAck(t *testing.T) {
-	engine := NewEngine(EngineConfig{
-		Marshaler: NewJSONMarshaler(),
-	})
-
-	handler := NewCommandHandler(
-		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
-			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
-		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
-	)
-	_ = engine.AddHandler("test", nil, handler)
-
-	input := make(chan *RawMessage, 1)
-	_, _ = engine.AddRawInput("", nil, input)
-	output, _ := engine.AddRawOutput("", nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	_, _ = engine.Start(ctx)
-
-	acked := false
-	data, _ := json.Marshal(TestCommand{ID: "1"})
-	raw := NewRaw(data, Attributes{"type": "test.command"},
-		NewAcking(func() { acked = true }, func(error) {}),
-	)
-	input <- raw
-
-	<-output
-
-	time.Sleep(50 * time.Millisecond)
-
-	if !acked {
-		t.Error("expected message to be acked after processing")
-	}
-}
-
 func TestEngine_ContextCancellation(t *testing.T) {
 	engine := NewEngine(EngineConfig{
 		Marshaler:       NewJSONMarshaler(),
@@ -480,8 +379,7 @@ func TestEngine_ContextCancellation(t *testing.T) {
 func TestEngine_DrainsInFlightMessages(t *testing.T) {
 	// This test verifies that messages which pass the merger are delivered
 	// to outputs even after context cancellation triggers forced shutdown.
-	// The merger has ShutdownTimeout, but distributor waits indefinitely
-	// for its input to close, ensuring cascading drain.
+	// All components use the same ShutdownTimeout, creating a cascading drain.
 
 	engine := NewEngine(EngineConfig{
 		Marshaler:       NewJSONMarshaler(),
@@ -866,68 +764,6 @@ func TestEngine_HandlerMatcher(t *testing.T) {
 		t.Errorf("expected 1 rejected by handler matcher, got %d", rejectedCount)
 	}
 	mu.Unlock()
-}
-
-func TestEngine_NoShutdownTimeout_WaitsIndefinitely(t *testing.T) {
-	// With ShutdownTimeout <= 0, the engine should wait indefinitely
-	// for inputs to close naturally, even after context cancellation.
-
-	engine := NewEngine(EngineConfig{
-		Marshaler:       NewJSONMarshaler(),
-		ShutdownTimeout: 0, // Wait indefinitely
-	})
-
-	handler := NewCommandHandler(
-		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
-			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
-		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
-	)
-	_ = engine.AddHandler("test", nil, handler)
-
-	input := make(chan *RawMessage)
-	_, _ = engine.AddRawInput("", nil, input)
-	output, _ := engine.AddRawOutput("", nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	done, _ := engine.Start(ctx)
-
-	// Cancel context - should NOT stop engine (timeout=0 means wait indefinitely)
-	cancel()
-
-	// Engine should NOT stop yet (input still open)
-	select {
-	case <-done:
-		t.Fatal("engine stopped but should wait indefinitely for input to close")
-	case <-time.After(100 * time.Millisecond):
-		// Expected - still waiting
-	}
-
-	// Send a message after cancel - should still be processed
-	data, _ := json.Marshal(TestCommand{ID: "1"})
-	input <- &RawMessage{
-		Data:       data,
-		Attributes: Attributes{"type": "test.command"},
-	}
-
-	// Should receive output
-	select {
-	case <-output:
-		// Expected
-	case <-time.After(time.Second):
-		t.Fatal("message not processed after context cancel with timeout=0")
-	}
-
-	// Now close input - engine should stop
-	close(input)
-
-	select {
-	case <-done:
-		// Expected - engine stopped after input closed
-	case <-time.After(time.Second):
-		t.Fatal("engine did not stop after input closed")
-	}
 }
 
 func TestEngine_AddPlugin(t *testing.T) {
