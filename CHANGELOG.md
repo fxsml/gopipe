@@ -5,6 +5,64 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-01-28
+
+### Changed
+
+- **message:** Simplified engine architecture (#104)
+  - Removed message tracker and drain detection (timeout-based shutdown only)
+  - Removed multi-pool support from Router (single pool configuration)
+  - Router no longer auto-acks; use `middleware.AutoAck()` for previous behavior
+  - All pipeline components now auto-nack on failure for consistency
+
+- **pipe:** Consistent `ShutdownTimeout` semantics across all components
+  - `<= 0`: Forces immediate shutdown (no grace period)
+  - `> 0`: Waits up to duration for natural completion, then forces shutdown
+
+### Added
+
+- **message/middleware:** `AutoAck()` middleware for automatic ack on success, nack on error
+
+### Removed
+
+- **message:** Loopback plugins removed due to production deadlock risk
+  - `plugin.Loopback`, `plugin.BatchLoopback`, `plugin.GroupLoopback`, `plugin.ProcessLoopback`
+  - Use external message queues (Redis, NATS) for message re-routing instead
+
+- **message:** Multi-pool routing APIs
+  - `Engine.AddPoolWithConfig()`, `Engine.AddHandlerToPool()`
+  - `Router.AddPoolWithConfig()`, `Router.AddHandlerToPool()`
+  - Use single pool with higher concurrency, or multiple engines for isolation
+
+- **message:** Loopback and tracker APIs
+  - `Engine.AddLoopbackInput()`, `Engine.AddLoopbackOutput()`
+  - `Engine.AdjustInFlight()`
+
+### Migration
+
+- **Loopback users:** Use external message queue for re-routing:
+  ```go
+  output, _ := e.AddOutput("batch-out", matcher)
+  go func() {
+      for msg := range output {
+          externalQueue.Publish(msg)
+      }
+  }()
+  e.AddInput("batch-in", nil, externalQueueConsumer)
+  ```
+
+- **Auto-ack users:** Add middleware to restore previous behavior:
+  ```go
+  engine.Use(middleware.AutoAck())
+  ```
+
+- **Multi-pool users:** Use higher concurrency in single pool:
+  ```go
+  engine := NewEngine(EngineConfig{
+      RouterPool: PoolConfig{Workers: 10},
+  })
+  ```
+
 ## [0.15.0] - 2026-01-23
 
 ### Added
