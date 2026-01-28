@@ -4,8 +4,8 @@ go 1.24.1
 
 require (
 	github.com/cloudevents/sdk-go/v2 v2.16.2
-	github.com/fxsml/gopipe/channel v0.11.0
-	github.com/fxsml/gopipe/pipe v0.11.0
+	github.com/fxsml/gopipe/channel v0.16.0
+	github.com/fxsml/gopipe/pipe v0.16.0
 	github.com/google/uuid v1.6.0
 )
 
