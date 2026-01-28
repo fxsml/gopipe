@@ -30,9 +30,6 @@ The Engine uses a single merger for all message flows:
 - **TypedOutput** bypasses marshaling (for internal use)
 - **RawOutput** marshals to bytes (for broker integration)
 
-Loopback is not built into the Engine—use `plugin.Loopback` which connects
-a TypedOutput back to TypedInput via the existing Add* APIs.
-
 ## Usage
 
 ### Raw I/O (Broker Integration)
@@ -133,18 +130,6 @@ engine.AddInput("new-typed-input", nil, newTypedInput)
 newRawOutput, _ := engine.AddRawOutput("orders-out", match.Types("order.%"))
 newTypedOutput, _ := engine.AddOutput("internal-out", match.Types("internal.%"))
 ```
-
-## Loopback
-
-Use the `plugin.Loopback` plugin to route output messages back to the engine for re-processing:
-
-```go
-engine.AddPlugin(plugin.Loopback("loopback", match.Types("intermediate.event")))
-```
-
-Messages matching the loopback criteria are fed back to the handler pipeline, skipping marshal/unmarshal for efficiency.
-
-**Note:** Loopback creates a cycle in the message flow. The engine cannot detect when processing is "complete" with loopback enabled. You must cancel the context to trigger shutdown.
 
 ## Message Types
 

@@ -32,8 +32,12 @@ type DistributorConfig[T any] struct {
 	// Buffer is the output channel buffer size.
 	Buffer int
 	// ShutdownTimeout controls shutdown behavior on context cancellation.
-	// If <= 0, waits indefinitely for input to close naturally.
-	// If > 0, waits up to this duration then forces shutdown.
+	// If <= 0, forces immediate shutdown (no grace period).
+	// If > 0, waits up to this duration for natural completion, then forces shutdown.
+	// On forced shutdown:
+	//   - Worker stops forwarding (escapes blocked sends)
+	//   - Worker drains remaining input, calling ErrorHandler for each
+	//   - Worker exits when input closes
 	ShutdownTimeout time.Duration
 	// ErrorHandler is called when a message cannot be delivered.
 	// Called with ErrNoMatchingOutput when no output matches.
@@ -100,6 +104,8 @@ func (d *Distributor[T]) Distribute(ctx context.Context, input <-chan T) (<-chan
 		for {
 			select {
 			case <-d.done:
+				// Forced shutdown - exit immediately without draining
+				// (draining blocks if input channel is still open)
 				return
 			case msg, ok := <-input:
 				if !ok {
@@ -120,16 +126,18 @@ func (d *Distributor[T]) Distribute(ctx context.Context, input <-chan T) (<-chan
 			d.mu.Unlock()
 
 			if d.cfg.ShutdownTimeout > 0 {
-				// Wait for natural completion or timeout
+				// Grace period - wait for natural completion or timeout
 				select {
 				case <-d.inputDone:
-					// Input finished naturally
+					// Input finished naturally within grace period
 				case <-time.After(d.cfg.ShutdownTimeout):
-					// Force shutdown after timeout
+					// Force shutdown after grace period
 					close(d.done)
 				}
+			} else {
+				// No grace period - force shutdown immediately
+				close(d.done)
 			}
-			// If timeout <= 0, wait indefinitely for input to close naturally
 		case <-d.inputDone:
 			// Input completed naturally
 			d.mu.Lock()

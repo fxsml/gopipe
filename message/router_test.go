@@ -4,13 +4,12 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
 
 func TestRouter_BasicRouting(t *testing.T) {
-	router := NewRouter(RouterConfig{})
+	router := NewRouter(PipeConfig{})
 
 	handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 		cmd := msg.Data.(*TestCommand)
@@ -60,7 +59,7 @@ func TestRouter_BasicRouting(t *testing.T) {
 
 func TestRouter_NoHandler(t *testing.T) {
 	var handledErr error
-	router := NewRouter(RouterConfig{
+	router := NewRouter(PipeConfig{
 		ErrorHandler: func(msg *Message, err error) {
 			handledErr = err
 		},
@@ -89,7 +88,7 @@ func TestRouter_NoHandler(t *testing.T) {
 
 func TestRouter_HandlerMatcher(t *testing.T) {
 	var handledErr error
-	router := NewRouter(RouterConfig{
+	router := NewRouter(PipeConfig{
 		ErrorHandler: func(msg *Message, err error) {
 			handledErr = err
 		},
@@ -141,7 +140,7 @@ func TestRouter_HandlerError(t *testing.T) {
 	testErr := errors.New("handler error")
 	var handledErr error
 
-	router := NewRouter(RouterConfig{
+	router := NewRouter(PipeConfig{
 		ErrorHandler: func(msg *Message, err error) {
 			handledErr = err
 		},
@@ -175,7 +174,7 @@ func TestRouter_HandlerError(t *testing.T) {
 }
 
 func TestRouter_MultipleOutputs(t *testing.T) {
-	router := NewRouter(RouterConfig{})
+	router := NewRouter(PipeConfig{})
 
 	handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 		// Return multiple messages
@@ -211,7 +210,7 @@ func TestRouter_MultipleOutputs(t *testing.T) {
 }
 
 func TestRouter_ContextCancellation(t *testing.T) {
-	router := NewRouter(RouterConfig{})
+	router := NewRouter(PipeConfig{})
 
 	handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 		return []*Message{{Data: msg.Data, Attributes: msg.Attributes}}, nil
@@ -251,7 +250,7 @@ func TestRouter_ContextCancellation(t *testing.T) {
 
 func TestRouter_Standalone(t *testing.T) {
 	// Test that Router works without Engine
-	router := NewRouter(RouterConfig{})
+	router := NewRouter(PipeConfig{})
 
 	type OrderCreated struct {
 		OrderID string
@@ -296,40 +295,6 @@ func TestRouter_Standalone(t *testing.T) {
 
 	if msg.Attributes["orderID"] != "123" {
 		t.Errorf("expected orderID '123', got %v", msg.Attributes["orderID"])
-	}
-}
-
-func TestRouter_MessageAck(t *testing.T) {
-	router := NewRouter(RouterConfig{})
-
-	handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
-		return []*Message{{Data: msg.Data, Attributes: msg.Attributes}}, nil
-	}, KebabNaming)
-
-	_ = router.AddHandler("", nil, handler)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	var acked bool
-	acking := NewAcking(func() { acked = true }, func(error) {})
-
-	in := make(chan *Message, 1)
-	in <- &Message{
-		Data:       &TestCommand{ID: "123"},
-		Attributes: Attributes{"type": "test.command"},
-		acking:     acking,
-	}
-	close(in)
-
-	out, _ := router.Pipe(ctx, in)
-
-	// Drain output
-	for range out {
-	}
-
-	if !acked {
-		t.Error("expected message to be acked after successful processing")
 	}
 }
 
@@ -469,285 +434,40 @@ func testMiddlewareFactory() Middleware {
 
 // Pool tests
 
-func TestRouter_AddPoolWithConfig(t *testing.T) {
-	t.Run("adds pool successfully", func(t *testing.T) {
-		router := NewRouter(RouterConfig{})
-		err := router.AddPoolWithConfig("erp", PoolConfig{Workers: 5})
-		if err != nil {
-			t.Fatalf("AddPoolWithConfig failed: %v", err)
-		}
-	})
+func TestRouter_DuplicateHandler(t *testing.T) {
+	router := NewRouter(PipeConfig{})
 
-	t.Run("returns error for empty name", func(t *testing.T) {
-		router := NewRouter(RouterConfig{})
-		err := router.AddPoolWithConfig("", PoolConfig{Workers: 5})
-		if !errors.Is(err, ErrPoolNameEmpty) {
-			t.Errorf("expected ErrPoolNameEmpty, got %v", err)
-		}
-	})
-
-	t.Run("returns error for duplicate pool", func(t *testing.T) {
-		router := NewRouter(RouterConfig{})
-		_ = router.AddPoolWithConfig("erp", PoolConfig{Workers: 5})
-		err := router.AddPoolWithConfig("erp", PoolConfig{Workers: 10})
-		if !errors.Is(err, ErrPoolExists) {
-			t.Errorf("expected ErrPoolExists, got %v", err)
-		}
-	})
-
-	t.Run("returns error after router started", func(t *testing.T) {
-		router := NewRouter(RouterConfig{})
-		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
-			return nil, nil
-		}, KebabNaming)
-		_ = router.AddHandler("test", nil, handler)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		in := make(chan *Message)
-		close(in)
-		_, _ = router.Pipe(ctx, in)
-
-		err := router.AddPoolWithConfig("erp", PoolConfig{Workers: 5})
-		if !errors.Is(err, ErrAlreadyStarted) {
-			t.Errorf("expected ErrAlreadyStarted, got %v", err)
-		}
-	})
-
-	t.Run("can override default pool", func(t *testing.T) {
-		router := NewRouter(RouterConfig{Pool: PoolConfig{Workers: 10}})
-		err := router.AddPoolWithConfig("default", PoolConfig{Workers: 20})
-		if !errors.Is(err, ErrPoolExists) {
-			t.Errorf("expected ErrPoolExists when overriding default, got %v", err)
-		}
-	})
-}
-
-func TestRouter_AddHandlerToPool(t *testing.T) {
-	t.Run("adds handler to named pool", func(t *testing.T) {
-		router := NewRouter(RouterConfig{})
-		_ = router.AddPoolWithConfig("erp", PoolConfig{Workers: 5})
-
-		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
-			return []*Message{{Data: msg.Data, Attributes: msg.Attributes}}, nil
-		}, KebabNaming)
-
-		err := router.AddHandlerToPool("test", nil, handler, "erp")
-		if err != nil {
-			t.Fatalf("AddHandlerToPool failed: %v", err)
-		}
-	})
-
-	t.Run("returns error for non-existent pool", func(t *testing.T) {
-		router := NewRouter(RouterConfig{})
-
-		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
-			return nil, nil
-		}, KebabNaming)
-
-		err := router.AddHandlerToPool("test", nil, handler, "nonexistent")
-		if !errors.Is(err, ErrPoolNotFound) {
-			t.Errorf("expected ErrPoolNotFound, got %v", err)
-		}
-	})
-
-	t.Run("returns error for duplicate handler", func(t *testing.T) {
-		router := NewRouter(RouterConfig{})
-
-		handler1 := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
-			return nil, nil
-		}, KebabNaming)
-		handler2 := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
-			return nil, nil
-		}, KebabNaming)
-
-		_ = router.AddHandler("test1", nil, handler1)
-		err := router.AddHandler("test2", nil, handler2)
-		if !errors.Is(err, ErrHandlerExists) {
-			t.Errorf("expected ErrHandlerExists, got %v", err)
-		}
-	})
-}
-
-func TestRouter_MultiPool(t *testing.T) {
-	t.Run("routes to correct pool", func(t *testing.T) {
-		router := NewRouter(RouterConfig{Pool: PoolConfig{Workers: 2}})
-		_ = router.AddPoolWithConfig("erp", PoolConfig{Workers: 1})
-
-		// Track which handler processed which message
-		var defaultPoolCount, erpPoolCount int
-		var mu sync.Mutex
-
-		defaultHandler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
-			mu.Lock()
-			defaultPoolCount++
-			mu.Unlock()
-			return []*Message{{Data: TestEvent{ID: msg.Data.(*TestCommand).ID}, Attributes: Attributes{"type": "default.event"}}}, nil
-		}, KebabNaming)
-
-		type ERPCommand struct {
-			ID string
-		}
-		erpHandler := NewHandler[ERPCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
-			mu.Lock()
-			erpPoolCount++
-			mu.Unlock()
-			return []*Message{{Data: TestEvent{ID: msg.Data.(*ERPCommand).ID}, Attributes: Attributes{"type": "erp.event"}}}, nil
-		}, KebabNaming)
-
-		_ = router.AddHandler("default-handler", nil, defaultHandler)
-		_ = router.AddHandlerToPool("erp-handler", nil, erpHandler, "erp")
-
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		in := make(chan *Message, 4)
-		in <- &Message{Data: &TestCommand{ID: "1"}, Attributes: Attributes{"type": "test.command"}}
-		in <- &Message{Data: &ERPCommand{ID: "2"}, Attributes: Attributes{"type": "erp.command"}}
-		in <- &Message{Data: &TestCommand{ID: "3"}, Attributes: Attributes{"type": "test.command"}}
-		in <- &Message{Data: &ERPCommand{ID: "4"}, Attributes: Attributes{"type": "erp.command"}}
-		close(in)
-
-		out, err := router.Pipe(ctx, in)
-		if err != nil {
-			t.Fatalf("Pipe failed: %v", err)
-		}
-
-		var received int
-		for range out {
-			received++
-		}
-
-		if received != 4 {
-			t.Errorf("expected 4 messages, got %d", received)
-		}
-
-		mu.Lock()
-		defer mu.Unlock()
-		if defaultPoolCount != 2 {
-			t.Errorf("expected 2 messages in default pool, got %d", defaultPoolCount)
-		}
-		if erpPoolCount != 2 {
-			t.Errorf("expected 2 messages in erp pool, got %d", erpPoolCount)
-		}
-	})
-}
-
-func TestRouter_MultiPool_Concurrency(t *testing.T) {
-	// Verify that pools with different worker counts actually execute
-	// with different concurrency levels.
-	const processTime = 50 * time.Millisecond
-
-	// Use default pool as "slow" (1 worker) and create "fast" pool (3 workers)
-	router := NewRouter(RouterConfig{Pool: PoolConfig{Workers: 1}})
-	_ = router.AddPoolWithConfig("fast", PoolConfig{Workers: 3})
-
-	// Track max concurrent executions per pool
-	var slowActive, slowMax, fastActive, fastMax int
-	var mu sync.Mutex
-
-	type SlowCommand struct{ ID string }
-	type FastCommand struct{ ID string }
-
-	slowHandler := NewHandler[SlowCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
-		mu.Lock()
-		slowActive++
-		if slowActive > slowMax {
-			slowMax = slowActive
-		}
-		mu.Unlock()
-
-		time.Sleep(processTime)
-
-		mu.Lock()
-		slowActive--
-		mu.Unlock()
-		return []*Message{{Data: msg.Data, Attributes: Attributes{"type": "slow.event"}}}, nil
+	handler1 := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+		return nil, nil
+	}, KebabNaming)
+	handler2 := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+		return nil, nil
 	}, KebabNaming)
 
-	fastHandler := NewHandler[FastCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
-		mu.Lock()
-		fastActive++
-		if fastActive > fastMax {
-			fastMax = fastActive
-		}
-		mu.Unlock()
-
-		time.Sleep(processTime)
-
-		mu.Lock()
-		fastActive--
-		mu.Unlock()
-		return []*Message{{Data: msg.Data, Attributes: Attributes{"type": "fast.event"}}}, nil
-	}, KebabNaming)
-
-	// slow handler goes to default pool, fast handler goes to fast pool
-	_ = router.AddHandler("slow", nil, slowHandler)
-	_ = router.AddHandlerToPool("fast", nil, fastHandler, "fast")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	in := make(chan *Message, 6)
-	// Send 3 messages to each pool
-	for i := 0; i < 3; i++ {
-		in <- &Message{Data: &SlowCommand{ID: string(rune('a' + i))}, Attributes: Attributes{"type": "slow.command"}}
-		in <- &Message{Data: &FastCommand{ID: string(rune('a' + i))}, Attributes: Attributes{"type": "fast.command"}}
-	}
-	close(in)
-
-	out, err := router.Pipe(ctx, in)
-	if err != nil {
-		t.Fatalf("Pipe failed: %v", err)
-	}
-
-	// Receive all messages, then cancel context to close output
-	const expected = 6
-	var received int
-	for received < expected {
-		select {
-		case _, ok := <-out:
-			if !ok {
-				t.Fatalf("output closed early, received %d/%d", received, expected)
-			}
-			received++
-		case <-ctx.Done():
-			t.Fatalf("timeout waiting for messages, received %d/%d", received, expected)
-		}
-	}
-	cancel() // Signal done, allows merger to close
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	// Slow pool (1 worker) should have max 1 concurrent
-	if slowMax != 1 {
-		t.Errorf("slow pool: expected max concurrency 1, got %d", slowMax)
-	}
-
-	// Fast pool (3 workers) should have max > 1 concurrent
-	if fastMax < 2 {
-		t.Errorf("fast pool: expected max concurrency >= 2, got %d", fastMax)
+	_ = router.AddHandler("test1", nil, handler1)
+	err := router.AddHandler("test2", nil, handler2)
+	if !errors.Is(err, ErrHandlerExists) {
+		t.Errorf("expected ErrHandlerExists, got %v", err)
 	}
 }
 
 func TestRouter_PoolConfig_Defaults(t *testing.T) {
 	t.Run("workers defaults to 1", func(t *testing.T) {
-		cfg := PoolConfig{}.parse(100)
+		cfg := PoolConfig{}.parse()
 		if cfg.Workers != 1 {
 			t.Errorf("expected Workers=1, got %d", cfg.Workers)
 		}
 	})
 
-	t.Run("buffer inherits from router", func(t *testing.T) {
-		cfg := PoolConfig{}.parse(200)
-		if cfg.BufferSize != 200 {
-			t.Errorf("expected BufferSize=200, got %d", cfg.BufferSize)
+	t.Run("buffer defaults to 100", func(t *testing.T) {
+		cfg := PoolConfig{}.parse()
+		if cfg.BufferSize != 100 {
+			t.Errorf("expected BufferSize=100, got %d", cfg.BufferSize)
 		}
 	})
 
 	t.Run("explicit values preserved", func(t *testing.T) {
-		cfg := PoolConfig{Workers: 5, BufferSize: 50}.parse(100)
+		cfg := PoolConfig{Workers: 5, BufferSize: 50}.parse()
 		if cfg.Workers != 5 {
 			t.Errorf("expected Workers=5, got %d", cfg.Workers)
 		}

@@ -351,9 +351,18 @@ func TestDistributor_ContextCancellation(t *testing.T) {
 func TestDistributor_ShutdownTimeout(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	var dropped int
+	var mu sync.Mutex
 	dist := NewDistributor[int](DistributorConfig[int]{
 		Buffer:          1, // Small buffer to cause blocking
-		ShutdownTimeout: 100 * time.Millisecond,
+		ShutdownTimeout: 50 * time.Millisecond,
+		ErrorHandler: func(in any, err error) {
+			if err == ErrShutdownDropped {
+				mu.Lock()
+				dropped++
+				mu.Unlock()
+			}
+		},
 	})
 
 	out, err := dist.AddOutput(nil)
@@ -371,11 +380,18 @@ func TestDistributor_ShutdownTimeout(t *testing.T) {
 		t.Fatalf("unexpected error starting distributor: %v", err)
 	}
 
-	// Read one value
+	// Read one value to start distribution
 	<-out
+
+	// Don't read more - let output buffer fill and worker block
+	time.Sleep(10 * time.Millisecond)
 
 	start := time.Now()
 	cancel()
+
+	// Wait for timeout to fire, then close input to allow drain
+	time.Sleep(60 * time.Millisecond)
+	close(input)
 
 	// Drain output
 	for range out {
@@ -385,6 +401,14 @@ func TestDistributor_ShutdownTimeout(t *testing.T) {
 
 	if elapsed > 200*time.Millisecond {
 		t.Errorf("shutdown took too long: %v", elapsed)
+	}
+
+	// Verify remaining messages were reported as dropped
+	mu.Lock()
+	d := dropped
+	mu.Unlock()
+	if d == 0 {
+		t.Error("expected some messages to be reported as dropped")
 	}
 }
 

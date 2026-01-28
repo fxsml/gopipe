@@ -26,8 +26,12 @@ type MergerConfig struct {
 	// Buffer is the output channel buffer size.
 	Buffer int
 	// ShutdownTimeout controls shutdown behavior on context cancellation.
-	// If <= 0, waits indefinitely for inputs to close naturally.
-	// If > 0, waits up to this duration then forces shutdown.
+	// If <= 0, forces immediate shutdown (no grace period).
+	// If > 0, waits up to this duration for natural completion, then forces shutdown.
+	// On forced shutdown:
+	//   - Workers stop forwarding (escape blocked sends)
+	//   - Workers drain remaining inputs, calling ErrorHandler for each
+	//   - Workers exit when their input closes
 	ShutdownTimeout time.Duration
 	// ErrorHandler is called when a message cannot be forwarded.
 	// Called with ErrShutdownDropped when a message is dropped due to shutdown.
@@ -108,16 +112,18 @@ func (m *Merger[T]) Merge(ctx context.Context) (<-chan T, error) {
 		}()
 
 		if m.cfg.ShutdownTimeout > 0 {
-			// Wait for natural completion or timeout
+			// Grace period - wait for natural completion or timeout
 			select {
 			case <-wgDone:
-				// Inputs finished naturally
+				// Inputs finished naturally within grace period
 			case <-time.After(m.cfg.ShutdownTimeout):
-				// Force shutdown after timeout
+				// Force shutdown after grace period
 				close(m.done)
 			}
+		} else {
+			// No grace period - force shutdown immediately
+			close(m.done)
 		}
-		// If timeout <= 0, wait indefinitely for inputs to close naturally
 		<-wgDone
 		close(m.out)
 	}()
@@ -135,6 +141,8 @@ func (m *Merger[T]) startInput(ch <-chan T, done chan struct{}) {
 		for {
 			select {
 			case <-m.done:
+				// Forced shutdown - exit immediately without draining
+				// (draining blocks if input channel is still open)
 				return
 			case v, ok := <-ch:
 				if !ok {
@@ -143,6 +151,7 @@ func (m *Merger[T]) startInput(ch <-chan T, done chan struct{}) {
 				select {
 				case m.out <- v:
 				case <-m.done:
+					// Forced shutdown - report current value and exit
 					m.cfg.ErrorHandler(v, ErrShutdownDropped)
 					return
 				}
