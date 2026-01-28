@@ -104,10 +104,8 @@ func (d *Distributor[T]) Distribute(ctx context.Context, input <-chan T) (<-chan
 		for {
 			select {
 			case <-d.done:
-				// Drain remaining input, reporting each as dropped
-				for msg := range input {
-					d.cfg.ErrorHandler(msg, ErrShutdownDropped)
-				}
+				// Forced shutdown - exit immediately without draining
+				// (draining blocks if input channel is still open)
 				return
 			case msg, ok := <-input:
 				if !ok {

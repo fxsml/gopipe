@@ -141,10 +141,8 @@ func (m *Merger[T]) startInput(ch <-chan T, done chan struct{}) {
 		for {
 			select {
 			case <-m.done:
-				// Drain remaining input, reporting each as dropped
-				for v := range ch {
-					m.cfg.ErrorHandler(v, ErrShutdownDropped)
-				}
+				// Forced shutdown - exit immediately without draining
+				// (draining blocks if input channel is still open)
 				return
 			case v, ok := <-ch:
 				if !ok {
@@ -153,11 +151,8 @@ func (m *Merger[T]) startInput(ch <-chan T, done chan struct{}) {
 				select {
 				case m.out <- v:
 				case <-m.done:
+					// Forced shutdown - report current value and exit
 					m.cfg.ErrorHandler(v, ErrShutdownDropped)
-					// Drain remaining input
-					for v := range ch {
-						m.cfg.ErrorHandler(v, ErrShutdownDropped)
-					}
 					return
 				}
 			}
