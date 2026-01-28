@@ -34,6 +34,7 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0020](0020-message-engine-architecture.md) | Message Engine Architecture | Proposed |
 | [0021](0021-codec-marshaling-pattern.md) | Codec/Marshaling Pattern | Proposed |
 | [0022](0022-message-package-redesign.md) | Message Package Redesign | Proposed |
+| [0023](0023-engine-simplification.md) | Engine Simplification | Implemented |
 
 ## History
 
