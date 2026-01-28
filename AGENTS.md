@@ -57,8 +57,6 @@ TypedInputs ───────────┘                          │
 
 **Why:** Single merger is simpler. Each raw input has its own unmarshal pipe that feeds typed messages into the shared merger.
 
-Loopback is not built into Engine—use `plugin.Loopback` which connects TypedOutput back to TypedInput via the existing Add* APIs.
-
 ### API Conventions
 
 | Context | Pattern | Example |
@@ -125,21 +123,6 @@ func NewEngine() *Engine {
 ```
 
 **Why:** `Distributor.AddOutput()` and `Merger.AddInput()` work before `Distribute()`/`Merge()` is called.
-
-### ❌ N goroutines for loopback
-
-```go
-// WRONG - N loopbacks = N goroutines forwarding to same channel
-for _, lb := range loopbacks {
-    ch := distributor.AddOutput(lb.matcher)
-    go forward(ch, loopbackIn)  // Wasteful
-}
-
-// CORRECT - combine matchers, single output
-combined := match.Any(matchers...)
-loopbackCh := distributor.AddOutput(combined)
-typedMerger.AddInput(loopbackCh)  // Direct, no forwarding
-```
 
 ### ❌ Handler.Name() method
 
@@ -241,8 +224,8 @@ message/
 ├── matcher.go      # Matcher interface
 ├── errors.go       # Error types
 ├── match/          # Matcher implementations
-├── middleware/     # CorrelationID, etc.
-└── plugin/         # Loopback, ProcessLoopback, BatchLoopback
+├── middleware/     # CorrelationID, AutoAck, etc.
+└── plugin/         # Engine plugins
 ```
 
 ## Deprecation Procedure
