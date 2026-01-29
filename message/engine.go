@@ -222,14 +222,15 @@ func (e *Engine) Start(ctx context.Context) (<-chan struct{}, error) {
 	}
 
 	// 4. Create done channel that closes when distributor finishes.
-	// Shutdown flow: ctx.Done() → merger timeout → merger closes output →
-	// router drains → distributor drains → distDone → e.shutdown → done
+	// Shutdown: close(e.shutdown) signals marshal/unmarshal pipes immediately.
+	// Each component uses ShutdownTimeout independently; cascade works via
+	// channel closures (unmarshal→merger→router→distributor).
 	done := make(chan struct{})
 	go func() {
 		<-ctx.Done()
 		e.cfg.Logger.Info("Shutdown initiated", "component", "engine")
+		close(e.shutdown)
 		<-distDone
-		close(e.shutdown) // Signals marshal/unmarshal pipes
 		e.cfg.Logger.Info("Stopped", "component", "engine")
 		close(done)
 	}()
