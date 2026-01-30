@@ -5,6 +5,7 @@
 | Plan | Title | Status |
 |------|-------|--------|
 | [0007](0007-cesql-pattern-matching.md) | CESQL Pattern Matching | Proposed |
+| [http-cloudevents-adapter](http-cloudevents-adapter.md) | HTTP CloudEvents Adapter | Proposed |
 
 ## Agent Guidance
 
