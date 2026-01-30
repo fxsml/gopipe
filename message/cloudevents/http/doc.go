@@ -2,18 +2,20 @@
 //
 // # Subscriber
 //
-// [Subscriber] receives CloudEvents over HTTP with topic-based routing:
+// [Subscriber] implements [http.Handler] and delivers CloudEvents to a channel.
+// Use standard [http.ServeMux] for topic routing:
 //
-//	sub := http.NewSubscriber(http.SubscriberConfig{
-//	    Addr: ":8080",
-//	    Path: "/events",
-//	})
+//	orders := http.NewSubscriber(http.SubscriberConfig{BufferSize: 100})
+//	payments := http.NewSubscriber(http.SubscriberConfig{BufferSize: 100})
 //
-//	orders, _ := sub.Subscribe(ctx, "orders")  // receives on /events/orders
-//	go sub.Start(ctx)
+//	mux := http.NewServeMux()
+//	mux.Handle("/events/orders", orders)
+//	mux.Handle("/events/payments", payments)
+//	http.ListenAndServe(":8080", mux)
 //
-//	for msg := range orders {
-//	    // process message
+//	// Consume from channels
+//	for msg := range orders.C() {
+//	    // process
 //	    msg.Ack()
 //	}
 //

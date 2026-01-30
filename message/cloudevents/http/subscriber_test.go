@@ -2,7 +2,6 @@ package http
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -10,85 +9,35 @@ import (
 	"time"
 )
 
-func TestSubscriber_Subscribe(t *testing.T) {
-	t.Run("returns channel for topic", func(t *testing.T) {
-		sub := NewSubscriber(SubscriberConfig{})
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+func TestSubscriber_C(t *testing.T) {
+	sub := NewSubscriber(SubscriberConfig{BufferSize: 10})
 
-		ch, err := sub.Subscribe(ctx, "orders")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+	ch := sub.C()
+	if ch == nil {
+		t.Fatal("expected non-nil channel")
+	}
+}
+
+func TestSubscriber_Close(t *testing.T) {
+	sub := NewSubscriber(SubscriberConfig{})
+
+	sub.Close()
+
+	select {
+	case _, ok := <-sub.C():
+		if ok {
+			t.Error("expected channel to be closed")
 		}
-
-		if ch == nil {
-			t.Fatal("expected non-nil channel")
-		}
-	})
-
-	t.Run("returns error for duplicate topic", func(t *testing.T) {
-		sub := NewSubscriber(SubscriberConfig{})
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		_, err := sub.Subscribe(ctx, "orders")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		_, err = sub.Subscribe(ctx, "orders")
-		if err == nil {
-			t.Fatal("expected error for duplicate topic")
-		}
-	})
-
-	t.Run("allows multiple different topics", func(t *testing.T) {
-		sub := NewSubscriber(SubscriberConfig{})
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		ch1, err := sub.Subscribe(ctx, "orders")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		ch2, err := sub.Subscribe(ctx, "payments")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if ch1 == ch2 {
-			t.Fatal("expected different channels for different topics")
-		}
-	})
-
-	t.Run("closes channel on context cancellation", func(t *testing.T) {
-		sub := NewSubscriber(SubscriberConfig{})
-		ctx, cancel := context.WithCancel(context.Background())
-
-		ch, err := sub.Subscribe(ctx, "orders")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		cancel()
-
-		select {
-		case _, ok := <-ch:
-			if ok {
-				t.Error("expected channel to be closed")
-			}
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for channel close")
-		}
-	})
+	default:
+		t.Error("channel should be closed and readable")
+	}
 }
 
 func TestSubscriber_ServeHTTP(t *testing.T) {
 	t.Run("rejects non-POST", func(t *testing.T) {
-		sub := NewSubscriber(SubscriberConfig{Path: "/events"})
+		sub := NewSubscriber(SubscriberConfig{})
 
-		req := httptest.NewRequest(http.MethodGet, "/events/orders", nil)
+		req := httptest.NewRequest(http.MethodGet, "/events", nil)
 		w := httptest.NewRecorder()
 
 		sub.ServeHTTP(w, req)
@@ -98,34 +47,12 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 		}
 	})
 
-	t.Run("returns 404 for unknown topic", func(t *testing.T) {
-		sub := NewSubscriber(SubscriberConfig{Path: "/events"})
-
-		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
-		req := httptest.NewRequest(http.MethodPost, "/events/unknown", bytes.NewReader(body))
-		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
-		w := httptest.NewRecorder()
-
-		sub.ServeHTTP(w, req)
-
-		if w.Code != http.StatusNotFound {
-			t.Errorf("expected %d, got %d", http.StatusNotFound, w.Code)
-		}
-	})
-
 	t.Run("parses single event and delivers to channel", func(t *testing.T) {
-		sub := NewSubscriber(SubscriberConfig{Path: "/events", AckTimeout: time.Second})
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		ch, err := sub.Subscribe(ctx, "orders")
-		if err != nil {
-			t.Fatalf("subscribe error: %v", err)
-		}
+		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
 
 		// Consume message and ack in background
 		go func() {
-			msg := <-ch
+			msg := <-sub.C()
 			if msg.ID() != "test-1" {
 				t.Errorf("expected id 'test-1', got %v", msg.ID())
 			}
@@ -133,7 +60,7 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 		}()
 
 		body := []byte(`{"specversion":"1.0","id":"test-1","type":"order.created","source":"/shop","data":{"order_id":"123"}}`)
-		req := httptest.NewRequest(http.MethodPost, "/events/orders", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
 		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
 		w := httptest.NewRecorder()
 
@@ -145,23 +72,16 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 	})
 
 	t.Run("returns 500 on nack", func(t *testing.T) {
-		sub := NewSubscriber(SubscriberConfig{Path: "/events", AckTimeout: time.Second})
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		ch, err := sub.Subscribe(ctx, "orders")
-		if err != nil {
-			t.Fatalf("subscribe error: %v", err)
-		}
+		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
 
 		// Nack the message
 		go func() {
-			msg := <-ch
+			msg := <-sub.C()
 			msg.Nack(errors.New("processing failed"))
 		}()
 
 		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
-		req := httptest.NewRequest(http.MethodPost, "/events/orders", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
 		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
 		w := httptest.NewRecorder()
 
@@ -173,17 +93,10 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 	})
 
 	t.Run("returns 400 on invalid JSON", func(t *testing.T) {
-		sub := NewSubscriber(SubscriberConfig{Path: "/events"})
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		_, err := sub.Subscribe(ctx, "orders")
-		if err != nil {
-			t.Fatalf("subscribe error: %v", err)
-		}
+		sub := NewSubscriber(SubscriberConfig{})
 
 		body := []byte(`not valid json`)
-		req := httptest.NewRequest(http.MethodPost, "/events/orders", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
 		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
 		w := httptest.NewRecorder()
 
@@ -195,19 +108,12 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 	})
 
 	t.Run("parses batch events", func(t *testing.T) {
-		sub := NewSubscriber(SubscriberConfig{Path: "/events", AckTimeout: time.Second})
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		ch, err := sub.Subscribe(ctx, "orders")
-		if err != nil {
-			t.Fatalf("subscribe error: %v", err)
-		}
+		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
 
 		// Consume and ack all messages
 		go func() {
 			for i := 0; i < 2; i++ {
-				msg := <-ch
+				msg := <-sub.C()
 				msg.Ack()
 			}
 		}()
@@ -216,7 +122,7 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 			{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}},
 			{"specversion":"1.0","id":"2","type":"test","source":"/test","data":{}}
 		]`)
-		req := httptest.NewRequest(http.MethodPost, "/events/orders", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
 		req.Header.Set("Content-Type", ContentTypeCloudEventsBatchJSON)
 		w := httptest.NewRecorder()
 
@@ -228,31 +134,43 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 	})
 }
 
-func TestSubscriber_Handler(t *testing.T) {
-	sub := NewSubscriber(SubscriberConfig{Path: "/events", AckTimeout: time.Second})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func TestSubscriber_WithServeMux(t *testing.T) {
+	orders := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
+	payments := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
 
-	ch, err := sub.Subscribe(ctx, "orders")
-	if err != nil {
-		t.Fatalf("subscribe error: %v", err)
-	}
+	mux := http.NewServeMux()
+	mux.Handle("/events/orders", orders)
+	mux.Handle("/events/payments", payments)
 
-	handler := sub.Handler("orders")
-
+	// Consume from both
 	go func() {
-		msg := <-ch
+		msg := <-orders.C()
+		msg.Ack()
+	}()
+	go func() {
+		msg := <-payments.C()
 		msg.Ack()
 	}()
 
-	body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
-	req := httptest.NewRequest(http.MethodPost, "/any/path", bytes.NewReader(body))
+	// Send to orders
+	body := []byte(`{"specversion":"1.0","id":"o1","type":"order","source":"/test","data":{}}`)
+	req := httptest.NewRequest(http.MethodPost, "/events/orders", bytes.NewReader(body))
 	req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
 	w := httptest.NewRecorder()
-
-	handler.ServeHTTP(w, req)
+	mux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("expected %d, got %d", http.StatusOK, w.Code)
+		t.Errorf("orders: expected %d, got %d", http.StatusOK, w.Code)
+	}
+
+	// Send to payments
+	body = []byte(`{"specversion":"1.0","id":"p1","type":"payment","source":"/test","data":{}}`)
+	req = httptest.NewRequest(http.MethodPost, "/events/payments", bytes.NewReader(body))
+	req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("payments: expected %d, got %d", http.StatusOK, w.Code)
 	}
 }

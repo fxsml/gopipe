@@ -1,7 +1,7 @@
 // Example: HTTP CloudEvents Adapter
 //
 // Demonstrates the HTTP CloudEvents adapter with:
-// - Topic-based subscription (multiple endpoints)
+// - Topic-based subscription via http.ServeMux
 // - Batch publishing for high throughput
 // - Standard library http.Client/Server
 //
@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"time"
@@ -45,20 +46,13 @@ func main() {
 	defer cancel()
 
 	// ─────────────────────────────────────────────────────────────────────
-	// SUBSCRIBER: Receive events on topic-based endpoints
+	// SUBSCRIBER: One per topic, compose with http.ServeMux
 	// ─────────────────────────────────────────────────────────────────────
 
-	sub := cehttp.NewSubscriber(cehttp.SubscriberConfig{
-		Addr:       ":8080",
-		Path:       "/events",
-		BufferSize: 100,
-	})
+	orders := cehttp.NewSubscriber(cehttp.SubscriberConfig{BufferSize: 100})
 
-	// Subscribe to orders topic (/events/orders)
-	ordersCh, err := sub.Subscribe(ctx, "orders")
-	if err != nil {
-		log.Fatalf("Failed to subscribe: %v", err)
-	}
+	mux := http.NewServeMux()
+	mux.Handle("/events/orders", orders)
 
 	// ─────────────────────────────────────────────────────────────────────
 	// PUBLISHER: Send confirmations with batching
@@ -69,13 +63,10 @@ func main() {
 		Concurrency: 2,
 	})
 
-	// Channel for outbound confirmations
 	confirmationsCh := make(chan *message.RawMessage, 100)
 
 	// Start batch publisher (collects up to 10 or flushes every 500ms)
-	// Note: This will fail to connect since there's no server on 8081,
-	// but demonstrates the API usage
-	_, err = pub.PublishBatch(ctx, "confirmations", confirmationsCh, cehttp.BatchConfig{
+	_, err := pub.PublishBatch(ctx, "confirmations", confirmationsCh, cehttp.BatchConfig{
 		MaxSize:     10,
 		MaxDuration: 500 * time.Millisecond,
 	})
@@ -88,8 +79,7 @@ func main() {
 	// ─────────────────────────────────────────────────────────────────────
 
 	go func() {
-		for raw := range ordersCh {
-			// Parse order data
+		for raw := range orders.C() {
 			var order Order
 			if err := json.Unmarshal(raw.Data, &order); err != nil {
 				log.Printf("Failed to parse order: %v", err)
@@ -99,7 +89,6 @@ func main() {
 
 			fmt.Printf("Received order: %s (amount: %d)\n", order.OrderID, order.Amount)
 
-			// Create confirmation (would be sent to external service)
 			confirmation := OrderConfirmation{
 				OrderID:   order.OrderID,
 				Status:    "confirmed",
@@ -113,27 +102,26 @@ func main() {
 				message.AttrSource: "/processor",
 			}, nil)
 
-			// Queue for batch publishing
 			select {
 			case confirmationsCh <- confirmationMsg:
 			default:
 				log.Println("Confirmation channel full, dropping")
 			}
 
-			// Acknowledge the order
 			raw.Ack()
 		}
 		close(confirmationsCh)
 	}()
 
 	// ─────────────────────────────────────────────────────────────────────
-	// START SERVER
+	// START SERVER (standard library)
 	// ─────────────────────────────────────────────────────────────────────
 
+	server := &http.Server{Addr: ":8080", Handler: mux}
+
 	go func() {
-		if err := sub.Start(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("Server error: %v", err)
-		}
+		<-ctx.Done()
+		server.Shutdown(context.Background())
 	}()
 
 	fmt.Println("HTTP CloudEvents server listening on :8080")
@@ -154,6 +142,8 @@ func main() {
 	fmt.Println(`  -d '[{"specversion":"1.0","id":"1","type":"order.created","source":"/shop","data":{"order_id":"ORD-001","amount":100}},{"specversion":"1.0","id":"2","type":"order.created","source":"/shop","data":{"order_id":"ORD-002","amount":200}}]'`)
 	fmt.Println()
 
-	<-ctx.Done()
+	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		log.Fatalf("Server error: %v", err)
+	}
 	fmt.Println("Shutting down...")
 }

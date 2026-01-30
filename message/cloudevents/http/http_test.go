@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -15,41 +16,33 @@ func TestHTTP_E2E_SingleEvent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Start subscriber
-	sub := NewSubscriber(SubscriberConfig{
-		Addr:       "127.0.0.1:0",
-		Path:       "/events",
-		BufferSize: 10,
-	})
+	// Create subscriber
+	sub := NewSubscriber(SubscriberConfig{BufferSize: 10})
 
-	ordersCh, err := sub.Subscribe(ctx, "orders")
+	// Setup server with mux
+	mux := http.NewServeMux()
+	mux.Handle("/events/orders", sub)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("subscribe error: %v", err)
+		t.Fatalf("listen error: %v", err)
 	}
+	defer ln.Close()
 
-	// Start server in background
-	serverErr := make(chan error, 1)
-	go func() {
-		serverErr <- sub.Start(ctx)
-	}()
-
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
-	addr := sub.Addr()
-	if addr == nil {
-		t.Fatal("server did not start")
-	}
+	server := &http.Server{Handler: mux}
+	go server.Serve(ln)
+	defer server.Shutdown(ctx)
 
 	// Create publisher
 	pub := NewPublisher(PublisherConfig{
-		TargetURL: fmt.Sprintf("http://%s/events", addr.String()),
+		TargetURL: fmt.Sprintf("http://%s/events", ln.Addr().String()),
 		Client:    &http.Client{Timeout: 5 * time.Second},
 	})
 
 	// Receive messages in background
 	received := make(chan *message.RawMessage, 1)
 	go func() {
-		for msg := range ordersCh {
+		for msg := range sub.C() {
 			received <- msg
 			msg.Ack()
 		}
@@ -89,36 +82,30 @@ func TestHTTP_E2E_BatchEvent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Start subscriber
-	sub := NewSubscriber(SubscriberConfig{
-		Addr:       "127.0.0.1:0",
-		Path:       "/events",
-		BufferSize: 100,
-	})
+	sub := NewSubscriber(SubscriberConfig{BufferSize: 100})
 
-	ordersCh, err := sub.Subscribe(ctx, "orders")
-	if err != nil {
-		t.Fatalf("subscribe error: %v", err)
-	}
+	mux := http.NewServeMux()
+	mux.Handle("/events/orders", sub)
 
-	go sub.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer ln.Close()
 
-	// Create publisher
+	server := &http.Server{Handler: mux}
+	go server.Serve(ln)
+	defer server.Shutdown(ctx)
+
 	pub := NewPublisher(PublisherConfig{
-		TargetURL: fmt.Sprintf("http://%s/events", sub.Addr().String()),
+		TargetURL: fmt.Sprintf("http://%s/events", ln.Addr().String()),
 	})
 
-	// Receive messages
 	var receivedCount atomic.Int32
 	go func() {
-		for msg := range ordersCh {
+		for msg := range sub.C() {
 			receivedCount.Add(1)
 			msg.Ack()
 		}
 	}()
 
-	// Send batch via PublishBatch
 	inputCh := make(chan *message.RawMessage, 100)
 	done, err := pub.PublishBatch(ctx, "orders", inputCh, BatchConfig{
 		MaxSize:     5,
@@ -128,7 +115,6 @@ func TestHTTP_E2E_BatchEvent(t *testing.T) {
 		t.Fatalf("batch publish error: %v", err)
 	}
 
-	// Send 10 messages
 	for i := 0; i < 10; i++ {
 		inputCh <- message.NewRaw(
 			[]byte(fmt.Sprintf(`{"order_id":"ORD-%03d"}`, i)),
@@ -142,14 +128,12 @@ func TestHTTP_E2E_BatchEvent(t *testing.T) {
 	}
 	close(inputCh)
 
-	// Wait for batch publishing to complete
 	select {
 	case <-done:
 	case <-ctx.Done():
 		t.Fatal("timeout waiting for batch publish")
 	}
 
-	// Give subscriber time to process
 	time.Sleep(200 * time.Millisecond)
 
 	if receivedCount.Load() != 10 {
@@ -161,38 +145,38 @@ func TestHTTP_E2E_MultiTopic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	sub := NewSubscriber(SubscriberConfig{
-		Addr:       "127.0.0.1:0",
-		Path:       "/events",
-		BufferSize: 10,
-	})
+	orders := NewSubscriber(SubscriberConfig{BufferSize: 10})
+	payments := NewSubscriber(SubscriberConfig{BufferSize: 10})
 
-	ordersCh, _ := sub.Subscribe(ctx, "orders")
-	paymentsCh, _ := sub.Subscribe(ctx, "payments")
+	mux := http.NewServeMux()
+	mux.Handle("/events/orders", orders)
+	mux.Handle("/events/payments", payments)
 
-	go sub.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer ln.Close()
+
+	server := &http.Server{Handler: mux}
+	go server.Serve(ln)
+	defer server.Shutdown(ctx)
 
 	pub := NewPublisher(PublisherConfig{
-		TargetURL: fmt.Sprintf("http://%s/events", sub.Addr().String()),
+		TargetURL: fmt.Sprintf("http://%s/events", ln.Addr().String()),
 	})
 
-	// Receive from both topics
 	var ordersCount, paymentsCount atomic.Int32
 	go func() {
-		for msg := range ordersCh {
+		for msg := range orders.C() {
 			ordersCount.Add(1)
 			msg.Ack()
 		}
 	}()
 	go func() {
-		for msg := range paymentsCh {
+		for msg := range payments.C() {
 			paymentsCount.Add(1)
 			msg.Ack()
 		}
 	}()
 
-	// Send to different topics
 	for i := 0; i < 3; i++ {
 		pub.Publish(ctx, "orders", message.NewRaw([]byte(`{}`), message.Attributes{
 			message.AttrID:     fmt.Sprintf("o%d", i),
@@ -223,24 +207,26 @@ func TestHTTP_E2E_Stream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	sub := NewSubscriber(SubscriberConfig{
-		Addr:       "127.0.0.1:0",
-		Path:       "/events",
-		BufferSize: 100,
-	})
+	sub := NewSubscriber(SubscriberConfig{BufferSize: 100})
 
-	ch, _ := sub.Subscribe(ctx, "stream")
-	go sub.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
+	mux := http.NewServeMux()
+	mux.Handle("/events/stream", sub)
+
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer ln.Close()
+
+	server := &http.Server{Handler: mux}
+	go server.Serve(ln)
+	defer server.Shutdown(ctx)
 
 	pub := NewPublisher(PublisherConfig{
-		TargetURL:   fmt.Sprintf("http://%s/events", sub.Addr().String()),
+		TargetURL:   fmt.Sprintf("http://%s/events", ln.Addr().String()),
 		Concurrency: 4,
 	})
 
 	var receivedCount atomic.Int32
 	go func() {
-		for msg := range ch {
+		for msg := range sub.C() {
 			receivedCount.Add(1)
 			msg.Ack()
 		}
@@ -252,7 +238,6 @@ func TestHTTP_E2E_Stream(t *testing.T) {
 		t.Fatalf("stream error: %v", err)
 	}
 
-	// Stream 20 messages
 	for i := 0; i < 20; i++ {
 		inputCh <- message.NewRaw([]byte(`{}`), message.Attributes{
 			message.AttrID:     fmt.Sprintf("s%d", i),
