@@ -12,7 +12,6 @@ import (
 
 	"github.com/fxsml/gopipe/message"
 	"github.com/fxsml/gopipe/pipe"
-	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 const (
@@ -25,18 +24,24 @@ const (
 
 // PublisherConfig configures an HTTP CloudEvents Publisher.
 type PublisherConfig struct {
+	// TargetURL is the full URL for sending events.
+	TargetURL string
+
 	// Client is the HTTP client to use (default: http.DefaultClient).
 	Client *http.Client
 
-	// TargetURL is the full URL for sending events.
-	// Example: "http://host/events/orders"
-	TargetURL string
-
-	// Concurrency is the number of concurrent HTTP requests for Publish (default: 1).
+	// Concurrency is the number of concurrent workers for Publish (default: 1).
 	Concurrency int
 
 	// Headers are additional HTTP headers to include in requests.
 	Headers http.Header
+
+	// Batch settings - if BatchSize > 0, Publish uses batch mode.
+	// BatchSize is the maximum messages per batch (0 = single mode).
+	BatchSize int
+
+	// BatchDuration is the maximum time to wait before flushing a batch.
+	BatchDuration time.Duration
 
 	// ErrorHandler is called on send errors.
 	ErrorHandler func(msg *message.RawMessage, err error)
@@ -55,60 +60,40 @@ func (c PublisherConfig) parse() PublisherConfig {
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
-	return c
-}
-
-// BatchConfig configures batch publishing behavior.
-type BatchConfig struct {
-	// MaxSize is the maximum batch size (default: 100).
-	MaxSize int
-
-	// MaxDuration is the maximum time to wait before flushing (default: 1s).
-	MaxDuration time.Duration
-
-	// Concurrency is the number of concurrent batch sends (default: 1).
-	Concurrency int
-}
-
-func (c BatchConfig) parse() BatchConfig {
-	if c.MaxSize <= 0 {
-		c.MaxSize = 100
-	}
-	if c.MaxDuration <= 0 {
-		c.MaxDuration = time.Second
-	}
-	if c.Concurrency <= 0 {
-		c.Concurrency = 1
+	if c.BatchSize > 0 && c.BatchDuration <= 0 {
+		c.BatchDuration = time.Second
 	}
 	return c
 }
 
-// Publisher sends CloudEvents over HTTP to a single target URL.
+// Publisher sends CloudEvents over HTTP to a target URL.
 //
 // Usage:
 //
+//	// Single mode (default)
 //	pub := cehttp.NewPublisher(cehttp.PublisherConfig{
 //	    TargetURL: "http://host/events/orders",
 //	})
+//	pub.Send(ctx, msg)              // Synchronous single
+//	pub.Publish(ctx, ch)            // Channel-based, sends individually
 //
-//	// Channel-based (main use case)
-//	done, _ := pub.Publish(ctx, inputCh)
-//
-//	// Single message
-//	pub.PublishOne(ctx, msg)
-//
-//	// Batched for throughput
-//	done, _ := pub.PublishBatch(ctx, inputCh, batchCfg)
+//	// Batch mode
+//	pub := cehttp.NewPublisher(cehttp.PublisherConfig{
+//	    TargetURL:     "http://host/events/orders",
+//	    BatchSize:     10,
+//	    BatchDuration: 100 * time.Millisecond,
+//	})
+//	pub.SendBatch(ctx, msgs)        // Synchronous batch
+//	pub.Publish(ctx, ch)            // Channel-based, batches automatically
 type Publisher struct {
 	cfg    PublisherConfig
 	logger message.Logger
 
-	mu        sync.Mutex
-	pipe      *pipe.ProcessPipe[*message.RawMessage, struct{}]
-	batchPipe *pipe.BatchPipe[*message.RawMessage, struct{}]
+	mu      sync.Mutex
+	started bool
 }
 
-// NewPublisher creates an HTTP CloudEvents publisher for the configured target URL.
+// NewPublisher creates an HTTP CloudEvents publisher for the target URL.
 func NewPublisher(cfg PublisherConfig) *Publisher {
 	cfg = cfg.parse()
 	return &Publisher{
@@ -117,9 +102,9 @@ func NewPublisher(cfg PublisherConfig) *Publisher {
 	}
 }
 
-// PublishOne sends a single CloudEvent to the target URL.
+// Send sends a single CloudEvent synchronously.
 // Calls msg.Ack() on success (HTTP 2xx), msg.Nack(err) on failure.
-func (p *Publisher) PublishOne(ctx context.Context, msg *message.RawMessage) error {
+func (p *Publisher) Send(ctx context.Context, msg *message.RawMessage) error {
 	body, err := msg.MarshalJSON()
 	if err != nil {
 		msg.Nack(err)
@@ -144,7 +129,6 @@ func (p *Publisher) PublishOne(ctx context.Context, msg *message.RawMessage) err
 	}
 	defer resp.Body.Close()
 
-	// Drain body to enable connection reuse
 	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -157,64 +141,109 @@ func (p *Publisher) PublishOne(ctx context.Context, msg *message.RawMessage) err
 	return err
 }
 
+// SendBatch sends multiple CloudEvents as a batch synchronously.
+// Uses CloudEvents batch format (application/cloudevents-batch+json).
+// All messages are acked on success, nacked on failure.
+func (p *Publisher) SendBatch(ctx context.Context, msgs []*message.RawMessage) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	body, err := MarshalBatch(msgs)
+	if err != nil {
+		for _, msg := range msgs {
+			msg.Nack(err)
+		}
+		return fmt.Errorf("marshaling batch: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.TargetURL, bytes.NewReader(body))
+	if err != nil {
+		for _, msg := range msgs {
+			msg.Nack(err)
+		}
+		return fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", ContentTypeCloudEventsBatchJSON)
+	for k, v := range p.cfg.Headers {
+		req.Header[k] = v
+	}
+
+	resp, err := p.cfg.Client.Do(req)
+	if err != nil {
+		for _, msg := range msgs {
+			msg.Nack(err)
+		}
+		return fmt.Errorf("sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		for _, msg := range msgs {
+			msg.Ack()
+		}
+		return nil
+	}
+
+	err = fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+	for _, msg := range msgs {
+		msg.Nack(err)
+	}
+	return err
+}
+
 // Publish consumes messages from a channel and sends them via HTTP.
-// Uses SinkPipe internally for concurrent sending.
+// Mode depends on config: if BatchSize > 0, batches messages; otherwise sends individually.
 // Returns a done channel that closes when all messages are sent.
-func (p *Publisher) Publish(
-	ctx context.Context,
-	in <-chan *message.RawMessage,
-) (<-chan struct{}, error) {
+func (p *Publisher) Publish(ctx context.Context, in <-chan *message.RawMessage) (<-chan struct{}, error) {
 	p.mu.Lock()
-	if p.pipe != nil {
+	if p.started {
 		p.mu.Unlock()
 		return nil, pipe.ErrAlreadyStarted
 	}
+	p.started = true
+	p.mu.Unlock()
 
-	p.pipe = pipe.NewSinkPipe(p.sendSingle, pipe.Config{
+	if p.cfg.BatchSize > 0 {
+		return p.publishBatch(ctx, in)
+	}
+	return p.publishSingle(ctx, in)
+}
+
+// publishSingle sends each message individually.
+func (p *Publisher) publishSingle(ctx context.Context, in <-chan *message.RawMessage) (<-chan struct{}, error) {
+	sinkPipe := pipe.NewSinkPipe(func(ctx context.Context, msg *message.RawMessage) error {
+		return p.Send(ctx, msg)
+	}, pipe.Config{
 		Concurrency: p.cfg.Concurrency,
 		ErrorHandler: func(in any, err error) {
 			raw, _ := in.(*message.RawMessage)
-			p.logger.Error("Message send failed",
+			p.logger.Error("Send failed",
 				"component", "http-publisher",
 				"error", err,
-				"url", p.cfg.TargetURL,
-				"attributes", raw.Attributes)
+				"url", p.cfg.TargetURL)
 			if p.cfg.ErrorHandler != nil {
 				p.cfg.ErrorHandler(raw, err)
 			}
 		},
 	})
-	p.mu.Unlock()
 
-	return p.pipe.Pipe(ctx, in)
+	return sinkPipe.Pipe(ctx, in)
 }
 
-// sendSingle sends a single message (used by Publish).
-func (p *Publisher) sendSingle(ctx context.Context, msg *message.RawMessage) error {
-	return p.PublishOne(ctx, msg)
-}
-
-// PublishBatch consumes messages, batches them, and sends as CloudEvents batch format.
-// Uses BatchPipe internally. Batch format is JSON array per CloudEvents spec.
-// Acknowledgment: shared acking - batch acks when HTTP succeeds, nacks on failure.
-func (p *Publisher) PublishBatch(
-	ctx context.Context,
-	in <-chan *message.RawMessage,
-	cfg BatchConfig,
-) (<-chan struct{}, error) {
-	p.mu.Lock()
-	if p.batchPipe != nil {
-		p.mu.Unlock()
-		return nil, pipe.ErrAlreadyStarted
-	}
-
-	cfg = cfg.parse()
-
-	p.batchPipe = pipe.NewBatchPipe(p.sendBatch, pipe.BatchConfig{
-		MaxSize:     cfg.MaxSize,
-		MaxDuration: cfg.MaxDuration,
+// publishBatch batches messages and sends as CloudEvents batch format.
+func (p *Publisher) publishBatch(ctx context.Context, in <-chan *message.RawMessage) (<-chan struct{}, error) {
+	batchPipe := pipe.NewBatchPipe(func(ctx context.Context, batch []*message.RawMessage) ([]struct{}, error) {
+		err := p.SendBatch(ctx, batch)
+		return nil, err
+	}, pipe.BatchConfig{
+		MaxSize:     p.cfg.BatchSize,
+		MaxDuration: p.cfg.BatchDuration,
 		Config: pipe.Config{
-			Concurrency: cfg.Concurrency,
+			Concurrency: p.cfg.Concurrency,
 			ErrorHandler: func(in any, err error) {
 				batch, _ := in.([]*message.RawMessage)
 				p.logger.Error("Batch send failed",
@@ -230,90 +259,6 @@ func (p *Publisher) PublishBatch(
 			},
 		},
 	})
-	p.mu.Unlock()
 
-	return p.batchPipe.Pipe(ctx, in)
-}
-
-// sendBatch sends a batch of messages.
-func (p *Publisher) sendBatch(ctx context.Context, batch []*message.RawMessage) ([]struct{}, error) {
-	if len(batch) == 0 {
-		return nil, nil
-	}
-
-	body, err := MarshalBatch(batch)
-	if err != nil {
-		for _, msg := range batch {
-			msg.Nack(err)
-		}
-		return nil, fmt.Errorf("marshaling batch: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.TargetURL, bytes.NewReader(body))
-	if err != nil {
-		for _, msg := range batch {
-			msg.Nack(err)
-		}
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", ContentTypeCloudEventsBatchJSON)
-	for k, v := range p.cfg.Headers {
-		req.Header[k] = v
-	}
-
-	resp, err := p.cfg.Client.Do(req)
-	if err != nil {
-		for _, msg := range batch {
-			msg.Nack(err)
-		}
-		return nil, fmt.Errorf("sending request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Drain body to enable connection reuse
-	io.Copy(io.Discard, resp.Body)
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		for _, msg := range batch {
-			msg.Ack()
-		}
-		return nil, nil
-	}
-
-	err = fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
-	for _, msg := range batch {
-		msg.Nack(err)
-	}
-	return nil, err
-}
-
-// Use adds middleware to the publisher's pipe.
-// Must be called before Publish.
-func (p *Publisher) Use(mw ...middleware.Middleware[*message.RawMessage, struct{}]) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.pipe == nil {
-		// Create a placeholder pipe for middleware
-		p.pipe = pipe.NewSinkPipe(p.sendSingle, pipe.Config{
-			Concurrency: p.cfg.Concurrency,
-		})
-	}
-
-	return p.pipe.Use(mw...)
-}
-
-// UseBatch adds middleware to the publisher's batch pipe.
-// Must be called before PublishBatch.
-func (p *Publisher) UseBatch(mw ...middleware.Middleware[[]*message.RawMessage, struct{}]) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.batchPipe == nil {
-		// Create a placeholder pipe for middleware
-		p.batchPipe = pipe.NewBatchPipe(p.sendBatch, pipe.BatchConfig{})
-	}
-
-	return p.batchPipe.Use(mw...)
+	return batchPipe.Pipe(ctx, in)
 }

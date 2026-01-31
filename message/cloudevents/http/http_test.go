@@ -37,7 +37,7 @@ func TestHTTP_E2E_SingleEvent(t *testing.T) {
 	go server.Serve(ln)
 	defer server.Shutdown(ctx)
 
-	// Create publisher - URL includes the topic
+	// Create publisher
 	pub := NewPublisher(PublisherConfig{
 		TargetURL: fmt.Sprintf("http://%s/events/orders", ln.Addr().String()),
 		Client:    &http.Client{Timeout: 5 * time.Second},
@@ -63,9 +63,9 @@ func TestHTTP_E2E_SingleEvent(t *testing.T) {
 		nil,
 	)
 
-	err = pub.PublishOne(ctx, msg)
+	err = pub.Send(ctx, msg)
 	if err != nil {
-		t.Fatalf("publish error: %v", err)
+		t.Fatalf("send error: %v", err)
 	}
 
 	// Verify receipt
@@ -99,9 +99,11 @@ func TestHTTP_E2E_BatchEvent(t *testing.T) {
 	go server.Serve(ln)
 	defer server.Shutdown(ctx)
 
-	// Publisher with full URL
+	// Publisher with batch mode configured
 	pub := NewPublisher(PublisherConfig{
-		TargetURL: fmt.Sprintf("http://%s/events/orders", ln.Addr().String()),
+		TargetURL:     fmt.Sprintf("http://%s/events/orders", ln.Addr().String()),
+		BatchSize:     5,
+		BatchDuration: 100 * time.Millisecond,
 	})
 
 	var receivedCount atomic.Int32
@@ -113,12 +115,9 @@ func TestHTTP_E2E_BatchEvent(t *testing.T) {
 	}()
 
 	inputCh := make(chan *message.RawMessage, 100)
-	done, err := pub.PublishBatch(ctx, inputCh, BatchConfig{
-		MaxSize:     5,
-		MaxDuration: 100 * time.Millisecond,
-	})
+	done, err := pub.Publish(ctx, inputCh)
 	if err != nil {
-		t.Fatalf("batch publish error: %v", err)
+		t.Fatalf("publish error: %v", err)
 	}
 
 	for i := 0; i < 10; i++ {
@@ -137,7 +136,7 @@ func TestHTTP_E2E_BatchEvent(t *testing.T) {
 	select {
 	case <-done:
 	case <-ctx.Done():
-		t.Fatal("timeout waiting for batch publish")
+		t.Fatal("timeout waiting for publish")
 	}
 
 	time.Sleep(200 * time.Millisecond)
@@ -191,7 +190,7 @@ func TestHTTP_E2E_MultiTopic(t *testing.T) {
 	}()
 
 	for i := 0; i < 3; i++ {
-		ordersPub.PublishOne(ctx, message.NewRaw([]byte(`{}`), message.Attributes{
+		ordersPub.Send(ctx, message.NewRaw([]byte(`{}`), message.Attributes{
 			message.AttrID:     fmt.Sprintf("o%d", i),
 			message.AttrType:   "order",
 			message.AttrSource: "/test",
@@ -199,7 +198,7 @@ func TestHTTP_E2E_MultiTopic(t *testing.T) {
 	}
 
 	for i := 0; i < 2; i++ {
-		paymentsPub.PublishOne(ctx, message.NewRaw([]byte(`{}`), message.Attributes{
+		paymentsPub.Send(ctx, message.NewRaw([]byte(`{}`), message.Attributes{
 			message.AttrID:     fmt.Sprintf("p%d", i),
 			message.AttrType:   "payment",
 			message.AttrSource: "/test",
@@ -233,6 +232,7 @@ func TestHTTP_E2E_Publish(t *testing.T) {
 	go server.Serve(ln)
 	defer server.Shutdown(ctx)
 
+	// Single mode (no batching)
 	pub := NewPublisher(PublisherConfig{
 		TargetURL:   fmt.Sprintf("http://%s/events/stream", ln.Addr().String()),
 		Concurrency: 4,

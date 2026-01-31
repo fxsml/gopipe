@@ -65,20 +65,20 @@ func main() {
 	// ─────────────────────────────────────────────────────────────────────
 
 	// Publisher with full URL (includes topic)
+	// BatchSize > 0 enables batch mode
 	confirmationsPub := cehttp.NewPublisher(cehttp.PublisherConfig{
-		TargetURL:   "http://localhost:8081/events/confirmations", // Would be external service
-		Concurrency: 2,
+		TargetURL:     "http://localhost:8081/events/confirmations", // Would be external service
+		Concurrency:   2,
+		BatchSize:     10,                      // Collect up to 10 events per batch
+		BatchDuration: 500 * time.Millisecond, // Or flush every 500ms
 	})
 
 	confirmationsCh := make(chan *message.RawMessage, 100)
 
-	// Start batch publisher (collects up to 10 or flushes every 500ms)
-	_, err = confirmationsPub.PublishBatch(ctx, confirmationsCh, cehttp.BatchConfig{
-		MaxSize:     10,
-		MaxDuration: 500 * time.Millisecond,
-	})
+	// Start publisher (uses batch mode due to BatchSize > 0 in config)
+	_, err = confirmationsPub.Publish(ctx, confirmationsCh)
 	if err != nil {
-		log.Fatalf("Failed to start batch publisher: %v", err)
+		log.Fatalf("Failed to start publisher: %v", err)
 	}
 
 	// ─────────────────────────────────────────────────────────────────────
