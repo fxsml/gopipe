@@ -51,6 +51,12 @@ func main() {
 
 	orders := cehttp.NewSubscriber(cehttp.SubscriberConfig{BufferSize: 100})
 
+	// Subscribe with context - HTTP accepts events while ctx is active
+	ordersCh, err := orders.Subscribe(ctx)
+	if err != nil {
+		log.Fatalf("Failed to subscribe: %v", err)
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/events/orders", orders)
 
@@ -66,7 +72,7 @@ func main() {
 	confirmationsCh := make(chan *message.RawMessage, 100)
 
 	// Start batch publisher (collects up to 10 or flushes every 500ms)
-	_, err := pub.PublishBatch(ctx, "confirmations", confirmationsCh, cehttp.BatchConfig{
+	_, err = pub.PublishBatch(ctx, "confirmations", confirmationsCh, cehttp.BatchConfig{
 		MaxSize:     10,
 		MaxDuration: 500 * time.Millisecond,
 	})
@@ -79,7 +85,7 @@ func main() {
 	// ─────────────────────────────────────────────────────────────────────
 
 	go func() {
-		for raw := range orders.C() {
+		for raw := range ordersCh {
 			var order Order
 			if err := json.Unmarshal(raw.Data, &order); err != nil {
 				log.Printf("Failed to parse order: %v", err)

@@ -18,6 +18,10 @@ func TestHTTP_E2E_SingleEvent(t *testing.T) {
 
 	// Create subscriber
 	sub := NewSubscriber(SubscriberConfig{BufferSize: 10})
+	ch, err := sub.Subscribe(ctx)
+	if err != nil {
+		t.Fatalf("subscribe error: %v", err)
+	}
 
 	// Setup server with mux
 	mux := http.NewServeMux()
@@ -42,7 +46,7 @@ func TestHTTP_E2E_SingleEvent(t *testing.T) {
 	// Receive messages in background
 	received := make(chan *message.RawMessage, 1)
 	go func() {
-		for msg := range sub.C() {
+		for msg := range ch {
 			received <- msg
 			msg.Ack()
 		}
@@ -83,6 +87,7 @@ func TestHTTP_E2E_BatchEvent(t *testing.T) {
 	defer cancel()
 
 	sub := NewSubscriber(SubscriberConfig{BufferSize: 100})
+	ch, _ := sub.Subscribe(ctx)
 
 	mux := http.NewServeMux()
 	mux.Handle("/events/orders", sub)
@@ -100,7 +105,7 @@ func TestHTTP_E2E_BatchEvent(t *testing.T) {
 
 	var receivedCount atomic.Int32
 	go func() {
-		for msg := range sub.C() {
+		for msg := range ch {
 			receivedCount.Add(1)
 			msg.Ack()
 		}
@@ -148,6 +153,9 @@ func TestHTTP_E2E_MultiTopic(t *testing.T) {
 	orders := NewSubscriber(SubscriberConfig{BufferSize: 10})
 	payments := NewSubscriber(SubscriberConfig{BufferSize: 10})
 
+	ordersCh, _ := orders.Subscribe(ctx)
+	paymentsCh, _ := payments.Subscribe(ctx)
+
 	mux := http.NewServeMux()
 	mux.Handle("/events/orders", orders)
 	mux.Handle("/events/payments", payments)
@@ -165,13 +173,13 @@ func TestHTTP_E2E_MultiTopic(t *testing.T) {
 
 	var ordersCount, paymentsCount atomic.Int32
 	go func() {
-		for msg := range orders.C() {
+		for msg := range ordersCh {
 			ordersCount.Add(1)
 			msg.Ack()
 		}
 	}()
 	go func() {
-		for msg := range payments.C() {
+		for msg := range paymentsCh {
 			paymentsCount.Add(1)
 			msg.Ack()
 		}
@@ -208,6 +216,7 @@ func TestHTTP_E2E_Stream(t *testing.T) {
 	defer cancel()
 
 	sub := NewSubscriber(SubscriberConfig{BufferSize: 100})
+	ch, _ := sub.Subscribe(ctx)
 
 	mux := http.NewServeMux()
 	mux.Handle("/events/stream", sub)
@@ -226,7 +235,7 @@ func TestHTTP_E2E_Stream(t *testing.T) {
 
 	var receivedCount atomic.Int32
 	go func() {
-		for msg := range sub.C() {
+		for msg := range ch {
 			receivedCount.Add(1)
 			msg.Ack()
 		}

@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,33 +10,74 @@ import (
 	"time"
 )
 
-func TestSubscriber_C(t *testing.T) {
-	sub := NewSubscriber(SubscriberConfig{BufferSize: 10})
+func TestSubscriber_Subscribe(t *testing.T) {
+	t.Run("returns channel", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{BufferSize: 10})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	ch := sub.C()
-	if ch == nil {
-		t.Fatal("expected non-nil channel")
-	}
-}
-
-func TestSubscriber_Close(t *testing.T) {
-	sub := NewSubscriber(SubscriberConfig{})
-
-	sub.Close()
-
-	select {
-	case _, ok := <-sub.C():
-		if ok {
-			t.Error("expected channel to be closed")
+		ch, err := sub.Subscribe(ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-	default:
-		t.Error("channel should be closed and readable")
-	}
+		if ch == nil {
+			t.Fatal("expected non-nil channel")
+		}
+	})
+
+	t.Run("returns error if called twice", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		_, err := sub.Subscribe(ctx)
+		if err != nil {
+			t.Fatalf("first subscribe failed: %v", err)
+		}
+
+		_, err = sub.Subscribe(ctx)
+		if err == nil {
+			t.Error("expected error on second subscribe")
+		}
+	})
+
+	t.Run("closes channel on context cancel", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{})
+		ctx, cancel := context.WithCancel(context.Background())
+
+		ch, _ := sub.Subscribe(ctx)
+		cancel()
+
+		select {
+		case _, ok := <-ch:
+			if ok {
+				t.Error("expected channel to be closed")
+			}
+		case <-time.After(time.Second):
+			t.Error("channel should be closed")
+		}
+	})
 }
 
 func TestSubscriber_ServeHTTP(t *testing.T) {
+	t.Run("returns 503 if not subscribed", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{})
+
+		req := httptest.NewRequest(http.MethodPost, "/events", nil)
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected %d, got %d", http.StatusServiceUnavailable, w.Code)
+		}
+	})
+
 	t.Run("rejects non-POST", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		sub.Subscribe(ctx)
 
 		req := httptest.NewRequest(http.MethodGet, "/events", nil)
 		w := httptest.NewRecorder()
@@ -49,10 +91,13 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 
 	t.Run("parses single event and delivers to channel", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
 
 		// Consume message and ack in background
 		go func() {
-			msg := <-sub.C()
+			msg := <-ch
 			if msg.ID() != "test-1" {
 				t.Errorf("expected id 'test-1', got %v", msg.ID())
 			}
@@ -73,10 +118,13 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 
 	t.Run("returns 500 on nack", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
 
 		// Nack the message
 		go func() {
-			msg := <-sub.C()
+			msg := <-ch
 			msg.Nack(errors.New("processing failed"))
 		}()
 
@@ -94,6 +142,9 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 
 	t.Run("returns 400 on invalid JSON", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		sub.Subscribe(ctx)
 
 		body := []byte(`not valid json`)
 		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
@@ -109,11 +160,14 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 
 	t.Run("parses batch events", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
 
 		// Consume and ack all messages
 		go func() {
 			for i := 0; i < 2; i++ {
-				msg := <-sub.C()
+				msg := <-ch
 				msg.Ack()
 			}
 		}()
@@ -134,10 +188,15 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 	})
 }
 
-func TestSubscriber_CloseScenarios(t *testing.T) {
-	t.Run("close before request returns 503", func(t *testing.T) {
+func TestSubscriber_ContextCancel(t *testing.T) {
+	t.Run("cancel before request returns 503", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{})
-		sub.Close()
+		ctx, cancel := context.WithCancel(context.Background())
+		sub.Subscribe(ctx)
+		cancel()
+
+		// Wait for shutdown to complete
+		time.Sleep(10 * time.Millisecond)
 
 		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
 		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
@@ -151,9 +210,10 @@ func TestSubscriber_CloseScenarios(t *testing.T) {
 		}
 	})
 
-	t.Run("close during send returns 503", func(t *testing.T) {
-		// Use buffer size 0 so send blocks
+	t.Run("cancel during send returns 503", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{BufferSize: 1})
+		ctx, cancel := context.WithCancel(context.Background())
+		ch, _ := sub.Subscribe(ctx)
 
 		// Fill the buffer so next send blocks
 		go func() {
@@ -161,13 +221,13 @@ func TestSubscriber_CloseScenarios(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
 			req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
 			w := httptest.NewRecorder()
-			sub.ServeHTTP(w, req) // This will block on send
+			sub.ServeHTTP(w, req) // This will block waiting for ack
 		}()
 
-		// Wait a bit for goroutine to start and block
-		time.Sleep(50 * time.Millisecond)
+		// Wait for message to arrive
+		<-ch
 
-		// Now send another request that will block
+		// Now send another request that will block on send
 		done := make(chan int)
 		go func() {
 			body := []byte(`{"specversion":"1.0","id":"blocked","type":"test","source":"/test","data":{}}`)
@@ -181,8 +241,8 @@ func TestSubscriber_CloseScenarios(t *testing.T) {
 		// Wait for request to block on send
 		time.Sleep(50 * time.Millisecond)
 
-		// Close the subscriber - this should unblock the request
-		go sub.Close()
+		// Cancel context - this should unblock the request
+		cancel()
 
 		select {
 		case code := <-done:
@@ -190,12 +250,14 @@ func TestSubscriber_CloseScenarios(t *testing.T) {
 				t.Errorf("expected %d, got %d", http.StatusServiceUnavailable, code)
 			}
 		case <-time.After(2 * time.Second):
-			t.Fatal("request did not complete after Close()")
+			t.Fatal("request did not complete after cancel")
 		}
 	})
 
-	t.Run("close during ack wait returns 503", func(t *testing.T) {
+	t.Run("cancel during ack wait returns 503", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{AckTimeout: 10 * time.Second})
+		ctx, cancel := context.WithCancel(context.Background())
+		ch, _ := sub.Subscribe(ctx)
 
 		done := make(chan int)
 		go func() {
@@ -208,11 +270,11 @@ func TestSubscriber_CloseScenarios(t *testing.T) {
 		}()
 
 		// Wait for message to be received but don't ack
-		msg := <-sub.C()
+		msg := <-ch
 		_ = msg // Don't ack
 
-		// Close the subscriber
-		go sub.Close()
+		// Cancel context
+		cancel()
 
 		select {
 		case code := <-done:
@@ -220,12 +282,14 @@ func TestSubscriber_CloseScenarios(t *testing.T) {
 				t.Errorf("expected %d, got %d", http.StatusServiceUnavailable, code)
 			}
 		case <-time.After(2 * time.Second):
-			t.Fatal("request did not complete after Close()")
+			t.Fatal("request did not complete after cancel")
 		}
 	})
 
-	t.Run("close waits for in-flight requests", func(t *testing.T) {
+	t.Run("cancel waits for in-flight requests", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
+		ctx, cancel := context.WithCancel(context.Background())
+		ch, _ := sub.Subscribe(ctx)
 
 		requestStarted := make(chan struct{})
 		requestDone := make(chan struct{})
@@ -245,19 +309,22 @@ func TestSubscriber_CloseScenarios(t *testing.T) {
 
 		// Consume and ack in background after a delay
 		go func() {
-			msg := <-sub.C()
+			msg := <-ch
 			time.Sleep(50 * time.Millisecond) // Simulate processing
 			msg.Ack()
 		}()
 
-		// Close should wait for the request to complete
-		closeDone := make(chan struct{})
+		// Cancel should wait for the request to complete
+		cancelDone := make(chan struct{})
 		go func() {
-			sub.Close()
-			close(closeDone)
+			cancel()
+			// Channel close happens after wg.Wait(), so wait for channel
+			for range ch {
+			}
+			close(cancelDone)
 		}()
 
-		// Request should complete before Close returns
+		// Request should complete before cancel finishes
 		select {
 		case <-requestDone:
 			// Good - request completed
@@ -266,17 +333,23 @@ func TestSubscriber_CloseScenarios(t *testing.T) {
 		}
 
 		select {
-		case <-closeDone:
-			// Good - Close returned after request completed
+		case <-cancelDone:
+			// Good - cancel completed after request finished
 		case <-time.After(2 * time.Second):
-			t.Fatal("Close() did not return")
+			t.Fatal("cancel did not complete")
 		}
 	})
 }
 
 func TestSubscriber_WithServeMux(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	orders := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
 	payments := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
+
+	ordersCh, _ := orders.Subscribe(ctx)
+	paymentsCh, _ := payments.Subscribe(ctx)
 
 	mux := http.NewServeMux()
 	mux.Handle("/events/orders", orders)
@@ -284,11 +357,11 @@ func TestSubscriber_WithServeMux(t *testing.T) {
 
 	// Consume from both
 	go func() {
-		msg := <-orders.C()
+		msg := <-ordersCh
 		msg.Ack()
 	}()
 	go func() {
-		msg := <-payments.C()
+		msg := <-paymentsCh
 		msg.Ack()
 	}()
 

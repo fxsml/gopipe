@@ -1,6 +1,8 @@
 package http
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -33,50 +35,82 @@ func (c SubscriberConfig) parse() SubscriberConfig {
 //
 // Usage:
 //
-//	orders := http.NewSubscriber(cfg)
-//	payments := http.NewSubscriber(cfg)
+//	sub := cehttp.NewSubscriber(cfg)
 //
 //	mux := http.NewServeMux()
-//	mux.Handle("/events/orders", orders)
-//	mux.Handle("/events/payments", payments)
-//	http.ListenAndServe(":8080", mux)
+//	mux.Handle("/events", sub)
+//
+//	ctx, cancel := context.WithCancel(context.Background())
+//	ch, _ := sub.Subscribe(ctx)
+//
+//	go http.ListenAndServe(":8080", mux)
+//
+//	for msg := range ch {
+//	    process(msg)
+//	    msg.Ack()
+//	}
+//
+//	cancel() // Stops accepting HTTP requests
 type Subscriber struct {
-	ch   chan *message.RawMessage
-	done chan struct{}
-	wg   sync.WaitGroup
-	cfg  SubscriberConfig
+	mu         sync.RWMutex
+	ch         chan *message.RawMessage
+	done       chan struct{}
+	wg         sync.WaitGroup
+	subscribed bool
+	cfg        SubscriberConfig
 }
 
 // NewSubscriber creates an HTTP CloudEvents subscriber.
 func NewSubscriber(cfg SubscriberConfig) *Subscriber {
-	cfg = cfg.parse()
 	return &Subscriber{
-		ch:   make(chan *message.RawMessage, cfg.BufferSize),
-		done: make(chan struct{}),
-		cfg:  cfg,
+		cfg: cfg.parse(),
 	}
 }
 
-// C returns the channel for receiving messages.
-func (s *Subscriber) C() <-chan *message.RawMessage {
-	return s.ch
-}
+// Subscribe starts accepting messages and returns the channel to receive them.
+// The context controls the subscriber lifecycle - when cancelled, HTTP requests
+// return 503 and the channel is closed.
+//
+// Subscribe can only be called once. Multiple consumers can read from the
+// returned channel concurrently (competing consumers pattern).
+func (s *Subscriber) Subscribe(ctx context.Context) (<-chan *message.RawMessage, error) {
+	s.mu.Lock()
+	if s.subscribed {
+		s.mu.Unlock()
+		return nil, errors.New("already subscribed")
+	}
+	s.ch = make(chan *message.RawMessage, s.cfg.BufferSize)
+	s.done = make(chan struct{})
+	s.subscribed = true
+	s.mu.Unlock()
 
-// Close signals shutdown and closes the message channel.
-// It waits for all in-flight requests to complete before closing.
-func (s *Subscriber) Close() {
-	close(s.done) // Signal shutdown to all handlers
-	s.wg.Wait()   // Wait for in-flight requests
-	close(s.ch)   // Safe to close now
+	// Handle context cancellation
+	go func() {
+		<-ctx.Done()
+		close(s.done)  // Signal shutdown to all handlers
+		s.wg.Wait()    // Wait for in-flight requests
+		close(s.ch)    // Safe to close now
+	}()
+
+	return s.ch, nil
 }
 
 // ServeHTTP implements http.Handler.
 func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Check if subscribed
+	s.mu.RLock()
+	if !s.subscribed {
+		s.mu.RUnlock()
+		http.Error(w, "no subscriber", http.StatusServiceUnavailable)
+		return
+	}
+	s.mu.RUnlock()
+
 	// Track this request for graceful shutdown
 	s.wg.Add(1)
 	defer s.wg.Done()
 
-	// Fast-fail if subscriber is closed
+	// Fast-fail if subscriber context was cancelled
 	select {
 	case <-s.done:
 		http.Error(w, "subscriber closed", http.StatusServiceUnavailable)
