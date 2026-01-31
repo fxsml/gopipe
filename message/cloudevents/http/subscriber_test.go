@@ -134,6 +134,146 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 	})
 }
 
+func TestSubscriber_CloseScenarios(t *testing.T) {
+	t.Run("close before request returns 503", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{})
+		sub.Close()
+
+		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected %d, got %d", http.StatusServiceUnavailable, w.Code)
+		}
+	})
+
+	t.Run("close during send returns 503", func(t *testing.T) {
+		// Use buffer size 0 so send blocks
+		sub := NewSubscriber(SubscriberConfig{BufferSize: 1})
+
+		// Fill the buffer so next send blocks
+		go func() {
+			body := []byte(`{"specversion":"1.0","id":"filler","type":"test","source":"/test","data":{}}`)
+			req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+			req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+			w := httptest.NewRecorder()
+			sub.ServeHTTP(w, req) // This will block on send
+		}()
+
+		// Wait a bit for goroutine to start and block
+		time.Sleep(50 * time.Millisecond)
+
+		// Now send another request that will block
+		done := make(chan int)
+		go func() {
+			body := []byte(`{"specversion":"1.0","id":"blocked","type":"test","source":"/test","data":{}}`)
+			req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+			req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+			w := httptest.NewRecorder()
+			sub.ServeHTTP(w, req)
+			done <- w.Code
+		}()
+
+		// Wait for request to block on send
+		time.Sleep(50 * time.Millisecond)
+
+		// Close the subscriber - this should unblock the request
+		go sub.Close()
+
+		select {
+		case code := <-done:
+			if code != http.StatusServiceUnavailable {
+				t.Errorf("expected %d, got %d", http.StatusServiceUnavailable, code)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("request did not complete after Close()")
+		}
+	})
+
+	t.Run("close during ack wait returns 503", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{AckTimeout: 10 * time.Second})
+
+		done := make(chan int)
+		go func() {
+			body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
+			req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+			req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+			w := httptest.NewRecorder()
+			sub.ServeHTTP(w, req) // Will block waiting for ack
+			done <- w.Code
+		}()
+
+		// Wait for message to be received but don't ack
+		msg := <-sub.C()
+		_ = msg // Don't ack
+
+		// Close the subscriber
+		go sub.Close()
+
+		select {
+		case code := <-done:
+			if code != http.StatusServiceUnavailable {
+				t.Errorf("expected %d, got %d", http.StatusServiceUnavailable, code)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("request did not complete after Close()")
+		}
+	})
+
+	t.Run("close waits for in-flight requests", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
+
+		requestStarted := make(chan struct{})
+		requestDone := make(chan struct{})
+
+		go func() {
+			body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
+			req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+			req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+			w := httptest.NewRecorder()
+			close(requestStarted)
+			sub.ServeHTTP(w, req)
+			close(requestDone)
+		}()
+
+		<-requestStarted
+		time.Sleep(10 * time.Millisecond) // Let request start processing
+
+		// Consume and ack in background after a delay
+		go func() {
+			msg := <-sub.C()
+			time.Sleep(50 * time.Millisecond) // Simulate processing
+			msg.Ack()
+		}()
+
+		// Close should wait for the request to complete
+		closeDone := make(chan struct{})
+		go func() {
+			sub.Close()
+			close(closeDone)
+		}()
+
+		// Request should complete before Close returns
+		select {
+		case <-requestDone:
+			// Good - request completed
+		case <-time.After(2 * time.Second):
+			t.Fatal("request did not complete")
+		}
+
+		select {
+		case <-closeDone:
+			// Good - Close returned after request completed
+		case <-time.After(2 * time.Second):
+			t.Fatal("Close() did not return")
+		}
+	})
+}
+
 func TestSubscriber_WithServeMux(t *testing.T) {
 	orders := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
 	payments := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})

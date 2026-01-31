@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fxsml/gopipe/message"
@@ -40,16 +41,19 @@ func (c SubscriberConfig) parse() SubscriberConfig {
 //	mux.Handle("/events/payments", payments)
 //	http.ListenAndServe(":8080", mux)
 type Subscriber struct {
-	ch  chan *message.RawMessage
-	cfg SubscriberConfig
+	ch   chan *message.RawMessage
+	done chan struct{}
+	wg   sync.WaitGroup
+	cfg  SubscriberConfig
 }
 
 // NewSubscriber creates an HTTP CloudEvents subscriber.
 func NewSubscriber(cfg SubscriberConfig) *Subscriber {
 	cfg = cfg.parse()
 	return &Subscriber{
-		ch:  make(chan *message.RawMessage, cfg.BufferSize),
-		cfg: cfg,
+		ch:   make(chan *message.RawMessage, cfg.BufferSize),
+		done: make(chan struct{}),
+		cfg:  cfg,
 	}
 }
 
@@ -58,13 +62,28 @@ func (s *Subscriber) C() <-chan *message.RawMessage {
 	return s.ch
 }
 
-// Close closes the message channel.
+// Close signals shutdown and closes the message channel.
+// It waits for all in-flight requests to complete before closing.
 func (s *Subscriber) Close() {
-	close(s.ch)
+	close(s.done) // Signal shutdown to all handlers
+	s.wg.Wait()   // Wait for in-flight requests
+	close(s.ch)   // Safe to close now
 }
 
 // ServeHTTP implements http.Handler.
 func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Track this request for graceful shutdown
+	s.wg.Add(1)
+	defer s.wg.Done()
+
+	// Fast-fail if subscriber is closed
+	select {
+	case <-s.done:
+		http.Error(w, "subscriber closed", http.StatusServiceUnavailable)
+		return
+	default:
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -109,6 +128,9 @@ func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		select {
 		case s.ch <- msgWithAck:
+		case <-s.done:
+			http.Error(w, "subscriber closed", http.StatusServiceUnavailable)
+			return
 		case <-r.Context().Done():
 			http.Error(w, "request cancelled", http.StatusRequestTimeout)
 			return
@@ -126,6 +148,9 @@ func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err != nil && firstErr == nil {
 				firstErr = err
 			}
+		case <-s.done:
+			http.Error(w, "subscriber closed", http.StatusServiceUnavailable)
+			return
 		case <-timeout.C:
 			http.Error(w, "ack timeout", http.StatusGatewayTimeout)
 			return
