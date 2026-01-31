@@ -37,9 +37,9 @@ func TestHTTP_E2E_SingleEvent(t *testing.T) {
 	go server.Serve(ln)
 	defer server.Shutdown(ctx)
 
-	// Create publisher
+	// Create publisher - URL includes the topic
 	pub := NewPublisher(PublisherConfig{
-		TargetURL: fmt.Sprintf("http://%s/events", ln.Addr().String()),
+		TargetURL: fmt.Sprintf("http://%s/events/orders", ln.Addr().String()),
 		Client:    &http.Client{Timeout: 5 * time.Second},
 	})
 
@@ -63,7 +63,7 @@ func TestHTTP_E2E_SingleEvent(t *testing.T) {
 		nil,
 	)
 
-	err = pub.Publish(ctx, "orders", msg)
+	err = pub.PublishOne(ctx, msg)
 	if err != nil {
 		t.Fatalf("publish error: %v", err)
 	}
@@ -99,8 +99,9 @@ func TestHTTP_E2E_BatchEvent(t *testing.T) {
 	go server.Serve(ln)
 	defer server.Shutdown(ctx)
 
+	// Publisher with full URL
 	pub := NewPublisher(PublisherConfig{
-		TargetURL: fmt.Sprintf("http://%s/events", ln.Addr().String()),
+		TargetURL: fmt.Sprintf("http://%s/events/orders", ln.Addr().String()),
 	})
 
 	var receivedCount atomic.Int32
@@ -112,7 +113,7 @@ func TestHTTP_E2E_BatchEvent(t *testing.T) {
 	}()
 
 	inputCh := make(chan *message.RawMessage, 100)
-	done, err := pub.PublishBatch(ctx, "orders", inputCh, BatchConfig{
+	done, err := pub.PublishBatch(ctx, inputCh, BatchConfig{
 		MaxSize:     5,
 		MaxDuration: 100 * time.Millisecond,
 	})
@@ -167,8 +168,12 @@ func TestHTTP_E2E_MultiTopic(t *testing.T) {
 	go server.Serve(ln)
 	defer server.Shutdown(ctx)
 
-	pub := NewPublisher(PublisherConfig{
-		TargetURL: fmt.Sprintf("http://%s/events", ln.Addr().String()),
+	// Separate publisher per topic
+	ordersPub := NewPublisher(PublisherConfig{
+		TargetURL: fmt.Sprintf("http://%s/events/orders", ln.Addr().String()),
+	})
+	paymentsPub := NewPublisher(PublisherConfig{
+		TargetURL: fmt.Sprintf("http://%s/events/payments", ln.Addr().String()),
 	})
 
 	var ordersCount, paymentsCount atomic.Int32
@@ -186,7 +191,7 @@ func TestHTTP_E2E_MultiTopic(t *testing.T) {
 	}()
 
 	for i := 0; i < 3; i++ {
-		pub.Publish(ctx, "orders", message.NewRaw([]byte(`{}`), message.Attributes{
+		ordersPub.PublishOne(ctx, message.NewRaw([]byte(`{}`), message.Attributes{
 			message.AttrID:     fmt.Sprintf("o%d", i),
 			message.AttrType:   "order",
 			message.AttrSource: "/test",
@@ -194,7 +199,7 @@ func TestHTTP_E2E_MultiTopic(t *testing.T) {
 	}
 
 	for i := 0; i < 2; i++ {
-		pub.Publish(ctx, "payments", message.NewRaw([]byte(`{}`), message.Attributes{
+		paymentsPub.PublishOne(ctx, message.NewRaw([]byte(`{}`), message.Attributes{
 			message.AttrID:     fmt.Sprintf("p%d", i),
 			message.AttrType:   "payment",
 			message.AttrSource: "/test",
@@ -211,7 +216,7 @@ func TestHTTP_E2E_MultiTopic(t *testing.T) {
 	}
 }
 
-func TestHTTP_E2E_Stream(t *testing.T) {
+func TestHTTP_E2E_Publish(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -229,7 +234,7 @@ func TestHTTP_E2E_Stream(t *testing.T) {
 	defer server.Shutdown(ctx)
 
 	pub := NewPublisher(PublisherConfig{
-		TargetURL:   fmt.Sprintf("http://%s/events", ln.Addr().String()),
+		TargetURL:   fmt.Sprintf("http://%s/events/stream", ln.Addr().String()),
 		Concurrency: 4,
 	})
 
@@ -242,9 +247,9 @@ func TestHTTP_E2E_Stream(t *testing.T) {
 	}()
 
 	inputCh := make(chan *message.RawMessage, 100)
-	done, err := pub.PublishStream(ctx, "stream", inputCh)
+	done, err := pub.Publish(ctx, inputCh)
 	if err != nil {
-		t.Fatalf("stream error: %v", err)
+		t.Fatalf("publish error: %v", err)
 	}
 
 	for i := 0; i < 20; i++ {

@@ -61,18 +61,19 @@ func main() {
 	mux.Handle("/events/orders", orders)
 
 	// ─────────────────────────────────────────────────────────────────────
-	// PUBLISHER: Send confirmations with batching
+	// PUBLISHER: One per destination URL
 	// ─────────────────────────────────────────────────────────────────────
 
-	pub := cehttp.NewPublisher(cehttp.PublisherConfig{
-		TargetURL:   "http://localhost:8081/events", // Would be external service
+	// Publisher with full URL (includes topic)
+	confirmationsPub := cehttp.NewPublisher(cehttp.PublisherConfig{
+		TargetURL:   "http://localhost:8081/events/confirmations", // Would be external service
 		Concurrency: 2,
 	})
 
 	confirmationsCh := make(chan *message.RawMessage, 100)
 
 	// Start batch publisher (collects up to 10 or flushes every 500ms)
-	_, err = pub.PublishBatch(ctx, "confirmations", confirmationsCh, cehttp.BatchConfig{
+	_, err = confirmationsPub.PublishBatch(ctx, confirmationsCh, cehttp.BatchConfig{
 		MaxSize:     10,
 		MaxDuration: 500 * time.Millisecond,
 	})

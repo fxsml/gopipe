@@ -12,7 +12,7 @@ import (
 	"github.com/fxsml/gopipe/message"
 )
 
-func TestPublisher_Publish(t *testing.T) {
+func TestPublisher_PublishOne(t *testing.T) {
 	t.Run("sends single event", func(t *testing.T) {
 		var received []byte
 		var contentType string
@@ -33,7 +33,7 @@ func TestPublisher_Publish(t *testing.T) {
 			message.AttrSource: "/test",
 		}, nil)
 
-		err := pub.Publish(context.Background(), "orders", msg)
+		err := pub.PublishOne(context.Background(), msg)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -63,7 +63,7 @@ func TestPublisher_Publish(t *testing.T) {
 			message.AttrSource: "/test",
 		}, acking)
 
-		err := pub.Publish(context.Background(), "orders", msg)
+		err := pub.PublishOne(context.Background(), msg)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -89,7 +89,7 @@ func TestPublisher_Publish(t *testing.T) {
 			message.AttrSource: "/test",
 		}, acking)
 
-		err := pub.Publish(context.Background(), "orders", msg)
+		err := pub.PublishOne(context.Background(), msg)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -118,7 +118,7 @@ func TestPublisher_Publish(t *testing.T) {
 			message.AttrSource: "/test",
 		}, nil)
 
-		_ = pub.Publish(context.Background(), "orders", msg)
+		_ = pub.PublishOne(context.Background(), msg)
 
 		if authHeader != "Bearer token" {
 			t.Errorf("expected 'Bearer token', got %s", authHeader)
@@ -126,8 +126,8 @@ func TestPublisher_Publish(t *testing.T) {
 	})
 }
 
-func TestPublisher_PublishStream(t *testing.T) {
-	t.Run("streams messages from channel", func(t *testing.T) {
+func TestPublisher_Publish(t *testing.T) {
+	t.Run("publishes messages from channel", func(t *testing.T) {
 		var count atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			count.Add(1)
@@ -144,7 +144,7 @@ func TestPublisher_PublishStream(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		done, err := pub.PublishStream(ctx, "orders", ch)
+		done, err := pub.Publish(ctx, ch)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -163,7 +163,7 @@ func TestPublisher_PublishStream(t *testing.T) {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
-			t.Fatal("timeout waiting for stream to complete")
+			t.Fatal("timeout waiting for publish to complete")
 		}
 
 		if count.Load() != 5 {
@@ -176,12 +176,12 @@ func TestPublisher_PublishStream(t *testing.T) {
 		ch := make(chan *message.RawMessage)
 		ctx := context.Background()
 
-		_, err := pub.PublishStream(ctx, "orders", ch)
+		_, err := pub.Publish(ctx, ch)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		_, err = pub.PublishStream(ctx, "orders", ch)
+		_, err = pub.Publish(ctx, ch)
 		if err == nil {
 			t.Fatal("expected error on second call")
 		}
@@ -205,7 +205,7 @@ func TestPublisher_PublishBatch(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		done, err := pub.PublishBatch(ctx, "orders", ch, BatchConfig{
+		done, err := pub.PublishBatch(ctx, ch, BatchConfig{
 			MaxSize:     3,
 			MaxDuration: 10 * time.Second, // Long duration so size triggers
 		})
@@ -248,7 +248,7 @@ func TestPublisher_PublishBatch(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		done, _ := pub.PublishBatch(ctx, "orders", ch, BatchConfig{
+		done, _ := pub.PublishBatch(ctx, ch, BatchConfig{
 			MaxSize:     10,
 			MaxDuration: 100 * time.Millisecond,
 		})
@@ -279,7 +279,7 @@ func TestPublisher_PublishBatch(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		done, _ := pub.PublishBatch(ctx, "orders", ch, BatchConfig{
+		done, _ := pub.PublishBatch(ctx, ch, BatchConfig{
 			MaxSize:     10,
 			MaxDuration: 100 * time.Millisecond,
 		})
@@ -314,7 +314,7 @@ func TestPublisher_PublishBatch(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		done, _ := pub.PublishBatch(ctx, "orders", ch, BatchConfig{
+		done, _ := pub.PublishBatch(ctx, ch, BatchConfig{
 			MaxSize:     10,
 			MaxDuration: 100 * time.Millisecond,
 		})
