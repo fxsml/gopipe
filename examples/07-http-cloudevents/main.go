@@ -68,8 +68,9 @@ func main() {
 		log.Fatalf("Failed to subscribe: %v", err)
 	}
 
+	// Go 1.22+ routing with method matching
 	mux := http.NewServeMux()
-	mux.Handle("/events/orders", orders)
+	mux.Handle("POST /events/orders", orders)
 
 	// ─────────────────────────────────────────────────────────────────────
 	// PUBLISHER: One per destination URL
