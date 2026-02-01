@@ -47,7 +47,7 @@ const (
 // Acking coordinates acknowledgment across one or more messages.
 // When expectedAckCount messages call Ack(), the ack callback is invoked.
 // If any message calls Nack(), the nack callback is invoked immediately,
-// and the context (if set) is cancelled.
+// and the done channel is closed.
 // Acking is thread-safe and can be shared between multiple messages.
 type Acking struct {
 	mu               sync.Mutex
@@ -56,8 +56,7 @@ type Acking struct {
 	state            AckState
 	ackCount         int
 	expectedAckCount int
-	ctx              context.Context
-	cancel           context.CancelFunc
+	done             chan struct{}
 }
 
 // NewAcking creates an Acking for a single message.
@@ -66,31 +65,27 @@ func NewAcking(ack func(), nack func(error)) *Acking {
 	if ack == nil || nack == nil {
 		return nil
 	}
-	ctx, cancel := context.WithCancel(context.Background())
 	return &Acking{
 		ack:              ack,
 		nack:             nack,
 		expectedAckCount: 1,
-		ctx:              ctx,
-		cancel:           cancel,
+		done:             make(chan struct{}),
 	}
 }
 
 // NewSharedAcking creates an Acking shared across multiple messages.
 // The ack callback is invoked after expectedCount Ack() calls.
-// If any message nacks, all sibling messages' contexts are cancelled.
+// If any message nacks, all sibling messages' done channels are closed.
 // Returns nil if expectedCount <= 0 or if either callback is nil.
 func NewSharedAcking(ack func(), nack func(error), expectedCount int) *Acking {
 	if expectedCount <= 0 || ack == nil || nack == nil {
 		return nil
 	}
-	ctx, cancel := context.WithCancel(context.Background())
 	return &Acking{
 		ack:              ack,
 		nack:             nack,
 		expectedAckCount: expectedCount,
-		ctx:              ctx,
-		cancel:           cancel,
+		done:             make(chan struct{}),
 	}
 }
 
@@ -105,13 +100,62 @@ func (a *Acking) State() AckState {
 	return a.state
 }
 
-// Context returns a context that is cancelled when the acking is nacked.
-// Useful for aborting long-running operations when a sibling message fails.
+// Done returns a channel that is closed when the acking is settled (acked or nacked).
+// Useful for detecting when processing is complete.
+func (a *Acking) Done() <-chan struct{} {
+	if a == nil {
+		return nil
+	}
+	return a.done
+}
+
+// Context returns a context that is cancelled when the acking is settled.
+// Useful for aborting long-running operations when processing completes or fails.
+// Note: Use TypedMessage.Context() instead to get a context that includes the message reference.
 func (a *Acking) Context() context.Context {
-	if a == nil || a.ctx == nil {
+	if a == nil || a.done == nil {
 		return context.Background()
 	}
-	return a.ctx
+	return &messageContext[any]{done: a.done, msg: nil}
+}
+
+// messageContext wraps a done channel as a context.Context and stores a message reference.
+type messageContext[T any] struct {
+	done <-chan struct{}
+	msg  *TypedMessage[T]
+}
+
+func (c *messageContext[T]) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (c *messageContext[T]) Done() <-chan struct{}       { return c.done }
+
+func (c *messageContext[T]) Value(key any) any {
+	switch key {
+	case messageKey:
+		// Return as *Message if T is any
+		if msg, ok := any(c.msg).(*Message); ok {
+			return msg
+		}
+		return nil
+	case rawMessageKey:
+		// Return as *RawMessage if T is []byte
+		if msg, ok := any(c.msg).(*RawMessage); ok {
+			return msg
+		}
+		return nil
+	case attributesKey:
+		return c.msg.Attributes
+	default:
+		return nil
+	}
+}
+
+func (c *messageContext[T]) Err() error {
+	select {
+	case <-c.done:
+		return context.Canceled
+	default:
+		return nil
+	}
 }
 
 // TypedMessage wraps a typed data payload with attributes and acknowledgment callbacks.
@@ -181,27 +225,37 @@ func NewRaw(data []byte, attrs Attributes, acking *Acking) *RawMessage {
 // Returns true if acknowledgment succeeded or was already performed.
 // Returns false if no ack callback was provided, if the message was already nacked, or if expectedAckCount <= 0.
 // The ack callback is invoked at most once when all stages have acked. Thread-safe.
+// Callbacks are invoked outside the mutex to prevent deadlocks.
 func (m *TypedMessage[T]) Ack() bool {
 	if m.Acking == nil {
 		return false
 	}
 	m.Acking.mu.Lock()
-	defer m.Acking.mu.Unlock()
 
 	switch m.Acking.state {
 	case AckDone:
+		m.Acking.mu.Unlock()
 		return true
 	case AckNacked:
+		m.Acking.mu.Unlock()
 		return false
 	}
 
 	m.Acking.ackCount++
 	if m.Acking.ackCount < m.Acking.expectedAckCount {
+		m.Acking.mu.Unlock()
 		return true
 	}
 
-	m.Acking.ack()
+	// Capture callback and done channel before releasing lock
+	ackFn := m.Acking.ack
+	done := m.Acking.done
 	m.Acking.state = AckDone
+	m.Acking.mu.Unlock()
+
+	// Call callback and close done channel outside mutex to prevent deadlock
+	ackFn()
+	close(done)
 	return true
 }
 
@@ -209,27 +263,32 @@ func (m *TypedMessage[T]) Ack() bool {
 // Returns true if negative acknowledgment succeeded or was already performed.
 // Returns false if no nack callback was provided or if the message was already acked.
 // The nack callback is invoked immediately with the first error, permanently blocking all further acks.
-// Also cancels the acking context, allowing sibling messages to detect the failure.
-// Thread-safe.
+// Also closes the done channel, allowing sibling messages to detect the settlement.
+// Thread-safe. Callbacks are invoked outside the mutex to prevent deadlocks.
 func (m *TypedMessage[T]) Nack(err error) bool {
 	if m.Acking == nil {
 		return false
 	}
 	m.Acking.mu.Lock()
-	defer m.Acking.mu.Unlock()
 
 	switch m.Acking.state {
 	case AckDone:
+		m.Acking.mu.Unlock()
 		return false
 	case AckNacked:
+		m.Acking.mu.Unlock()
 		return true
 	}
 
-	m.Acking.nack(err)
+	// Capture callback and done channel before releasing lock
+	nackFn := m.Acking.nack
+	done := m.Acking.done
 	m.Acking.state = AckNacked
-	if m.Acking.cancel != nil {
-		m.Acking.cancel()
-	}
+	m.Acking.mu.Unlock()
+
+	// Call callback and close done channel outside mutex to prevent deadlock
+	nackFn(err)
+	close(done)
 	return true
 }
 
@@ -242,15 +301,25 @@ func (m *TypedMessage[T]) AckState() AckState {
 	return m.Acking.State()
 }
 
+// Done returns a channel that is closed when the message is settled (acked or nacked).
+// Returns nil if no acking is set.
+func (m *TypedMessage[T]) Done() <-chan struct{} {
+	if m.Acking == nil {
+		return nil
+	}
+	return m.Acking.Done()
+}
+
 // Context returns a context associated with this message's acking.
-// The context is cancelled when the message (or any sibling sharing the acking) is nacked.
-// Useful for aborting long-running operations when processing fails.
+// The context is cancelled when the message (or any sibling sharing the acking) is settled.
+// The context includes the message reference, accessible via MessageFromContext or RawMessageFromContext.
+// Useful for aborting long-running operations when processing completes or fails.
 // Returns context.Background() if no acking is set.
 func (m *TypedMessage[T]) Context() context.Context {
 	if m.Acking == nil {
 		return context.Background()
 	}
-	return m.Acking.Context()
+	return &messageContext[T]{done: m.Acking.done, msg: m}
 }
 
 // ID returns the event identifier. Returns empty string if not set.

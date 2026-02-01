@@ -173,9 +173,10 @@ func TestForwardAck(t *testing.T) {
 		ctx1 := outputs[0].Context()
 		ctx2 := outputs[1].Context()
 
-		// Contexts should be the same (shared acking)
-		if ctx1 != ctx2 {
-			t.Error("outputs should share the same context")
+		// Contexts share the same done channel (shared acking)
+		// They will both be cancelled when acking settles
+		if ctx1.Done() != ctx2.Done() {
+			t.Error("outputs should share the same done channel")
 		}
 
 		// Context should not be cancelled yet
@@ -186,9 +187,12 @@ func TestForwardAck(t *testing.T) {
 		// Nack one output
 		outputs[0].Nack(errors.New("fail"))
 
-		// Now context should be cancelled
+		// Now both contexts should be cancelled
 		if ctx1.Err() == nil {
 			t.Error("context should be cancelled after nack")
+		}
+		if ctx2.Err() == nil {
+			t.Error("sibling context should also be cancelled after nack")
 		}
 	})
 }
