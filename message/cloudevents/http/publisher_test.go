@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	cehttp "github.com/cloudevents/sdk-go/v2/protocol/http"
 	"github.com/fxsml/gopipe/message"
 )
 
@@ -274,9 +275,8 @@ func TestPublisher_Publish(t *testing.T) {
 		var batchSizes []int
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestCount.Add(1)
-			body, _ := io.ReadAll(r.Body)
-			msgs, _ := ParseBatchBytes(body)
-			batchSizes = append(batchSizes, len(msgs))
+			events, _ := cehttp.NewEventsFromHTTPRequest(r)
+			batchSizes = append(batchSizes, len(events))
 			w.WriteHeader(http.StatusOK)
 		}))
 		defer server.Close()

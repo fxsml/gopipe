@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,11 +15,9 @@ import (
 	"github.com/fxsml/gopipe/pipe"
 )
 
+// Content types for CloudEvents HTTP protocol binding.
 const (
-	// ContentTypeCloudEventsJSON is the content type for structured CloudEvents.
-	ContentTypeCloudEventsJSON = "application/cloudevents+json"
-
-	// ContentTypeCloudEventsBatchJSON is the content type for CloudEvents batch.
+	ContentTypeCloudEventsJSON      = "application/cloudevents+json"
 	ContentTypeCloudEventsBatchJSON = "application/cloudevents-batch+json"
 )
 
@@ -149,7 +148,7 @@ func (p *Publisher) SendBatch(ctx context.Context, msgs []*message.RawMessage) e
 		return nil
 	}
 
-	body, err := MarshalBatch(msgs)
+	body, err := marshalBatch(msgs)
 	if err != nil {
 		for _, msg := range msgs {
 			msg.Nack(err)
@@ -193,6 +192,19 @@ func (p *Publisher) SendBatch(ctx context.Context, msgs []*message.RawMessage) e
 		msg.Nack(err)
 	}
 	return err
+}
+
+// marshalBatch marshals messages to CloudEvents batch format (JSON array).
+func marshalBatch(msgs []*message.RawMessage) ([]byte, error) {
+	events := make([]json.RawMessage, len(msgs))
+	for i, msg := range msgs {
+		b, err := msg.MarshalJSON()
+		if err != nil {
+			return nil, fmt.Errorf("marshaling event %d: %w", i, err)
+		}
+		events[i] = b
+	}
+	return json.Marshal(events)
 }
 
 // Publish consumes messages from a channel and sends them via HTTP.

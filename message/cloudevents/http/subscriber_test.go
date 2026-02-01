@@ -186,6 +186,39 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 			t.Errorf("expected %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
 		}
 	})
+
+	t.Run("parses binary mode event", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
+
+		var received []byte
+		go func() {
+			msg := <-ch
+			received = msg.Data
+			msg.Ack()
+		}()
+
+		// Binary mode: data in body, metadata in Ce-* headers
+		body := []byte(`{"order_id":"123"}`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Ce-Specversion", "1.0")
+		req.Header.Set("Ce-Id", "binary-1")
+		req.Header.Set("Ce-Type", "order.created")
+		req.Header.Set("Ce-Source", "/orders")
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		}
+		if string(received) != `{"order_id":"123"}` {
+			t.Errorf("expected data to be preserved, got %s", received)
+		}
+	})
 }
 
 func TestSubscriber_ContextCancel(t *testing.T) {

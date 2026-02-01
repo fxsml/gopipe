@@ -2,6 +2,7 @@
 //
 // Demonstrates the HTTP CloudEvents adapter with:
 // - Topic-based subscription via http.ServeMux
+// - Binary and structured content modes
 // - Batch publishing for high throughput
 // - Standard library http.Client/Server
 //
@@ -9,11 +10,21 @@
 //
 //	go run ./examples/07-http-cloudevents
 //
-// Then send events:
+// Then send events (structured mode):
 //
 //	curl -X POST http://localhost:8080/events/orders \
 //	  -H "Content-Type: application/cloudevents+json" \
 //	  -d '{"specversion":"1.0","id":"1","type":"order.created","source":"/shop","data":{"order_id":"ORD-001","amount":100}}'
+//
+// Or send events (binary mode):
+//
+//	curl -X POST http://localhost:8080/events/orders \
+//	  -H "Content-Type: application/json" \
+//	  -H "Ce-Specversion: 1.0" \
+//	  -H "Ce-Id: 1" \
+//	  -H "Ce-Type: order.created" \
+//	  -H "Ce-Source: /shop" \
+//	  -d '{"order_id":"ORD-001","amount":100}'
 package main
 
 import (
@@ -136,11 +147,19 @@ func main() {
 	fmt.Println("Topics available:")
 	fmt.Println("  POST /events/orders - Submit orders")
 	fmt.Println()
-	fmt.Println("Send a test event:")
+	fmt.Println("Send a test event (structured mode):")
 	fmt.Println()
 	fmt.Println(`curl -X POST http://localhost:8080/events/orders \`)
 	fmt.Println(`  -H "Content-Type: application/cloudevents+json" \`)
 	fmt.Println(`  -d '{"specversion":"1.0","id":"1","type":"order.created","source":"/shop","data":{"order_id":"ORD-001","amount":100}}'`)
+	fmt.Println()
+	fmt.Println("Or binary mode (metadata in headers):")
+	fmt.Println()
+	fmt.Println(`curl -X POST http://localhost:8080/events/orders \`)
+	fmt.Println(`  -H "Content-Type: application/json" \`)
+	fmt.Println(`  -H "Ce-Specversion: 1.0" -H "Ce-Id: 1" \`)
+	fmt.Println(`  -H "Ce-Type: order.created" -H "Ce-Source: /shop" \`)
+	fmt.Println(`  -d '{"order_id":"ORD-001","amount":100}'`)
 	fmt.Println()
 	fmt.Println("Or send a batch:")
 	fmt.Println()

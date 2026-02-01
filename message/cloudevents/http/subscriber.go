@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
+	cloudevents "github.com/cloudevents/sdk-go/v2"
+	cehttp "github.com/cloudevents/sdk-go/v2/protocol/http"
 	"github.com/fxsml/gopipe/message"
+	ce "github.com/fxsml/gopipe/message/cloudevents"
 )
 
 // SubscriberConfig configures an HTTP CloudEvents Subscriber.
@@ -123,45 +125,45 @@ func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse based on content type
-	contentType := r.Header.Get("Content-Type")
-	isBatch := strings.Contains(contentType, ContentTypeCloudEventsBatchJSON)
-
-	var msgs []*message.RawMessage
-	var err error
-
-	if isBatch {
-		msgs, err = ParseBatch(r.Body)
-	} else {
-		var msg *message.RawMessage
-		msg, err = message.ParseRaw(r.Body)
-		if err == nil {
-			msgs = []*message.RawMessage{msg}
+	// Parse using SDK (handles binary + structured + batch)
+	var events []cloudevents.Event
+	if cehttp.IsHTTPBatch(r.Header) {
+		var err error
+		events, err = cehttp.NewEventsFromHTTPRequest(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
+	} else {
+		event, err := cehttp.NewEventFromHTTPRequest(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		events = []cloudevents.Event{*event}
 	}
 
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if len(msgs) == 0 {
+	if len(events) == 0 {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
 	// Track acks for all messages
-	done := make(chan error, len(msgs))
+	done := make(chan error, len(events))
 
-	for _, msg := range msgs {
+	for i := range events {
 		acking := message.NewAcking(
 			func() { done <- nil },
 			func(e error) { done <- e },
 		)
-		msgWithAck := message.NewRaw(msg.Data, msg.Attributes, acking)
+		msg, err := ce.FromCloudEvent(&events[i], acking)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		select {
-		case s.ch <- msgWithAck:
+		case s.ch <- msg:
 		case <-s.done:
 			http.Error(w, "subscriber closed", http.StatusServiceUnavailable)
 			return
@@ -176,7 +178,7 @@ func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	timeout := time.NewTimer(s.cfg.AckTimeout)
 	defer timeout.Stop()
 
-	for range msgs {
+	for range events {
 		select {
 		case err := <-done:
 			if err != nil && firstErr == nil {
