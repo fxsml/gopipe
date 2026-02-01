@@ -1,9 +1,9 @@
-// Example: HTTP CloudEvents Adapter
+// Example: HTTP CloudEvents Adapter with Engine
 //
-// Demonstrates the HTTP CloudEvents adapter with:
-// - Topic-based subscription via http.ServeMux
-// - Binary and structured content modes
-// - Batch publishing for high throughput
+// Demonstrates the HTTP CloudEvents adapter integrated with the message engine:
+// - HTTP Subscriber as raw input
+// - Command handler for processing
+// - HTTP Publisher as raw output
 // - Standard library http.Client/Server
 //
 // Run:
@@ -29,7 +29,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -57,80 +56,74 @@ func main() {
 	defer cancel()
 
 	// ─────────────────────────────────────────────────────────────────────
-	// SUBSCRIBER: One per topic, compose with http.ServeMux
+	// ENGINE: Orchestrates message flow
+	// ─────────────────────────────────────────────────────────────────────
+
+	engine := message.NewEngine(message.EngineConfig{})
+
+	// Register handler: Order → OrderConfirmation
+	handler := message.NewCommandHandler(
+		func(ctx context.Context, order Order) ([]OrderConfirmation, error) {
+			fmt.Printf("Received order: %s (amount: %d)\n", order.OrderID, order.Amount)
+			return []OrderConfirmation{{
+				OrderID:   order.OrderID,
+				Status:    "confirmed",
+				Confirmed: time.Now(),
+			}}, nil
+		},
+		message.CommandHandlerConfig{
+			Source: "/processor",
+			Naming: message.KebabNaming,
+		},
+	)
+	engine.AddHandler("process-order", nil, handler)
+
+	// ─────────────────────────────────────────────────────────────────────
+	// SUBSCRIBER: HTTP input → engine
 	// ─────────────────────────────────────────────────────────────────────
 
 	orders := cehttp.NewSubscriber(cehttp.SubscriberConfig{BufferSize: 100})
-
-	// Subscribe with context - HTTP accepts events while ctx is active
 	ordersCh, err := orders.Subscribe(ctx)
 	if err != nil {
 		log.Fatalf("Failed to subscribe: %v", err)
 	}
+
+	// Connect HTTP subscriber to engine
+	engine.AddRawInput("orders", nil, ordersCh)
 
 	// Go 1.22+ routing with method matching
 	mux := http.NewServeMux()
 	mux.Handle("POST /events/orders", orders)
 
 	// ─────────────────────────────────────────────────────────────────────
-	// PUBLISHER: One per destination URL
+	// PUBLISHER: Engine output → HTTP
 	// ─────────────────────────────────────────────────────────────────────
 
-	// Publisher with full URL (includes topic)
-	// BatchSize > 0 enables batch mode
+	// Get raw output from engine
+	confirmationsCh, err := engine.AddRawOutput("confirmations", nil)
+	if err != nil {
+		log.Fatalf("Failed to add output: %v", err)
+	}
+
+	// Publisher with batch mode for high throughput
 	confirmationsPub := cehttp.NewPublisher(cehttp.PublisherConfig{
-		TargetURL:     "http://localhost:8081/events/confirmations", // Would be external service
+		TargetURL:     "http://localhost:8081/events/confirmations",
 		Concurrency:   2,
-		BatchSize:     10,                      // Collect up to 10 events per batch
-		BatchDuration: 500 * time.Millisecond, // Or flush every 500ms
+		BatchSize:     10,
+		BatchDuration: 500 * time.Millisecond,
 	})
 
-	confirmationsCh := make(chan *message.RawMessage, 100)
-
-	// Start publisher (uses batch mode due to BatchSize > 0 in config)
+	// Connect engine output to HTTP publisher
 	_, err = confirmationsPub.Publish(ctx, confirmationsCh)
 	if err != nil {
 		log.Fatalf("Failed to start publisher: %v", err)
 	}
 
-	// ─────────────────────────────────────────────────────────────────────
-	// PROCESSOR: Handle orders and emit confirmations
-	// ─────────────────────────────────────────────────────────────────────
-
-	go func() {
-		for raw := range ordersCh {
-			var order Order
-			if err := json.Unmarshal(raw.Data, &order); err != nil {
-				log.Printf("Failed to parse order: %v", err)
-				raw.Nack(err)
-				continue
-			}
-
-			fmt.Printf("Received order: %s (amount: %d)\n", order.OrderID, order.Amount)
-
-			confirmation := OrderConfirmation{
-				OrderID:   order.OrderID,
-				Status:    "confirmed",
-				Confirmed: time.Now(),
-			}
-
-			data, _ := json.Marshal(confirmation)
-			confirmationMsg := message.NewRaw(data, message.Attributes{
-				message.AttrID:     fmt.Sprintf("conf-%s", order.OrderID),
-				message.AttrType:   "order.confirmed",
-				message.AttrSource: "/processor",
-			}, nil)
-
-			select {
-			case confirmationsCh <- confirmationMsg:
-			default:
-				log.Println("Confirmation channel full, dropping")
-			}
-
-			raw.Ack()
-		}
-		close(confirmationsCh)
-	}()
+	// Start engine
+	engineDone, err := engine.Start(ctx)
+	if err != nil {
+		log.Fatalf("Failed to start engine: %v", err)
+	}
 
 	// ─────────────────────────────────────────────────────────────────────
 	// START SERVER (standard library)
@@ -145,32 +138,24 @@ func main() {
 
 	fmt.Println("HTTP CloudEvents server listening on :8080")
 	fmt.Println()
-	fmt.Println("Topics available:")
-	fmt.Println("  POST /events/orders - Submit orders")
-	fmt.Println()
 	fmt.Println("Send a test event (structured mode):")
 	fmt.Println()
-	fmt.Println(`curl -X POST http://localhost:8080/events/orders \`)
-	fmt.Println(`  -H "Content-Type: application/cloudevents+json" \`)
-	fmt.Println(`  -d '{"specversion":"1.0","id":"1","type":"order.created","source":"/shop","data":{"order_id":"ORD-001","amount":100}}'`)
+	fmt.Println(`  curl -X POST http://localhost:8080/events/orders \`)
+	fmt.Println(`    -H "Content-Type: application/cloudevents+json" \`)
+	fmt.Println(`    -d '{"specversion":"1.0","id":"1","type":"order.created","source":"/shop","data":{"order_id":"ORD-001","amount":100}}'`)
 	fmt.Println()
-	fmt.Println("Or binary mode (metadata in headers):")
+	fmt.Println("Or binary mode:")
 	fmt.Println()
-	fmt.Println(`curl -X POST http://localhost:8080/events/orders \`)
-	fmt.Println(`  -H "Content-Type: application/json" \`)
-	fmt.Println(`  -H "Ce-Specversion: 1.0" -H "Ce-Id: 1" \`)
-	fmt.Println(`  -H "Ce-Type: order.created" -H "Ce-Source: /shop" \`)
-	fmt.Println(`  -d '{"order_id":"ORD-001","amount":100}'`)
-	fmt.Println()
-	fmt.Println("Or send a batch:")
-	fmt.Println()
-	fmt.Println(`curl -X POST http://localhost:8080/events/orders \`)
-	fmt.Println(`  -H "Content-Type: application/cloudevents-batch+json" \`)
-	fmt.Println(`  -d '[{"specversion":"1.0","id":"1","type":"order.created","source":"/shop","data":{"order_id":"ORD-001","amount":100}},{"specversion":"1.0","id":"2","type":"order.created","source":"/shop","data":{"order_id":"ORD-002","amount":200}}]'`)
+	fmt.Println(`  curl -X POST http://localhost:8080/events/orders \`)
+	fmt.Println(`    -H "Content-Type: application/json" \`)
+	fmt.Println(`    -H "Ce-Specversion: 1.0" -H "Ce-Id: 1" -H "Ce-Type: order.created" -H "Ce-Source: /shop" \`)
+	fmt.Println(`    -d '{"order_id":"ORD-001","amount":100}'`)
 	fmt.Println()
 
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
-	fmt.Println("Shutting down...")
+
+	<-engineDone
+	fmt.Println("Shutdown complete")
 }
