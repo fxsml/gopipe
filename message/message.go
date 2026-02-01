@@ -56,7 +56,7 @@ type Acking struct {
 	state            AckState
 	ackCount         int
 	expectedAckCount int
-	done             chan struct{}
+	doneCh chan struct{}
 }
 
 // NewAcking creates an Acking for a single message.
@@ -69,7 +69,7 @@ func NewAcking(ack func(), nack func(error)) *Acking {
 		ack:              ack,
 		nack:             nack,
 		expectedAckCount: 1,
-		done:             make(chan struct{}),
+		doneCh: make(chan struct{}),
 	}
 }
 
@@ -85,7 +85,7 @@ func NewSharedAcking(ack func(), nack func(error), expectedCount int) *Acking {
 		ack:              ack,
 		nack:             nack,
 		expectedAckCount: expectedCount,
-		done:             make(chan struct{}),
+		doneCh: make(chan struct{}),
 	}
 }
 
@@ -100,23 +100,22 @@ func (a *Acking) State() AckState {
 	return a.state
 }
 
-// Done returns a channel that is closed when the acking is settled (acked or nacked).
-// Useful for detecting when processing is complete.
-func (a *Acking) Done() <-chan struct{} {
+// done returns a channel that is closed when the acking is settled (acked or nacked).
+func (a *Acking) done() <-chan struct{} {
 	if a == nil {
 		return nil
 	}
-	return a.done
+	return a.doneCh
 }
 
 // Context returns a context that is cancelled when the acking is settled.
 // Useful for aborting long-running operations when processing completes or fails.
 // Note: Use TypedMessage.Context() instead to get a context that includes the message reference.
 func (a *Acking) Context() context.Context {
-	if a == nil || a.done == nil {
+	if a == nil || a.doneCh == nil {
 		return context.Background()
 	}
-	return &messageContext[any]{done: a.done, msg: nil}
+	return &messageContext[any]{done: a.doneCh, msg: nil}
 }
 
 // messageContext wraps a done channel as a context.Context and stores a message reference.
@@ -249,7 +248,7 @@ func (m *TypedMessage[T]) Ack() bool {
 
 	// Capture callback and done channel before releasing lock
 	ackFn := m.Acking.ack
-	done := m.Acking.done
+	done := m.Acking.doneCh
 	m.Acking.state = AckDone
 	m.Acking.mu.Unlock()
 
@@ -282,7 +281,7 @@ func (m *TypedMessage[T]) Nack(err error) bool {
 
 	// Capture callback and done channel before releasing lock
 	nackFn := m.Acking.nack
-	done := m.Acking.done
+	done := m.Acking.doneCh
 	m.Acking.state = AckNacked
 	m.Acking.mu.Unlock()
 
@@ -307,7 +306,7 @@ func (m *TypedMessage[T]) Done() <-chan struct{} {
 	if m.Acking == nil {
 		return nil
 	}
-	return m.Acking.Done()
+	return m.Acking.doneCh
 }
 
 // Context returns a context associated with this message's acking.
@@ -319,7 +318,7 @@ func (m *TypedMessage[T]) Context() context.Context {
 	if m.Acking == nil {
 		return context.Background()
 	}
-	return &messageContext[T]{done: m.Acking.done, msg: m}
+	return &messageContext[T]{done: m.Acking.doneCh, msg: m}
 }
 
 // ID returns the event identifier. Returns empty string if not set.
