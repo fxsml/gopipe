@@ -148,15 +148,16 @@ func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Track acks for all messages
-	done := make(chan error, len(events))
+	// SharedAcking: ack fires after all N acks, nack fires on first failure
+	result := make(chan error, 1)
+	shared := message.NewSharedAcking(
+		func() { result <- nil },
+		func(e error) { result <- e },
+		len(events),
+	)
 
 	for i := range events {
-		acking := message.NewAcking(
-			func() { done <- nil },
-			func(e error) { done <- e },
-		)
-		msg, err := ce.FromCloudEvent(&events[i], acking)
+		msg, err := ce.FromCloudEvent(&events[i], shared)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -173,31 +174,21 @@ func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Wait for all acks
-	var firstErr error
-	timeout := time.NewTimer(s.cfg.AckTimeout)
-	defer timeout.Stop()
-
-	for range events {
-		select {
-		case err := <-done:
-			if err != nil && firstErr == nil {
-				firstErr = err
-			}
-		case <-s.done:
-			http.Error(w, "subscriber closed", http.StatusServiceUnavailable)
-			return
-		case <-timeout.C:
-			http.Error(w, "ack timeout", http.StatusGatewayTimeout)
-			return
-		case <-r.Context().Done():
-			http.Error(w, "request cancelled", http.StatusRequestTimeout)
+	// Wait for shared ack/nack result
+	select {
+	case err := <-result:
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-	}
-
-	if firstErr != nil {
-		http.Error(w, firstErr.Error(), http.StatusInternalServerError)
+	case <-s.done:
+		http.Error(w, "subscriber closed", http.StatusServiceUnavailable)
+		return
+	case <-time.After(s.cfg.AckTimeout):
+		http.Error(w, "ack timeout", http.StatusGatewayTimeout)
+		return
+	case <-r.Context().Done():
+		http.Error(w, "request cancelled", http.StatusRequestTimeout)
 		return
 	}
 
