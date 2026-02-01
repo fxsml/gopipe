@@ -23,6 +23,9 @@ type EngineConfig struct {
 	BufferSize int
 	// RouterPool configures the router's worker pool (default: 1 worker, 100 buffer).
 	RouterPool PoolConfig
+	// AckStrategy determines how messages are acknowledged (default: AckManual).
+	// AckManual: handler responsible; AckOnSuccess: auto-ack; AckForward: ack when outputs ack.
+	AckStrategy AckStrategy
 	// ErrorHandler is called on processing errors (default: no-op).
 	// Errors are logged via Logger; use ErrorHandler for custom handling
 	// like metrics, alerting, or recovery logic.
@@ -77,6 +80,7 @@ func NewEngine(cfg EngineConfig) *Engine {
 		router: NewRouter(PipeConfig{
 			Pool:            cfg.RouterPool,
 			ShutdownTimeout: cfg.ShutdownTimeout,
+			AckStrategy:     cfg.AckStrategy,
 			Logger:          cfg.Logger,
 			ErrorHandler:    cfg.ErrorHandler,
 		}),
@@ -286,7 +290,7 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 	e.cfg.ErrorHandler(&Message{
 		Attributes: raw.Attributes,
 		Data:       raw.Data,
-		acking:     raw.acking,
+		Acking:     raw.Acking,
 	}, err)
 }
 
