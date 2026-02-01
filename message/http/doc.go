@@ -37,14 +37,17 @@
 //	// Single send (binary mode by default)
 //	pub.Send(ctx, msg)
 //
-//	// Channel-based publish
+//	// Channel-based publish (default: sends individually)
 //	done, _ := pub.Publish(ctx, inputCh)
 //
-//	// Batch mode (collects and sends as JSON array)
+//	// Batch mode (collects messages and sends as JSON array)
 //	pub := http.NewPublisher(http.PublisherConfig{
 //	    TargetURL:     "http://localhost:8080/events",
-//	    BatchSize:     100,
-//	    BatchDuration: time.Second,
+//	    BatchSize:     100,              // Collect up to 100 messages
+//	    BatchDuration: time.Second,      // Or flush every second
 //	})
 //	done, _ := pub.Publish(ctx, inputCh)
+//
+// Internally, Publish always uses batch mode for consistent middleware support.
+// When BatchSize=1 (default), messages are sent individually using Send for efficiency.
 package http

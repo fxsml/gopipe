@@ -41,8 +41,8 @@ type PublisherConfig struct {
 	// Default is binary mode (metadata in Ce-* headers, more efficient).
 	StructuredMode bool
 
-	// Batch settings - if BatchSize > 0, Publish uses batch mode.
-	// BatchSize is the maximum messages per batch (0 = single mode).
+	// BatchSize is the maximum messages per batch (default: 1).
+	// Set to higher values for throughput (e.g., 10-100).
 	BatchSize int
 
 	// BatchDuration is the maximum time to wait before flushing a batch.
@@ -65,7 +65,12 @@ func (c PublisherConfig) parse() PublisherConfig {
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
-	if c.BatchSize > 0 && c.BatchDuration <= 0 {
+	// Always use batch mode internally for consistent middleware support.
+	// BatchSize=0 means no batching, which we treat as BatchSize=1.
+	if c.BatchSize <= 0 {
+		c.BatchSize = 1
+	}
+	if c.BatchDuration <= 0 {
 		c.BatchDuration = time.Second
 	}
 	return c
@@ -209,7 +214,8 @@ func (p *Publisher) SendBatch(ctx context.Context, msgs []*message.RawMessage) e
 }
 
 // Publish consumes messages from a channel and sends them via HTTP.
-// Mode depends on config: if BatchSize > 0, batches messages; otherwise sends individually.
+// Uses batch mode internally for consistent middleware support.
+// When BatchSize=1 (default), messages are sent individually using Send for efficiency.
 // Returns a done channel that closes when all messages are sent.
 func (p *Publisher) Publish(ctx context.Context, in <-chan *message.RawMessage) (<-chan struct{}, error) {
 	p.mu.Lock()
@@ -220,37 +226,20 @@ func (p *Publisher) Publish(ctx context.Context, in <-chan *message.RawMessage) 
 	p.started = true
 	p.mu.Unlock()
 
-	if p.cfg.BatchSize > 0 {
-		return p.publishBatch(ctx, in)
-	}
-	return p.publishSingle(ctx, in)
-}
-
-// publishSingle sends each message individually.
-func (p *Publisher) publishSingle(ctx context.Context, in <-chan *message.RawMessage) (<-chan struct{}, error) {
-	sinkPipe := pipe.NewSinkPipe(func(ctx context.Context, msg *message.RawMessage) error {
-		return p.Send(ctx, msg)
-	}, pipe.Config{
-		Concurrency: p.cfg.Concurrency,
-		ErrorHandler: func(in any, err error) {
-			raw, _ := in.(*message.RawMessage)
-			p.logger.Error("Send failed",
-				"component", "http-publisher",
-				"error", err,
-				"url", p.cfg.TargetURL)
-			if p.cfg.ErrorHandler != nil {
-				p.cfg.ErrorHandler(raw, err)
-			}
-		},
-	})
-
-	return sinkPipe.Pipe(ctx, in)
+	return p.publishBatch(ctx, in)
 }
 
 // publishBatch batches messages and sends as CloudEvents batch format.
+// When batch size is 1, uses Send for efficiency (binary mode, less overhead).
 func (p *Publisher) publishBatch(ctx context.Context, in <-chan *message.RawMessage) (<-chan struct{}, error) {
 	batchPipe := pipe.NewBatchPipe(func(ctx context.Context, batch []*message.RawMessage) ([]struct{}, error) {
-		err := p.SendBatch(ctx, batch)
+		var err error
+		if len(batch) == 1 {
+			// Use Send for single messages (more efficient binary mode)
+			err = p.Send(ctx, batch[0])
+		} else {
+			err = p.SendBatch(ctx, batch)
+		}
 		return nil, err
 	}, pipe.BatchConfig{
 		MaxSize:     p.cfg.BatchSize,

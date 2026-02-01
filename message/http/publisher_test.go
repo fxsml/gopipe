@@ -275,7 +275,7 @@ func TestPublisher_SendBatch(t *testing.T) {
 }
 
 func TestPublisher_Publish(t *testing.T) {
-	t.Run("single mode sends individually", func(t *testing.T) {
+	t.Run("default config sends individually", func(t *testing.T) {
 		var count atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			count.Add(1)
@@ -378,6 +378,153 @@ func TestPublisher_Publish(t *testing.T) {
 		_, err = pub.Publish(ctx, ch)
 		if err == nil {
 			t.Fatal("expected error on second call")
+		}
+	})
+}
+
+// Benchmark tests for Publisher performance comparison
+
+func BenchmarkPublisher_Send(b *testing.B) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	pub := NewPublisher(PublisherConfig{TargetURL: server.URL})
+
+	msg := message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
+		message.AttrID:     "test-1",
+		message.AttrType:   "order.created",
+		message.AttrSource: "/test",
+	}, nil)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		pub.Send(context.Background(), msg)
+	}
+}
+
+func BenchmarkPublisher_SendBatch(b *testing.B) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	pub := NewPublisher(PublisherConfig{TargetURL: server.URL})
+
+	b.Run("batch_size_1", func(b *testing.B) {
+		msgs := []*message.RawMessage{
+			message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
+				message.AttrID:     "test-1",
+				message.AttrType:   "order.created",
+				message.AttrSource: "/test",
+			}, nil),
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			pub.SendBatch(context.Background(), msgs)
+		}
+	})
+
+	b.Run("batch_size_10", func(b *testing.B) {
+		msgs := make([]*message.RawMessage, 10)
+		for i := range msgs {
+			msgs[i] = message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
+				message.AttrID:     "test-1",
+				message.AttrType:   "order.created",
+				message.AttrSource: "/test",
+			}, nil)
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			pub.SendBatch(context.Background(), msgs)
+		}
+	})
+}
+
+func BenchmarkPublisher_Publish(b *testing.B) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	b.Run("100_messages_default", func(b *testing.B) {
+		// Default config: BatchSize=1 (no batching, sends individually)
+		for i := 0; i < b.N; i++ {
+			pub := NewPublisher(PublisherConfig{
+				TargetURL:   server.URL,
+				Concurrency: 1,
+			})
+
+			ch := make(chan *message.RawMessage, 100)
+			ctx := context.Background()
+
+			done, _ := pub.Publish(ctx, ch)
+
+			for j := 0; j < 100; j++ {
+				ch <- message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
+					message.AttrID:     "test-1",
+					message.AttrType:   "order.created",
+					message.AttrSource: "/test",
+				}, nil)
+			}
+			close(ch)
+			<-done
+		}
+	})
+
+	b.Run("100_messages_concurrent4", func(b *testing.B) {
+		// Concurrent workers for parallelism
+		for i := 0; i < b.N; i++ {
+			pub := NewPublisher(PublisherConfig{
+				TargetURL:   server.URL,
+				Concurrency: 4,
+			})
+
+			ch := make(chan *message.RawMessage, 100)
+			ctx := context.Background()
+
+			done, _ := pub.Publish(ctx, ch)
+
+			for j := 0; j < 100; j++ {
+				ch <- message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
+					message.AttrID:     "test-1",
+					message.AttrType:   "order.created",
+					message.AttrSource: "/test",
+				}, nil)
+			}
+			close(ch)
+			<-done
+		}
+	})
+
+	b.Run("100_messages_batch10", func(b *testing.B) {
+		// BatchSize=10: fewer HTTP requests, higher throughput
+		for i := 0; i < b.N; i++ {
+			pub := NewPublisher(PublisherConfig{
+				TargetURL:     server.URL,
+				Concurrency:   1,
+				BatchSize:     10,
+				BatchDuration: time.Second,
+			})
+
+			ch := make(chan *message.RawMessage, 100)
+			ctx := context.Background()
+
+			done, _ := pub.Publish(ctx, ch)
+
+			for j := 0; j < 100; j++ {
+				ch <- message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
+					message.AttrID:     "test-1",
+					message.AttrType:   "order.created",
+					message.AttrSource: "/test",
+				}, nil)
+			}
+			close(ch)
+			<-done
 		}
 	})
 }
