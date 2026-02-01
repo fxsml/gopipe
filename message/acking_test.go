@@ -707,17 +707,6 @@ func TestAckingEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("Acking.Context on nil returns Background", func(t *testing.T) {
-		var a *Acking
-		ctx := a.Context()
-		if ctx.Done() != nil {
-			t.Error("nil.Context().Done() should return nil")
-		}
-		if ctx.Err() != nil {
-			t.Errorf("nil.Context().Err() = %v, want nil", ctx.Err())
-		}
-	})
-
 	t.Run("message with nil acking - Ack returns false", func(t *testing.T) {
 		msg := New("data", nil, nil)
 		if msg.Ack() {

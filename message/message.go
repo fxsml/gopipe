@@ -108,16 +108,6 @@ func (a *Acking) done() <-chan struct{} {
 	return a.doneCh
 }
 
-// Context returns a context that is cancelled when the acking is settled.
-// Useful for aborting long-running operations when processing completes or fails.
-// Note: Use TypedMessage.Context() instead to get a context that includes the message reference.
-func (a *Acking) Context() context.Context {
-	if a == nil || a.doneCh == nil {
-		return context.Background()
-	}
-	return &messageContext[any]{done: a.doneCh, msg: nil}
-}
-
 // messageContext wraps a done channel as a context.Context and stores a message reference.
 type messageContext[T any] struct {
 	done <-chan struct{}
