@@ -77,20 +77,18 @@ func (c PipeConfig) parse() PipeConfig {
 type Router struct {
 	cfg PipeConfig
 
-	mu          sync.RWMutex
-	handlers    map[string]handlerEntry
-	middleware  []Middleware
-	ackStrategy AckStrategy
-	started     bool
+	mu         sync.RWMutex
+	handlers   map[string]handlerEntry
+	middleware []Middleware
+	started    bool
 }
 
 // NewRouter creates a new message router.
 func NewRouter(cfg PipeConfig) *Router {
 	cfg = cfg.parse()
 	r := &Router{
-		cfg:         cfg,
-		handlers:    make(map[string]handlerEntry),
-		ackStrategy: cfg.AckStrategy,
+		cfg:      cfg,
+		handlers: make(map[string]handlerEntry),
 	}
 	r.cfg.Logger.Info("Adding pool",
 		"component", "router",
@@ -250,7 +248,7 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 // ackingMiddleware returns the middleware for the configured ack strategy.
 // Returns nil for AckManual (no automatic acking).
 func (r *Router) ackingMiddleware() Middleware {
-	switch r.ackStrategy {
+	switch r.cfg.AckStrategy {
 	case AckOnSuccess:
 		return autoAckMiddleware()
 	case AckForward:
