@@ -1,9 +1,7 @@
 package http
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,7 +9,11 @@ import (
 	"sync"
 	"time"
 
+	cloudevents "github.com/cloudevents/sdk-go/v2"
+	"github.com/cloudevents/sdk-go/v2/binding"
+	cehttp "github.com/cloudevents/sdk-go/v2/protocol/http"
 	"github.com/fxsml/gopipe/message"
+	ce "github.com/fxsml/gopipe/message/cloudevents"
 	"github.com/fxsml/gopipe/pipe"
 )
 
@@ -34,6 +36,10 @@ type PublisherConfig struct {
 
 	// Headers are additional HTTP headers to include in requests.
 	Headers http.Header
+
+	// StructuredMode uses structured content mode (metadata in JSON body).
+	// Default is binary mode (metadata in Ce-* headers, more efficient).
+	StructuredMode bool
 
 	// Batch settings - if BatchSize > 0, Publish uses batch mode.
 	// BatchSize is the maximum messages per batch (0 = single mode).
@@ -69,7 +75,7 @@ func (c PublisherConfig) parse() PublisherConfig {
 //
 // Usage:
 //
-//	// Single mode (default)
+//	// Single mode (default, binary content mode)
 //	pub := cehttp.NewPublisher(cehttp.PublisherConfig{
 //	    TargetURL: "http://host/events/orders",
 //	})
@@ -102,21 +108,26 @@ func NewPublisher(cfg PublisherConfig) *Publisher {
 }
 
 // Send sends a single CloudEvent synchronously.
+// Uses binary mode by default, or structured mode if configured.
 // Calls msg.Ack() on success (HTTP 2xx), msg.Nack(err) on failure.
 func (p *Publisher) Send(ctx context.Context, msg *message.RawMessage) error {
-	body, err := msg.MarshalJSON()
+	event, err := ce.ToCloudEvent(msg)
 	if err != nil {
 		msg.Nack(err)
-		return fmt.Errorf("marshaling event: %w", err)
+		return fmt.Errorf("converting to CloudEvent: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.TargetURL, bytes.NewReader(body))
+	reqCtx := ctx
+	if p.cfg.StructuredMode {
+		reqCtx = binding.WithForceStructured(ctx)
+	}
+
+	req, err := cehttp.NewHTTPRequestFromEvent(reqCtx, p.cfg.TargetURL, *event)
 	if err != nil {
 		msg.Nack(err)
 		return fmt.Errorf("creating request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
 	for k, v := range p.cfg.Headers {
 		req.Header[k] = v
 	}
@@ -148,15 +159,19 @@ func (p *Publisher) SendBatch(ctx context.Context, msgs []*message.RawMessage) e
 		return nil
 	}
 
-	body, err := marshalBatch(msgs)
-	if err != nil {
-		for _, msg := range msgs {
-			msg.Nack(err)
+	events := make([]cloudevents.Event, len(msgs))
+	for i, msg := range msgs {
+		event, err := ce.ToCloudEvent(msg)
+		if err != nil {
+			for _, m := range msgs {
+				m.Nack(err)
+			}
+			return fmt.Errorf("converting to CloudEvent: %w", err)
 		}
-		return fmt.Errorf("marshaling batch: %w", err)
+		events[i] = *event
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.TargetURL, bytes.NewReader(body))
+	req, err := cehttp.NewHTTPRequestFromEvents(ctx, p.cfg.TargetURL, events)
 	if err != nil {
 		for _, msg := range msgs {
 			msg.Nack(err)
@@ -164,7 +179,6 @@ func (p *Publisher) SendBatch(ctx context.Context, msgs []*message.RawMessage) e
 		return fmt.Errorf("creating request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", ContentTypeCloudEventsBatchJSON)
 	for k, v := range p.cfg.Headers {
 		req.Header[k] = v
 	}
@@ -192,19 +206,6 @@ func (p *Publisher) SendBatch(ctx context.Context, msgs []*message.RawMessage) e
 		msg.Nack(err)
 	}
 	return err
-}
-
-// marshalBatch marshals messages to CloudEvents batch format (JSON array).
-func marshalBatch(msgs []*message.RawMessage) ([]byte, error) {
-	events := make([]json.RawMessage, len(msgs))
-	for i, msg := range msgs {
-		b, err := msg.MarshalJSON()
-		if err != nil {
-			return nil, fmt.Errorf("marshaling event %d: %w", i, err)
-		}
-		events[i] = b
-	}
-	return json.Marshal(events)
 }
 
 // Publish consumes messages from a channel and sends them via HTTP.

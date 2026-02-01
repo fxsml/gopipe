@@ -38,7 +38,7 @@ import (
 	"time"
 
 	"github.com/fxsml/gopipe/message"
-	cehttp "github.com/fxsml/gopipe/message/cloudevents/http"
+	cehttp "github.com/fxsml/gopipe/message/http"
 )
 
 type Order struct {

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,12 +15,12 @@ import (
 )
 
 func TestPublisher_Send(t *testing.T) {
-	t.Run("sends single event", func(t *testing.T) {
-		var received []byte
-		var contentType string
+	t.Run("sends in binary mode by default", func(t *testing.T) {
+		var headers http.Header
+		var body []byte
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			contentType = r.Header.Get("Content-Type")
-			received, _ = io.ReadAll(r.Body)
+			headers = r.Header
+			body, _ = io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusOK)
 		}))
 		defer server.Close()
@@ -39,12 +40,57 @@ func TestPublisher_Send(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if contentType != ContentTypeCloudEventsJSON {
-			t.Errorf("expected content-type %s, got %s", ContentTypeCloudEventsJSON, contentType)
+		// Binary mode: metadata in Ce-* headers
+		if headers.Get("Ce-Id") != "test-1" {
+			t.Errorf("expected Ce-Id header 'test-1', got %s", headers.Get("Ce-Id"))
+		}
+		if headers.Get("Ce-Type") != "test.type" {
+			t.Errorf("expected Ce-Type header 'test.type', got %s", headers.Get("Ce-Type"))
+		}
+		if headers.Get("Ce-Source") != "/test" {
+			t.Errorf("expected Ce-Source header '/test', got %s", headers.Get("Ce-Source"))
 		}
 
-		if len(received) == 0 {
-			t.Error("expected non-empty body")
+		// Data in body (not wrapped in CloudEvents JSON)
+		if string(body) != `{"key":"value"}` {
+			t.Errorf("expected body '{\"key\":\"value\"}', got %s", body)
+		}
+	})
+
+	t.Run("sends in structured mode when configured", func(t *testing.T) {
+		var contentType string
+		var body []byte
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			contentType = r.Header.Get("Content-Type")
+			body, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		pub := NewPublisher(PublisherConfig{
+			TargetURL:      server.URL,
+			StructuredMode: true,
+		})
+
+		msg := message.NewRaw([]byte(`{"key":"value"}`), message.Attributes{
+			message.AttrID:     "test-1",
+			message.AttrType:   "test.type",
+			message.AttrSource: "/test",
+		}, nil)
+
+		err := pub.Send(context.Background(), msg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Structured mode: application/cloudevents+json
+		if !strings.HasPrefix(contentType, "application/cloudevents+json") {
+			t.Errorf("expected content-type application/cloudevents+json, got %s", contentType)
+		}
+
+		// Body should contain CloudEvents JSON with data embedded
+		if !strings.Contains(string(body), `"specversion"`) {
+			t.Errorf("expected CloudEvents JSON in body, got %s", body)
 		}
 	})
 
@@ -155,8 +201,9 @@ func TestPublisher_SendBatch(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if contentType != ContentTypeCloudEventsBatchJSON {
-			t.Errorf("expected %s, got %s", ContentTypeCloudEventsBatchJSON, contentType)
+		// Batch always uses structured batch format
+		if !strings.HasPrefix(contentType, "application/cloudevents-batch+json") {
+			t.Errorf("expected application/cloudevents-batch+json, got %s", contentType)
 		}
 
 		if bodySize == 0 {
