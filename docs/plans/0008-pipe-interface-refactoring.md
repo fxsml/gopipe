@@ -543,44 +543,19 @@ Task 9 can start after Tasks 2-5.
 Task 10 depends on Task 7.
 Task 11 depends on Task 10.
 
-## Open Questions
+## Design Decisions (Resolved)
 
-### 1. Should GeneratePipe.Pipe() consume or ignore input?
+### 1. GeneratePipe.Pipe() ignores input
+Accepts `<-chan struct{}` for type compatibility with `Pipe` interface, but ignores the channel entirely. Just calls `Generate()`. This is the simplest approach and enables composition via `Apply()`.
 
-**Options:**
-- A: Ignore input entirely (proposed)
-- B: Use input as trigger (one Generate call per input value)
-- C: Don't implement Pipe at all (Generator is special)
+### 2. Direct methods don't apply middleware
+`Process()`, `Sink()`, `ProcessBatch()` call the raw handler function. Middleware only applies through `Pipe()`. This keeps direct methods simple, predictable, and useful for testing.
 
-**Recommendation:** Option A - simplest, enables composition
+### 3. Filter/Transform are constructor helpers only
+`NewFilter` and `NewTransform` return `*ProcessPipe` with adapted function signatures. No separate `Filter` or `Transform` interfaces/types. They're just constrained processors.
 
-### 2. Should Process()/Sink()/ProcessBatch() apply middleware?
-
-**Options:**
-- A: No middleware on direct methods (proposed)
-- B: Apply middleware on all paths
-
-**Recommendation:** Option A - keeps direct methods simple and predictable
-
-### 3. What about FilterPipe and TransformPipe as separate types?
-
-**Options:**
-- A: Keep as helpers returning ProcessPipe (proposed)
-- B: Create Filter and Transform interfaces and *Pipe types
-
-**Recommendation:** Option A - they're just constrained processors, not semantically different
-
-### 4. Should middleware types change?
-
-Current: `middleware.Middleware[In, Out]` works with `ProcessFunc[In, Out]`
-
-For SinkPipe: `middleware.Middleware[In, struct{}]` works but is awkward.
-
-**Options:**
-- A: Keep as-is (proposed)
-- B: Add `SinkMiddleware[In]` type alias
-
-**Recommendation:** Option A initially, can add alias later if needed
+### 4. No SinkMiddleware type alias
+`middleware.Middleware[In, struct{}]` works for sinks. No special alias needed.
 
 ## Migration Guide
 
