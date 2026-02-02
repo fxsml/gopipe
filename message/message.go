@@ -90,12 +90,6 @@ func (m *TypedMessage[T]) Nack(err error) bool {
 	return m.acking.nack(err)
 }
 
-// Settled returns true if the message has been acked or nacked.
-// Returns false if no acking is set.
-func (m *TypedMessage[T]) Settled() bool {
-	return m.acking.isSettled()
-}
-
 // Err returns the error from Nack, or nil if pending or acked.
 // Use with Done() to check settlement status, similar to context.Context:
 //

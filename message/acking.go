@@ -188,8 +188,8 @@ func manualAckMiddleware() Middleware {
 	return func(next ProcessFunc) ProcessFunc {
 		return func(ctx context.Context, msg *Message) ([]*Message, error) {
 			outputs, err := next(ctx, msg)
-			if err != nil && !msg.Settled() {
-				msg.Nack(err)
+			if err != nil {
+				msg.Nack(err) // Idempotent - no-op if already settled
 			}
 			return outputs, err
 		}
@@ -228,7 +228,7 @@ func forwardAckMiddleware() Middleware {
 			}
 
 			// Check if input was already acked (handler acked manually)
-			if msg.Settled() {
+			if msg.acking.isSettled() {
 				return outputs, nil
 			}
 

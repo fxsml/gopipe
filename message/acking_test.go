@@ -177,8 +177,14 @@ func TestAckingTableTests(t *testing.T) {
 				if got := atomic.LoadInt32(nackCount); got != tt.wantNacked {
 					t.Errorf("nack callback count = %d, want %d", got, tt.wantNacked)
 				}
-				if got := msg.Settled(); got != tt.wantSettled {
-					t.Errorf("Settled() = %v, want %v", got, tt.wantSettled)
+				gotSettled := false
+				select {
+				case <-msg.Done():
+					gotSettled = true
+				default:
+				}
+				if gotSettled != tt.wantSettled {
+					t.Errorf("settled = %v, want %v", gotSettled, tt.wantSettled)
 				}
 				if gotErr := msg.Err() != nil; gotErr != tt.wantErr {
 					t.Errorf("Err() != nil = %v, want %v", gotErr, tt.wantErr)
@@ -316,8 +322,14 @@ func TestAckingTableTests(t *testing.T) {
 				if got := atomic.LoadInt32(&nackCount); got != tt.wantNacked {
 					t.Errorf("nack callback count = %d, want %d", got, tt.wantNacked)
 				}
-				if got := msgs[0].Settled(); got != tt.wantSettled {
-					t.Errorf("Settled() = %v, want %v", got, tt.wantSettled)
+				gotSettled := false
+				select {
+				case <-msgs[0].Done():
+					gotSettled = true
+				default:
+				}
+				if gotSettled != tt.wantSettled {
+					t.Errorf("settled = %v, want %v", gotSettled, tt.wantSettled)
 				}
 				if gotErr := msgs[0].Err() != nil; gotErr != tt.wantErr {
 					t.Errorf("Err() != nil = %v, want %v", gotErr, tt.wantErr)
@@ -620,7 +632,10 @@ func TestAckingCallbackSafety(t *testing.T) {
 		acking := NewAcking(
 			func() {
 				// Try to access acking state from callback
-				_ = msg.Settled()
+				select {
+				case <-msg.Done():
+				default:
+				}
 				close(done)
 			},
 			func(error) {},
@@ -673,7 +688,10 @@ func TestAckingCallbackSafety(t *testing.T) {
 			func() {},
 			func(err error) {
 				// Access message from nack callback
-				_ = msg.Settled()
+				select {
+				case <-msg.Done():
+				default:
+				}
 				_ = msg.Context(context.Background())
 				close(done)
 			},
@@ -717,10 +735,13 @@ func TestAckingEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("message with nil acking - Settled returns false", func(t *testing.T) {
+	t.Run("message with nil acking - Done channel select works", func(t *testing.T) {
 		msg := New("data", nil, nil)
-		if msg.Settled() {
-			t.Error("Settled() on nil acking should return false")
+		select {
+		case <-msg.Done():
+			t.Error("Done() on nil acking should not be closed")
+		default:
+			// OK - nil channel causes default case
 		}
 	})
 
@@ -1215,8 +1236,14 @@ func TestAckingStateTransitions(t *testing.T) {
 				}
 			}
 
-			if got := msg.Settled(); got != tt.wantSettled {
-				t.Errorf("Settled() = %v, want %v", got, tt.wantSettled)
+			gotSettled := false
+			select {
+			case <-msg.Done():
+				gotSettled = true
+			default:
+			}
+			if gotSettled != tt.wantSettled {
+				t.Errorf("settled = %v, want %v", gotSettled, tt.wantSettled)
 			}
 			if gotErr := msg.Err() != nil; gotErr != tt.wantErr {
 				t.Errorf("Err() != nil = %v, want %v", gotErr, tt.wantErr)
@@ -1337,12 +1364,22 @@ func TestSharedAckingWithForwardPattern(t *testing.T) {
 			t.Error("out2.Done() should be closed after nack (shared acking)")
 		}
 
-		// Verify state
-		if !out1.Settled() || out1.Err() == nil {
-			t.Error("out1 should be nacked")
+		// Verify state using Done() + Err()
+		select {
+		case <-out1.Done():
+			if out1.Err() == nil {
+				t.Error("out1 should be nacked")
+			}
+		default:
+			t.Error("out1 should be settled")
 		}
-		if !out2.Settled() || out2.Err() == nil {
-			t.Error("out2 should be nacked (shared acking)")
+		select {
+		case <-out2.Done():
+			if out2.Err() == nil {
+				t.Error("out2 should be nacked (shared acking)")
+			}
+		default:
+			t.Error("out2 should be settled (shared acking)")
 		}
 	})
 }
