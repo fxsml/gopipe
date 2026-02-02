@@ -8,6 +8,7 @@
 | [0013](0013-channel-package-refactoring.md) | Channel Package Refactoring | Proposed |
 | [0014](0014-pipe-interface-refactoring.md) | Pipe Interface Refactoring | Proposed |
 | [0015](0015-message-module-refactoring.md) | Message Module Refactoring | Proposed (blocked by 0014) |
+| [0016](0016-middleware-consolidation.md) | Middleware Module Consolidation | Proposed |
 
 ## Agent Guidance
 
