@@ -85,6 +85,26 @@ Check for references to old middleware types if pipe middleware signatures chang
 
 Update any test code that references old type names.
 
+### Task 8: Add Router.Route() Semantic Method
+
+**File:** `message/router.go`
+
+Add `Route()` method to expose the semantic interface, consistent with pipe package pattern:
+
+```go
+// Route processes a single message through the router (semantic interface).
+// Does NOT apply middleware - calls handler directly.
+// Use Pipe() for streaming with middleware.
+func (r *Router) Route(ctx context.Context, msg *Message) ([]*Message, error) {
+    return r.process(ctx, msg)
+}
+```
+
+This provides:
+- Consistent pattern with `Processor.Process()`, `Source.Source()`, etc.
+- Direct invocation for testing without channel setup
+- Clear semantic: Router routes messages
+
 ## No Changes Required
 
 The following pipe package items are used by message module but **do not change**:
@@ -135,18 +155,19 @@ Add optional type mapping before/after handler processing (see Plan 0014 Outlook
 
 **Decision:** Defer to separate feature work if needed.
 
-### Enhancement 3: Expose Semantic Methods
+### Enhancement 3: Additional Semantic Methods
 
-Consider exposing direct semantic methods like `Process()` on Router for testing:
+Other message module types could expose semantic methods for consistency:
 
 ```go
-// Optional: Direct invocation for testing
-func (r *Router) Process(ctx context.Context, msg *Message) ([]*Message, error) {
-    return r.process(ctx, msg)
-}
+// MarshalPipe could have:
+func (p *MarshalPipe) Marshal(ctx, *RawMessage) ([]*Message, error)
+
+// UnmarshalPipe could have:
+func (p *UnmarshalPipe) Unmarshal(ctx, *Message) ([]*RawMessage, error)
 ```
 
-**Decision:** Defer. Current testing approach via channels is sufficient.
+**Decision:** Defer. Router.Route() is included as essential (Task 8). Other types can be added later if needed.
 
 ## Migration Impact
 
@@ -154,11 +175,12 @@ func (r *Router) Process(ctx context.Context, msg *Message) ([]*Message, error) 
 
 **No breaking changes** to message module's public API:
 - `MarshalPipe`, `UnmarshalPipe` - same interface
-- `Router` - same interface
+- `Router` - same interface, plus new `Route()` method
 - `Publisher`, `Subscriber` - same interface
 - `Distributor`, `Merger` - same interface
 
-Internal implementation changes only.
+**New API addition:**
+- `Router.Route(ctx, *Message) ([]*Message, error)` - direct invocation for testing
 
 ### For Users Extending Message Module
 
@@ -179,12 +201,13 @@ This is rare and considered acceptable breakage.
 | 5 | Update CloudEvents Subscriber | `message/cloudevents/subscriber.go` | Yes |
 | 6 | Update Middleware References | Various | Yes |
 | 7 | Update Tests | `*_test.go` | Yes |
+| 8 | Add Router.Route() | `message/router.go` | Yes |
 
 ## Acceptance Criteria
 
 - [ ] All message module code compiles with new pipe API
 - [ ] All message module tests pass
-- [ ] No changes to message module public API
+- [ ] Router.Route() method added and tested
 - [ ] Build passes (`make build && make vet`)
 - [ ] Released simultaneously with pipe refactoring
 
@@ -192,5 +215,5 @@ This is rare and considered acceptable breakage.
 
 When releasing, document:
 1. Pipe package breaking changes (see Plan 0014)
-2. Message module: internal updates only, no public API changes
+2. Message module: internal updates + new `Router.Route()` method
 3. Migration guide for users extending internal types
