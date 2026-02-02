@@ -4,7 +4,7 @@
 
 ## Overview
 
-Refactor the pipe package to introduce semantic interfaces (`Processor`, `Generator`, `BatchProcessor`, `Sink`) alongside the composition interface (`Pipe`). Concrete structs use `*Pipe` suffix and implement both their semantic interface and the `Pipe` interface. An internal base type reduces code duplication.
+Refactor the pipe package to introduce semantic interfaces (`Processor`, `Generator`, `BatchProcessor`, `Filter`, `Transformer`, `Sink`) alongside the composition interface (`Pipe`). Concrete structs use `*Pipe` suffix and implement both their semantic interface and the `Pipe` interface. An internal base type reduces code duplication.
 
 ## Goals
 
@@ -47,6 +47,16 @@ type Processor[In, Out any] interface {
 // BatchProcessor transforms batches of items.
 type BatchProcessor[In, Out any] interface {
     ProcessBatch(ctx context.Context, batch []In) ([]Out, error)
+}
+
+// Filter selectively passes items.
+type Filter[T any] interface {
+    Filter(ctx context.Context, in T) (bool, error)
+}
+
+// Transformer performs 1:1 item transformation.
+type Transformer[In, Out any] interface {
+    Transform(ctx context.Context, in In) (Out, error)
 }
 
 // Sink consumes items without producing output.
@@ -131,6 +141,26 @@ func (b *BatchProcessorPipe[In, Out]) ProcessBatch(ctx context.Context, batch []
 func (b *BatchProcessorPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out, error)
 
 
+// FilterPipe implements Filter and Pipe[T, T]
+type FilterPipe[T any] struct {
+    pipe[T, T]
+    handle FilterFunc[T]
+}
+
+func (f *FilterPipe[T]) Filter(ctx context.Context, in T) (bool, error)
+func (f *FilterPipe[T]) Pipe(ctx context.Context, in <-chan T) (<-chan T, error)
+
+
+// TransformerPipe implements Transformer and Pipe[In, Out]
+type TransformerPipe[In, Out any] struct {
+    pipe[In, Out]
+    handle TransformFunc[In, Out]
+}
+
+func (t *TransformerPipe[In, Out]) Transform(ctx context.Context, in In) (Out, error)
+func (t *TransformerPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out, error)
+
+
 // SinkPipe implements Sink and Pipe[In, struct{}]
 type SinkPipe[In any] struct {
     pipe[In, struct{}]
@@ -147,11 +177,9 @@ func (s *SinkPipe[In]) Pipe(ctx context.Context, in <-chan In) (<-chan struct{},
 func NewGenerator[Out any](fn GenerateFunc[Out], cfg Config) *GeneratorPipe[Out]
 func NewProcessor[In, Out any](fn ProcessFunc[In, Out], cfg Config) *ProcessorPipe[In, Out]
 func NewBatchProcessor[In, Out any](fn BatchFunc[In, Out], cfg BatchConfig) *BatchProcessorPipe[In, Out]
+func NewFilter[T any](fn FilterFunc[T], cfg Config) *FilterPipe[T]
+func NewTransformer[In, Out any](fn TransformFunc[In, Out], cfg Config) *TransformerPipe[In, Out]
 func NewSink[In any](fn SinkFunc[In], cfg Config) *SinkPipe[In]
-
-// Helpers - return ProcessorPipe with adapted signatures
-func NewFilter[T any](fn FilterFunc[T], cfg Config) *ProcessorPipe[T, T]
-func NewTransform[In, Out any](fn TransformFunc[In, Out], cfg Config) *ProcessorPipe[In, Out]
 ```
 
 ### Function Type Aliases
@@ -168,9 +196,11 @@ type TransformFunc[In, Out any] func(ctx context.Context, in In) (Out, error)
 ## Design Decisions (Resolved)
 
 ### 1. Struct naming uses `*Pipe` suffix
-- Interface: `Processor` → Struct: `ProcessorPipe`
 - Interface: `Generator` → Struct: `GeneratorPipe`
+- Interface: `Processor` → Struct: `ProcessorPipe`
 - Interface: `BatchProcessor` → Struct: `BatchProcessorPipe`
+- Interface: `Filter` → Struct: `FilterPipe`
+- Interface: `Transformer` → Struct: `TransformerPipe`
 - Interface: `Sink` → Struct: `SinkPipe`
 
 ### 2. GeneratorPipe.Pipe() uses input as trigger
@@ -196,8 +226,12 @@ Unexported `pipe[In, Out]` struct handles:
 
 Reduces duplication across ProcessorPipe, SinkPipe, GeneratorPipe, BatchProcessorPipe.
 
-### 7. Filter/Transform are constructor helpers only
-`NewFilter` and `NewTransform` return `*ProcessorPipe` with adapted function signatures. No separate types needed.
+### 7. Filter/Transformer are separate types
+For consistency, `Filter` and `Transformer` have their own interfaces and `*Pipe` structs:
+- `Filter[T]` interface with `Filter()` method → `FilterPipe[T]` struct
+- `Transformer[In, Out]` interface with `Transform()` method → `TransformerPipe[In, Out]` struct
+
+This makes the API explicit and consistent across all component types.
 
 ### 8. Merger/Distributor stay as infrastructure
 They are fan-in/fan-out primitives, not pipeline stages. No semantic interfaces needed.
@@ -341,42 +375,82 @@ func (p *pipe[In, Out]) start() error
 - Add `Produce()` for autonomous streaming
 - Add `Pipe()` with trigger semantics
 
-### Task 6: Update SinkPipe
+### Task 6: Create FilterPipe
+
+**Files to Modify:**
+- `pipe/filter.go` - Create `Filter` interface and `FilterPipe` struct
+
+```go
+type Filter[T any] interface {
+    Filter(ctx context.Context, in T) (bool, error)
+}
+
+type FilterPipe[T any] struct {
+    pipe[T, T]
+    handle FilterFunc[T]
+}
+
+func NewFilter[T any](fn FilterFunc[T], cfg Config) *FilterPipe[T]
+func (f *FilterPipe[T]) Filter(ctx, in T) (bool, error)
+func (f *FilterPipe[T]) Pipe(ctx, <-chan T) (<-chan T, error)
+```
+
+### Task 7: Create TransformerPipe
+
+**Files to Modify:**
+- `pipe/transformer.go` - Create `Transformer` interface and `TransformerPipe` struct
+
+```go
+type Transformer[In, Out any] interface {
+    Transform(ctx context.Context, in In) (Out, error)
+}
+
+type TransformerPipe[In, Out any] struct {
+    pipe[In, Out]
+    handle TransformFunc[In, Out]
+}
+
+func NewTransformer[In, Out any](fn TransformFunc[In, Out], cfg Config) *TransformerPipe[In, Out]
+func (t *TransformerPipe[In, Out]) Transform(ctx, in In) (Out, error)
+func (t *TransformerPipe[In, Out]) Pipe(ctx, <-chan In) (<-chan Out, error)
+```
+
+### Task 8: Update SinkPipe
 
 **Files to Modify:**
 - `pipe/pipe.go` - Create proper `SinkPipe` struct with base type, add `Sink()` method
 
-### Task 7: Add Function Type Aliases
+### Task 9: Add Function Type Aliases
 
 **Files to Modify:**
 - `pipe/processing.go` - Add `GenerateFunc`, `BatchFunc`, `SinkFunc`, `FilterFunc`, `TransformFunc`
 
-### Task 8: Rename Constructors
+### Task 10: Rename Constructors
 
 | Before | After |
 |--------|-------|
 | `NewProcessPipe` | `NewProcessor` |
 | `NewBatchPipe` | `NewBatchProcessor` |
 | `NewFilterPipe` | `NewFilter` |
-| `NewTransformPipe` | `NewTransform` |
+| `NewTransformPipe` | `NewTransformer` |
 | `NewSinkPipe` | `NewSink` |
 | `NewGenerator` | `NewGenerator` (unchanged) |
 
-### Task 9: Update Tests
+### Task 11: Update Tests
 
 - Rename all test references
 - Add tests for new semantic methods
 - Add tests for Pipe() trigger behavior on GeneratorPipe
 - Verify middleware NOT applied to direct methods
 
-### Task 10: Update message Package
+### Task 12: Update message Package
 
 - `message/pipes.go`
 - `message/router.go`
 - `message/cloudevents/publisher.go`
 - `message/cloudevents/subscriber.go`
 
-### Task 11: Add TriggerFunc and Producer
+### Task 13: Add TriggerFunc and Producer
 
 **Files to Modify:**
 - `pipe/pipe.go` - Add `TriggerFunc` type and `Producer` interface
@@ -394,7 +468,7 @@ type Producer[Out any] interface {
 func NewProducer[Out any](trigger TriggerFunc, p Pipe[struct{}, Out]) Producer[Out]
 ```
 
-### Task 12: Create trigger Subpackage
+### Task 14: Create trigger Subpackage
 
 **Files to Create:**
 - `pipe/trigger/trigger.go` - Factory functions
@@ -407,14 +481,7 @@ func Count(n int) pipe.TriggerFunc
 func Once() pipe.TriggerFunc
 ```
 
-### Task 13: Update message Package
-
-- `message/pipes.go`
-- `message/router.go`
-- `message/cloudevents/publisher.go`
-- `message/cloudevents/subscriber.go`
-
-### Task 14: Update Documentation
+### Task 15: Update Documentation
 
 - `pipe/doc.go`
 - `README.md`
@@ -432,8 +499,10 @@ func Once() pipe.TriggerFunc
 | `NewProcessPipe` | `NewProcessor` |
 | `NewBatchPipe` | `NewBatchProcessor` |
 | `NewFilterPipe` | `NewFilter` |
-| `NewTransformPipe` | `NewTransform` |
+| `NewTransformPipe` | `NewTransformer` |
 | `NewSinkPipe` | `NewSink` |
+| `NewFilterPipe() -> *ProcessPipe` | `NewFilter() -> *FilterPipe` |
+| `NewTransformPipe() -> *ProcessPipe` | `NewTransformer() -> *TransformerPipe` |
 | `GeneratePipe.Generate()` returns channel | `GeneratorPipe.Generate()` returns single batch |
 
 ### New APIs
@@ -442,9 +511,15 @@ func Once() pipe.TriggerFunc
 |-----|-------------|
 | `Processor[In, Out]` interface | Semantic interface with `Process()` |
 | `BatchProcessor[In, Out]` interface | Semantic interface with `ProcessBatch()` |
+| `Filter[T]` interface | Semantic interface with `Filter()` |
+| `Transformer[In, Out]` interface | Semantic interface with `Transform()` |
 | `Sink[In]` interface | Semantic interface with `Sink()` |
 | `ProcessorPipe.Process()` | Direct single-item invocation |
 | `BatchProcessorPipe.ProcessBatch()` | Direct batch invocation |
+| `FilterPipe[T]` struct | Implements `Filter` and `Pipe[T, T]` |
+| `FilterPipe.Filter()` | Direct single-item filtering |
+| `TransformerPipe[In, Out]` struct | Implements `Transformer` and `Pipe[In, Out]` |
+| `TransformerPipe.Transform()` | Direct single-item transformation |
 | `GeneratorPipe.Generate()` | Single batch generation |
 | `GeneratorPipe.Pipe()` | Triggered streaming (input as trigger) |
 | `SinkPipe.Sink()` | Direct single-item consumption |
@@ -459,12 +534,14 @@ func Once() pipe.TriggerFunc
 ## Acceptance Criteria
 
 - [ ] Internal base type created
-- [ ] All semantic interfaces defined (Processor, BatchProcessor, Sink, Generator)
+- [ ] All semantic interfaces defined (Generator, Processor, BatchProcessor, Filter, Transformer, Sink)
 - [ ] All structs renamed with `*Pipe` suffix
 - [ ] All structs implement their semantic interface
+- [ ] FilterPipe created with Filter() and Pipe() methods
+- [ ] TransformerPipe created with Transform() and Pipe() methods
 - [ ] GeneratorPipe.Pipe() uses input as trigger
 - [ ] GeneratorPipe.Generate() returns single batch (not channel)
-- [ ] All constructors renamed
+- [ ] All constructors renamed (including NewTransformer)
 - [ ] Direct methods don't apply middleware
 - [ ] TriggerFunc type defined in pipe package
 - [ ] Producer interface and NewProducer implemented
