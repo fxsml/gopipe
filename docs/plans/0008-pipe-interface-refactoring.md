@@ -557,6 +557,16 @@ Accepts `<-chan struct{}` for type compatibility with `Pipe` interface, but igno
 ### 4. No SinkMiddleware type alias
 `middleware.Middleware[In, struct{}]` works for sinks. No special alias needed.
 
+### 5. Keep Pipe as universal streaming interface
+All components implement `Pipe` interface for composition via `Apply()`. No alternative streaming method names (`Produce`, `Consume`, etc.) - they would be redundant. `Generate()` is already the streaming method for Generator (it has no single-item equivalent).
+
+### 6. Merger/Distributor stay as infrastructure
+They are fan-in/fan-out primitives, not pipeline stages. They don't fit Producer/Consumer patterns cleanly:
+- Merger needs inputs added before producing output
+- Distributor routes to outputs, doesn't terminally consume
+
+No semantic interfaces needed - their current APIs (`Merge()`, `Distribute()`, `AddInput()`, `AddOutput()`) are already clear.
+
 ## Migration Guide
 
 ### Constructor Renames
