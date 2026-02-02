@@ -1,4 +1,4 @@
-# Plan 0008: Pipe Interface Refactoring
+# Plan 0014: Pipe Interface Refactoring
 
 **Status:** Proposed
 

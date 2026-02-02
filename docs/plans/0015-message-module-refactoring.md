@@ -1,11 +1,11 @@
-# Plan 0013: Message Module Refactoring
+# Plan 0015: Message Module Refactoring
 
 **Status:** Proposed
-**Blocked By:** [0008 - Pipe Interface Refactoring](./0008-pipe-interface-refactoring.md)
+**Blocked By:** [0014 - Pipe Interface Refactoring](./0014-pipe-interface-refactoring.md)
 
 ## Overview
 
-Update the message module to use the new pipe package API after the refactoring in Plan 0008. This plan separates **essential** changes (required for compatibility) from **optional** enhancements.
+Update the message module to use the new pipe package API after the refactoring in Plan 0014. This plan separates **essential** changes (required for compatibility) from **optional** enhancements.
 
 ## Goals
 
