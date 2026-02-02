@@ -35,6 +35,13 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0021](0021-codec-marshaling-pattern.md) | Codec/Marshaling Pattern | Proposed |
 | [0022](0022-message-package-redesign.md) | Message Package Redesign | Proposed |
 | [0023](0023-engine-simplification.md) | Engine Simplification | Implemented |
+| [0024](0024-pure-vs-impure-operations.md) | Pure vs Impure Operations | Proposed |
+| [0025](0025-semantic-interfaces.md) | Semantic Interfaces Pattern | Proposed |
+| [0026](0026-naming-conventions.md) | Naming Conventions | Proposed |
+| [0027](0027-producer-trigger-separation.md) | Producer/Trigger Separation | Proposed |
+| [0028](0028-middleware-type-architecture.md) | Middleware Type Architecture | Proposed |
+| [0029](0029-fan-out-operations.md) | Fan-out Operations | Proposed |
+| [0030](0030-channel-vs-pipe-distinction.md) | Channel vs Pipe Distinction | Proposed |
 
 ## History
 
