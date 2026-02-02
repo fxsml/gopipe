@@ -697,10 +697,10 @@ func TestAckingEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("Acking.State on nil returns AckPending", func(t *testing.T) {
-		var a *Acking
-		if got := a.State(); got != AckPending {
-			t.Errorf("nil.State() = %v, want AckPending", got)
+	t.Run("AckState on message with nil acking returns AckPending", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		if got := msg.AckState(); got != AckPending {
+			t.Errorf("msg.AckState() with nil acking = %v, want AckPending", got)
 		}
 	})
 
@@ -1086,6 +1086,40 @@ func TestMessageContextWithParent(t *testing.T) {
 			// OK - settlement detected via msg.Done()
 		default:
 			t.Error("msg.Done() should be closed after settlement")
+		}
+	})
+
+	t.Run("custom context does not create timers or goroutines", func(t *testing.T) {
+		// This test verifies the messageContext implementation works correctly
+		// without creating timers or goroutines for deadline enforcement.
+		acking := NewAcking(func() {}, func(error) {})
+		expiry := time.Now().Add(time.Hour)
+		msg := New("data", Attributes{AttrExpiryTime: expiry}, acking)
+
+		ctx := msg.Context(context.Background())
+
+		// Deadline should be reported
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("expected deadline from expiry")
+		}
+		if !deadline.Equal(expiry) {
+			t.Errorf("Deadline() = %v, want %v", deadline, expiry)
+		}
+
+		// Done() delegates to parent (background context has nil Done)
+		if ctx.Done() != nil {
+			t.Error("Done() should be nil for background context parent")
+		}
+
+		// Err() delegates to parent
+		if ctx.Err() != nil {
+			t.Error("Err() should be nil")
+		}
+
+		// Message should be retrievable
+		if MessageFromContext(ctx) != msg {
+			t.Error("MessageFromContext() should return the message")
 		}
 	})
 }

@@ -98,7 +98,7 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		in <- &RawMessage{
 			Data:       []byte(`{}`),
 			Attributes: Attributes{"type": "unknown.type"},
-			Acking:     acking,
+			acking:     acking,
 		}
 		close(in)
 
@@ -193,7 +193,7 @@ func TestNewMarshalPipe(t *testing.T) {
 		in <- &Message{
 			Data:       &PipeTestData{},
 			Attributes: Attributes{"type": "test.data"},
-			Acking:     acking,
+			acking:     acking,
 		}
 		close(in)
 

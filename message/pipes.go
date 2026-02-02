@@ -32,7 +32,7 @@ func NewUnmarshalPipe(registry InputRegistry, marshaler Marshaler, cfg PipeConfi
 		return []*Message{{
 			Data:       instance,
 			Attributes: raw.Attributes,
-			Acking:     raw.Acking,
+			acking:     raw.acking,
 		}}, nil
 	}, pipe.Config{
 		BufferSize:      cfg.Pool.BufferSize,
@@ -50,7 +50,7 @@ func NewUnmarshalPipe(registry InputRegistry, marshaler Marshaler, cfg PipeConfi
 				cfg.ErrorHandler(&Message{
 					Data:       raw.Data,
 					Attributes: raw.Attributes,
-					Acking:     raw.Acking,
+					acking:     raw.acking,
 				}, err)
 			}
 		},
@@ -91,7 +91,7 @@ func NewMarshalPipe(marshaler Marshaler, cfg PipeConfig) *MarshalPipe {
 		return []*RawMessage{{
 			Data:       data,
 			Attributes: attrs,
-			Acking:     msg.Acking,
+			acking:     msg.acking,
 		}}, nil
 	}, pipe.Config{
 		BufferSize:      cfg.Pool.BufferSize,

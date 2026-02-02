@@ -51,8 +51,10 @@ type PipeConfig struct {
 	// If <= 0, forces immediate shutdown (no grace period).
 	// If > 0, waits up to this duration for natural completion, then forces shutdown.
 	ShutdownTimeout time.Duration
-	// AckStrategy determines how messages are acknowledged (default: AckManual).
-	// AckManual: handler responsible; AckOnSuccess: auto-ack; AckForward: ack when outputs ack.
+	// AckStrategy determines how messages are acknowledged (default: AckOnSuccess).
+	// AckOnSuccess: auto-ack on success, auto-nack on error.
+	// AckManual: handler responsible for acking/nacking.
+	// AckForward: ack when all outputs ack.
 	AckStrategy AckStrategy
 	// Logger for pipe events (default: slog.Default()).
 	Logger Logger
@@ -94,20 +96,8 @@ func NewRouter(cfg PipeConfig) *Router {
 		"component", "router",
 		"pool", "default",
 		"workers", cfg.Pool.Workers,
-		"ack_strategy", ackStrategyName(cfg.AckStrategy))
+		"ack_strategy", cfg.AckStrategy)
 	return r
-}
-
-// ackStrategyName returns a human-readable name for the strategy.
-func ackStrategyName(s AckStrategy) string {
-	switch s {
-	case AckOnSuccess:
-		return "on_success"
-	case AckForward:
-		return "forward"
-	default:
-		return "manual"
-	}
 }
 
 // AddHandler registers a handler.
@@ -151,6 +141,11 @@ func (r *Router) Use(m ...Middleware) error {
 
 // Pipe routes messages to handlers and returns outputs.
 // Signature matches pipe.Pipe[*Message, *Message] for composability.
+//
+// Built-in middleware applied automatically (innermost, closest to handler):
+//   - Acking: handles ack/nack based on AckStrategy (default: AckOnSuccess)
+//
+// User middleware via Use() wraps outside the acking middleware.
 func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message, error) {
 	r.mu.Lock()
 	if r.started {
@@ -161,9 +156,7 @@ func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message,
 
 	// Apply acking strategy as innermost middleware (closest to handler)
 	fn := r.process
-	if ackMw := r.ackingMiddleware(); ackMw != nil {
-		fn = ackMw(fn)
-	}
+	fn = r.ackingMiddleware()(fn)
 
 	// Apply user middleware: first registered wraps outermost
 	for i := len(r.middleware) - 1; i >= 0; i-- {
@@ -246,69 +239,8 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 }
 
 // ackingMiddleware returns the middleware for the configured ack strategy.
-// Returns nil for AckManual (no automatic acking).
 func (r *Router) ackingMiddleware() Middleware {
-	switch r.cfg.AckStrategy {
-	case AckOnSuccess:
-		return autoAckMiddleware()
-	case AckForward:
-		return forwardAckMiddleware()
-	default:
-		return nil
-	}
-}
-
-// autoAckMiddleware returns middleware that acks on success, nacks on error.
-func autoAckMiddleware() Middleware {
-	return func(next ProcessFunc) ProcessFunc {
-		return func(ctx context.Context, msg *Message) ([]*Message, error) {
-			outputs, err := next(ctx, msg)
-			if err != nil {
-				msg.Nack(err)
-				return nil, err
-			}
-			msg.Ack()
-			return outputs, nil
-		}
-	}
-}
-
-// forwardAckMiddleware returns middleware that forwards ack to output messages.
-func forwardAckMiddleware() Middleware {
-	return func(next ProcessFunc) ProcessFunc {
-		return func(ctx context.Context, msg *Message) ([]*Message, error) {
-			outputs, err := next(ctx, msg)
-			if err != nil {
-				msg.Nack(err)
-				return nil, err
-			}
-
-			// No outputs - ack input immediately
-			if len(outputs) == 0 {
-				msg.Ack()
-				return outputs, nil
-			}
-
-			// Check if input was already acked (handler acked manually)
-			if msg.AckState() != AckPending {
-				return outputs, nil
-			}
-
-			// Create shared acking: input acked when all outputs acked
-			shared := NewSharedAcking(
-				func() { msg.Ack() },
-				func(e error) { msg.Nack(e) },
-				len(outputs),
-			)
-
-			// Replace each output's acking with the shared acking
-			for _, out := range outputs {
-				out.Acking = shared
-			}
-
-			return outputs, nil
-		}
-	}
+	return r.cfg.AckStrategy.middleware()
 }
 
 // Verify Router implements InputRegistry.

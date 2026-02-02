@@ -476,3 +476,215 @@ func TestRouter_PoolConfig_Defaults(t *testing.T) {
 		}
 	})
 }
+
+// AckStrategy tests
+
+func TestRouter_AckStrategy_Default(t *testing.T) {
+	t.Run("default is AckOnSuccess", func(t *testing.T) {
+		var acked, nacked bool
+		acking := NewAcking(func() { acked = true }, func(error) { nacked = true })
+
+		router := NewRouter(PipeConfig{}) // No AckStrategy specified
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			return nil, nil // Success
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     acking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		for range out {
+		}
+
+		if !acked {
+			t.Error("expected message to be auto-acked on success")
+		}
+		if nacked {
+			t.Error("message should not be nacked on success")
+		}
+	})
+
+	t.Run("auto-nacks on error", func(t *testing.T) {
+		var acked, nacked bool
+		acking := NewAcking(func() { acked = true }, func(error) { nacked = true })
+
+		router := NewRouter(PipeConfig{})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			return nil, errors.New("handler error")
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     acking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		for range out {
+		}
+
+		if acked {
+			t.Error("message should not be acked on error")
+		}
+		if !nacked {
+			t.Error("expected message to be auto-nacked on error")
+		}
+	})
+}
+
+func TestRouter_AckStrategy_Manual(t *testing.T) {
+	t.Run("handler must ack manually", func(t *testing.T) {
+		var acked bool
+		acking := NewAcking(func() { acked = true }, func(error) {})
+
+		router := NewRouter(PipeConfig{AckStrategy: AckManual})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			msg.Ack() // Manual ack
+			return nil, nil
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     acking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		for range out {
+		}
+
+		if !acked {
+			t.Error("expected message to be acked by handler")
+		}
+	})
+
+	t.Run("auto-nacks on error even in manual mode", func(t *testing.T) {
+		var nacked bool
+		acking := NewAcking(func() {}, func(error) { nacked = true })
+
+		router := NewRouter(PipeConfig{AckStrategy: AckManual})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			return nil, errors.New("handler error")
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     acking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		for range out {
+		}
+
+		if !nacked {
+			t.Error("expected message to be nacked on error")
+		}
+	})
+}
+
+func TestRouter_AckStrategy_Forward(t *testing.T) {
+	t.Run("acks input when all outputs acked", func(t *testing.T) {
+		var inputAcked bool
+		inputAcking := NewAcking(func() { inputAcked = true }, func(error) {})
+
+		router := NewRouter(PipeConfig{AckStrategy: AckForward})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			return []*Message{
+				{Data: "out1", Attributes: Attributes{"type": "output"}},
+				{Data: "out2", Attributes: Attributes{"type": "output"}},
+			}, nil
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     inputAcking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		var outputs []*Message
+		for msg := range out {
+			outputs = append(outputs, msg)
+		}
+
+		// Input should not be acked yet
+		if inputAcked {
+			t.Error("input should not be acked before outputs")
+		}
+
+		// Ack all outputs
+		for _, msg := range outputs {
+			msg.Ack()
+		}
+
+		if !inputAcked {
+			t.Error("input should be acked after all outputs acked")
+		}
+	})
+
+	t.Run("nacks input when any output nacked", func(t *testing.T) {
+		var inputNacked bool
+		inputAcking := NewAcking(func() {}, func(error) { inputNacked = true })
+
+		router := NewRouter(PipeConfig{AckStrategy: AckForward})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			return []*Message{
+				{Data: "out1", Attributes: Attributes{"type": "output"}},
+				{Data: "out2", Attributes: Attributes{"type": "output"}},
+			}, nil
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     inputAcking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		var outputs []*Message
+		for msg := range out {
+			outputs = append(outputs, msg)
+		}
+
+		// Nack one output
+		outputs[0].Nack(errors.New("downstream error"))
+
+		if !inputNacked {
+			t.Error("input should be nacked when any output nacks")
+		}
+	})
+}

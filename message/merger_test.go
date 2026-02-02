@@ -65,7 +65,7 @@ func TestMerger_AutoNackOnShutdown(t *testing.T) {
 		in <- &Message{
 			Data:       i,
 			Attributes: Attributes{"type": "test"},
-			Acking:     acking,
+			acking:     acking,
 		}
 	}
 	// Don't close input - will trigger shutdown timeout

@@ -7,110 +7,11 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"sync"
 	"time"
 )
 
-// AckState represents the current acknowledgment state.
-type AckState int
-
-const (
-	// AckPending indicates the message has not been acked or nacked yet.
-	AckPending AckState = iota
-	// AckDone indicates the message was successfully acknowledged.
-	AckDone
-	// AckNacked indicates the message was negatively acknowledged.
-	AckNacked
-)
-
-// AckStrategy determines how the router handles message acknowledgment.
-type AckStrategy int
-
-const (
-	// AckManual means the handler is responsible for acking/nacking.
-	// This is the default and provides maximum control.
-	AckManual AckStrategy = iota
-
-	// AckOnSuccess automatically acks on successful processing
-	// and nacks on error. Equivalent to using AutoAck middleware.
-	AckOnSuccess
-
-	// AckForward forwards acknowledgment to output messages.
-	// The input is acked only when ALL outputs are acked.
-	// If ANY output nacks, the input is immediately nacked.
-	// Useful for event sourcing where a command should only be
-	// acked after all resulting events are processed.
-	// Equivalent to using ForwardAck middleware.
-	AckForward
-)
-
-// Acking coordinates acknowledgment across one or more messages.
-// When expectedAckCount messages call Ack(), the ack callback is invoked.
-// If any message calls Nack(), the nack callback is invoked immediately,
-// and the done channel is closed.
-// Acking is thread-safe and can be shared between multiple messages.
-type Acking struct {
-	mu               sync.Mutex
-	ack              func()
-	nack             func(error)
-	state            AckState
-	ackCount         int
-	expectedAckCount int
-	doneCh chan struct{}
-}
-
-// NewAcking creates an Acking for a single message.
-// Returns nil if either callback is nil.
-func NewAcking(ack func(), nack func(error)) *Acking {
-	if ack == nil || nack == nil {
-		return nil
-	}
-	return &Acking{
-		ack:              ack,
-		nack:             nack,
-		expectedAckCount: 1,
-		doneCh: make(chan struct{}),
-	}
-}
-
-// NewSharedAcking creates an Acking shared across multiple messages.
-// The ack callback is invoked after expectedCount Ack() calls.
-// If any message nacks, all sibling messages' done channels are closed.
-// Returns nil if expectedCount <= 0 or if either callback is nil.
-func NewSharedAcking(ack func(), nack func(error), expectedCount int) *Acking {
-	if expectedCount <= 0 || ack == nil || nack == nil {
-		return nil
-	}
-	return &Acking{
-		ack:              ack,
-		nack:             nack,
-		expectedAckCount: expectedCount,
-		doneCh: make(chan struct{}),
-	}
-}
-
-// State returns the current acknowledgment state.
-// Thread-safe.
-func (a *Acking) State() AckState {
-	if a == nil {
-		return AckPending
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.state
-}
-
-// done returns a channel that is closed when the acking is settled (acked or nacked).
-func (a *Acking) done() <-chan struct{} {
-	if a == nil {
-		return nil
-	}
-	return a.doneCh
-}
-
 // TypedMessage wraps a typed data payload with attributes and acknowledgment callbacks.
 // This is the base generic type for all message variants.
-// Data, Attributes, and Acking are public for direct access.
 // Ack/Nack operations are mutually exclusive and idempotent.
 type TypedMessage[T any] struct {
 	// Data is the event payload per CloudEvents spec.
@@ -119,9 +20,8 @@ type TypedMessage[T any] struct {
 	// Attributes contains the context attributes per CloudEvents spec.
 	Attributes Attributes
 
-	// Acking coordinates acknowledgment. Can be shared across messages.
-	// Set before processing starts; do not modify during processing.
-	Acking *Acking
+	// acking coordinates acknowledgment. Can be shared across messages.
+	acking *Acking
 }
 
 // Message is the internal message type used by handlers and middleware.
@@ -141,7 +41,7 @@ func New(data any, attrs Attributes, acking *Acking) *Message {
 	return &Message{
 		Data:       data,
 		Attributes: attrs,
-		Acking:     acking,
+		acking:     acking,
 	}
 }
 
@@ -154,7 +54,7 @@ func NewTyped[T any](data T, attrs Attributes, acking *Acking) *TypedMessage[T] 
 	return &TypedMessage[T]{
 		Data:       data,
 		Attributes: attrs,
-		Acking:     acking,
+		acking:     acking,
 	}
 }
 
@@ -167,7 +67,7 @@ func NewRaw(data []byte, attrs Attributes, acking *Acking) *RawMessage {
 	return &RawMessage{
 		Data:       data,
 		Attributes: attrs,
-		Acking:     acking,
+		acking:     acking,
 	}
 }
 
@@ -177,31 +77,31 @@ func NewRaw(data []byte, attrs Attributes, acking *Acking) *RawMessage {
 // The ack callback is invoked at most once when all stages have acked. Thread-safe.
 // Callbacks are invoked outside the mutex to prevent deadlocks.
 func (m *TypedMessage[T]) Ack() bool {
-	if m.Acking == nil {
+	if m.acking == nil {
 		return false
 	}
-	m.Acking.mu.Lock()
+	m.acking.mu.Lock()
 
-	switch m.Acking.state {
+	switch m.acking.ackState {
 	case AckDone:
-		m.Acking.mu.Unlock()
+		m.acking.mu.Unlock()
 		return true
 	case AckNacked:
-		m.Acking.mu.Unlock()
+		m.acking.mu.Unlock()
 		return false
 	}
 
-	m.Acking.ackCount++
-	if m.Acking.ackCount < m.Acking.expectedAckCount {
-		m.Acking.mu.Unlock()
+	m.acking.ackCount++
+	if m.acking.ackCount < m.acking.expectedAckCount {
+		m.acking.mu.Unlock()
 		return true
 	}
 
 	// Capture callback and done channel before releasing lock
-	ackFn := m.Acking.ack
-	done := m.Acking.doneCh
-	m.Acking.state = AckDone
-	m.Acking.mu.Unlock()
+	ackFn := m.acking.ack
+	done := m.acking.doneCh
+	m.acking.ackState = AckDone
+	m.acking.mu.Unlock()
 
 	// Call callback and close done channel outside mutex to prevent deadlock
 	ackFn()
@@ -216,25 +116,25 @@ func (m *TypedMessage[T]) Ack() bool {
 // Also closes the done channel, allowing sibling messages to detect the settlement.
 // Thread-safe. Callbacks are invoked outside the mutex to prevent deadlocks.
 func (m *TypedMessage[T]) Nack(err error) bool {
-	if m.Acking == nil {
+	if m.acking == nil {
 		return false
 	}
-	m.Acking.mu.Lock()
+	m.acking.mu.Lock()
 
-	switch m.Acking.state {
+	switch m.acking.ackState {
 	case AckDone:
-		m.Acking.mu.Unlock()
+		m.acking.mu.Unlock()
 		return false
 	case AckNacked:
-		m.Acking.mu.Unlock()
+		m.acking.mu.Unlock()
 		return true
 	}
 
 	// Capture callback and done channel before releasing lock
-	nackFn := m.Acking.nack
-	done := m.Acking.doneCh
-	m.Acking.state = AckNacked
-	m.Acking.mu.Unlock()
+	nackFn := m.acking.nack
+	done := m.acking.doneCh
+	m.acking.ackState = AckNacked
+	m.acking.mu.Unlock()
 
 	// Call callback and close done channel outside mutex to prevent deadlock
 	nackFn(err)
@@ -245,19 +145,19 @@ func (m *TypedMessage[T]) Nack(err error) bool {
 // AckState returns the current acknowledgment state of the message.
 // Returns AckPending if no acking is set.
 func (m *TypedMessage[T]) AckState() AckState {
-	if m.Acking == nil {
+	if m.acking == nil {
 		return AckPending
 	}
-	return m.Acking.State()
+	return m.acking.state()
 }
 
 // Done returns a channel that is closed when the message is settled (acked or nacked).
 // Returns nil if no acking is set.
 func (m *TypedMessage[T]) Done() <-chan struct{} {
-	if m.Acking == nil {
+	if m.acking == nil {
 		return nil
 	}
-	return m.Acking.doneCh
+	return m.acking.doneCh
 }
 
 // Context returns a context derived from parent with message-specific behavior.
@@ -268,30 +168,29 @@ func (m *TypedMessage[T]) Done() <-chan struct{} {
 //   - Attributes via AttributesFromContext
 //   - Parent cancellation propagation
 //
+// Note: This method reports the deadline via ctx.Deadline() but does not
+// create timers or enforce the deadline. Use middleware.Deadline() for
+// enforcement with proper timer cleanup.
+//
 // For settlement detection (ack/nack), use msg.Done() directly.
 // This keeps context cancellation (lifecycle) separate from message
 // settlement (domain logic).
 func (m *TypedMessage[T]) Context(parent context.Context) context.Context {
-	ctx := parent
-
-	// Apply deadline from expiry time if earlier than parent
-	if expiry := m.ExpiryTime(); !expiry.IsZero() {
-		if parentDeadline, ok := parent.Deadline(); !ok || expiry.Before(parentDeadline) {
-			ctx, _ = context.WithDeadline(ctx, expiry)
-		}
-	}
-
-	// Add message to context values
-	// Store as concrete type for type-safe retrieval
-	switch msg := any(m).(type) {
+	// Determine what to store as the message reference
+	var msg any
+	switch v := any(m).(type) {
 	case *Message:
-		ctx = context.WithValue(ctx, messageKey, msg)
+		msg = v
 	case *RawMessage:
-		ctx = context.WithValue(ctx, rawMessageKey, msg)
+		msg = v
 	}
-	ctx = context.WithValue(ctx, attributesKey, m.Attributes)
 
-	return ctx
+	return &messageContext{
+		Context: parent,
+		msg:     msg,
+		attrs:   m.Attributes,
+		expiry:  m.ExpiryTime(),
+	}
 }
 
 // ID returns the event identifier. Returns empty string if not set.
@@ -374,7 +273,7 @@ func Copy[In, Out any](msg *TypedMessage[In], data Out) *TypedMessage[Out] {
 	return &TypedMessage[Out]{
 		Data:       data,
 		Attributes: maps.Clone(msg.Attributes),
-		Acking:     msg.Acking,
+		acking:     msg.acking,
 	}
 }
 
