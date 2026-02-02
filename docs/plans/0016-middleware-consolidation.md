@@ -53,9 +53,9 @@ Consolidate `pipe/middleware` and `message/middleware` into a single top-level `
 ```
 middleware/
   doc.go              # Package documentation
-  middleware.go       # Shared types (Middleware[In, Out], etc.)
 
-  # Generic middleware - works with any pipe.Pipe[In, Out]
+  # Generic middleware - works with any pipe.ProcessFunc[In, Out]
+  # NO type definitions - uses pipe.ProcessFunc directly
   retry.go            # Retry[In, Out]
   recover.go          # Recover[In, Out]
   context.go          # WithContext[In, Out]
@@ -68,6 +68,8 @@ middleware/
 
   message/
     doc.go            # Subpackage documentation
+    middleware.go     # Type alias: Middleware = pipe.Middleware[*Message, *Message]
+                      # + Use() helper function
     recover.go        # Recover (message-aware panic recovery)
     correlation.go    # CorrelationID
     deadline.go       # Deadline
@@ -78,6 +80,22 @@ middleware/
 
 ## API Design
 
+### Type Architecture
+
+**Critical constraint:** Go generics require using named types for compatibility. Raw function types don't work with variadic generic parameters.
+
+| Package | Defines | Returns |
+|---------|---------|---------|
+| `pipe` | `ProcessFunc[In, Out]`, `Middleware[In, Out]` | Canonical types |
+| `middleware` | **Nothing** | `func(pipe.ProcessFunc[In, Out]) pipe.ProcessFunc[In, Out]` |
+| `middleware/message` | **Type alias only** | Compatible with `pipe.Middleware[*Message, *Message]` |
+
+**Why this works:**
+1. `pipe.ProcessFunc[In, Out]` is the single source of truth
+2. Middleware returns `func(pipe.ProcessFunc) pipe.ProcessFunc` (raw function type)
+3. This is **assignable** to `pipe.Middleware` without explicit conversion
+4. Type aliases (`=`) are fully interchangeable, not new types
+
 ### Generic Middleware
 
 ```go
@@ -85,20 +103,26 @@ package middleware
 
 import "github.com/fxsml/gopipe/pipe"
 
-// Middleware wraps a pipe with additional behavior
-type Middleware[In, Out any] func(pipe.Pipe[In, Out]) pipe.Pipe[In, Out]
+// NO type definitions here! Uses pipe.ProcessFunc directly.
 
-// Retry wraps a pipe with retry logic
-func Retry[In, Out any](p pipe.Pipe[In, Out], opts ...RetryOption) pipe.Pipe[In, Out]
+// Retry wraps a ProcessFunc with retry logic
+// Returns raw function type - compatible with pipe.Middleware
+func Retry[In, Out any](cfg RetryConfig) func(pipe.ProcessFunc[In, Out]) pipe.ProcessFunc[In, Out] {
+    return func(next pipe.ProcessFunc[In, Out]) pipe.ProcessFunc[In, Out] {
+        return func(ctx context.Context, in In) ([]Out, error) {
+            // retry logic
+        }
+    }
+}
 
-// Recover wraps a pipe with panic recovery
-func Recover[In, Out any](p pipe.Pipe[In, Out]) pipe.Pipe[In, Out]
+// Recover wraps a ProcessFunc with panic recovery
+func Recover[In, Out any]() func(pipe.ProcessFunc[In, Out]) pipe.ProcessFunc[In, Out]
 
-// Log wraps a pipe with logging
-func Log[In, Out any](p pipe.Pipe[In, Out], logger Logger) pipe.Pipe[In, Out]
+// Log wraps a ProcessFunc with logging
+func Log[In, Out any](logger Logger) func(pipe.ProcessFunc[In, Out]) pipe.ProcessFunc[In, Out]
 
-// Metrics wraps a pipe with metrics collection
-func Metrics[In, Out any](p pipe.Pipe[In, Out], opts ...MetricsOption) pipe.Pipe[In, Out]
+// Metrics wraps a ProcessFunc with metrics collection
+func Metrics[In, Out any](opts ...MetricsOption) func(pipe.ProcessFunc[In, Out]) pipe.ProcessFunc[In, Out]
 ```
 
 ### Message-Aware Middleware
@@ -111,14 +135,22 @@ import (
     "github.com/fxsml/gopipe/pipe"
 )
 
+// Middleware is a type ALIAS (not new type) for convenience
+// Fully interchangeable with pipe.Middleware[*message.Message, *message.Message]
+type Middleware = pipe.Middleware[*message.Message, *message.Message]
+
+// Use applies middleware to a message processor
+// Accepts both generic and message-specific middleware without conversion
+func Use(fn pipe.ProcessFunc[*message.Message, *message.Message], mw ...Middleware) pipe.ProcessFunc[*message.Message, *message.Message]
+
 // CorrelationID ensures messages have correlation IDs
-func CorrelationID(p pipe.Pipe[*message.Message, *message.Message]) pipe.Pipe[*message.Message, *message.Message]
+func CorrelationID() func(pipe.ProcessFunc[*message.Message, *message.Message]) pipe.ProcessFunc[*message.Message, *message.Message]
 
 // AutoAck automatically acknowledges processed messages
-func AutoAck(p pipe.Pipe[*message.Message, *message.Message]) pipe.Pipe[*message.Message, *message.Message]
+func AutoAck() func(pipe.ProcessFunc[*message.Message, *message.Message]) pipe.ProcessFunc[*message.Message, *message.Message]
 
 // Validate validates messages against a schema
-func Validate(p pipe.Pipe[*message.Message, *message.Message], validator Validator) pipe.Pipe[*message.Message, *message.Message]
+func Validate(validator Validator) func(pipe.ProcessFunc[*message.Message, *message.Message]) pipe.ProcessFunc[*message.Message, *message.Message]
 ```
 
 ### Usage Examples
@@ -127,20 +159,24 @@ func Validate(p pipe.Pipe[*message.Message, *message.Message], validator Validat
 import (
     "github.com/fxsml/gopipe/middleware"
     msgmw "github.com/fxsml/gopipe/middleware/message"
-    "github.com/fxsml/gopipe/pipe"
+    "github.com/fxsml/gopipe/message"
 )
 
-// Generic middleware - works with any pipe
-processor := middleware.Retry(myPipe, middleware.WithMaxRetries(3))
-processor = middleware.Recover(processor)
-processor = middleware.Metrics(processor, middleware.WithHistogram(hist))
+// Example: Router with mixed middleware
+// Router.Use() accepts pipe.Middleware[*Message, *Message]
+router := message.NewRouter()
+router.Use(
+    middleware.Retry[*message.Message, *message.Message](cfg),  // Generic - NO CONVERSION
+    middleware.Recover[*message.Message, *message.Message](),   // Generic - NO CONVERSION
+    msgmw.CorrelationID(),                                      // Message-specific - NO CONVERSION
+    msgmw.AutoAck(),                                            // Message-specific - NO CONVERSION
+)
 
-// Message-aware middleware - understands *Message structure
-msgProcessor := msgmw.CorrelationID(myMessagePipe)
-msgProcessor = msgmw.AutoAck(msgProcessor)
-
-// HTTP publisher (from message/http) now uses neutral middleware
-publisher := middleware.Retry(httpSink, middleware.WithMaxRetries(3))
+// Example: Using middleware/message.Use helper
+processor := msgmw.Use(myProcessFunc,
+    middleware.Retry[*message.Message, *message.Message](cfg),
+    msgmw.CorrelationID(),
+)
 ```
 
 ## Naming Convention
@@ -213,8 +249,8 @@ Core packages (`pipe`, `message`, `channel`) never import `middleware`.
 ### Task 1: Create middleware module structure
 
 - Create `middleware/doc.go`
-- Create `middleware/middleware.go` with shared types
 - Create `middleware/message/doc.go`
+- Create `middleware/message/middleware.go` with type alias and `Use()` helper
 
 ### Task 2: Migrate generic middleware
 
@@ -270,6 +306,30 @@ After deprecation period, remove:
 - [ ] Examples updated
 
 ## Considerations
+
+### Type Architecture Decision
+
+**Why `middleware` defines no types:**
+
+Go generics don't automatically convert raw function types to named types in variadic parameters. For example, this fails:
+
+```go
+// This does NOT work
+func Retry[In, Out any]() func(func(context.Context, In) ([]Out, error)) func(context.Context, In) ([]Out, error)
+
+pipe.Use(processor, Retry[string, string]())  // ERROR: type mismatch
+```
+
+However, using `pipe.ProcessFunc` directly works:
+
+```go
+// This WORKS
+func Retry[In, Out any]() func(pipe.ProcessFunc[In, Out]) pipe.ProcessFunc[In, Out]
+
+pipe.Use(processor, Retry[string, string]())  // OK: assignable to pipe.Middleware
+```
+
+**Rule:** `middleware` package MUST import `pipe` and use `pipe.ProcessFunc`. This is unavoidable.
 
 ### Dual Recover Middleware
 
