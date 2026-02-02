@@ -67,6 +67,10 @@ type Acking struct {
 
 // NewAcking creates an Acking for a single message.
 // Returns nil if either callback is nil.
+//
+// The ack and nack callbacks must not panic. If they do, the panic will
+// propagate after cleanup (the done channel will still be closed to prevent
+// resource leaks, but the program will crash).
 func NewAcking(ack func(), nack func(error)) *Acking {
 	if ack == nil || nack == nil {
 		return nil
@@ -83,6 +87,10 @@ func NewAcking(ack func(), nack func(error)) *Acking {
 // The ack callback is invoked after expectedCount Ack() calls.
 // If any message nacks, all sibling messages' done channels are closed.
 // Returns nil if expectedCount <= 0 or if either callback is nil.
+//
+// The ack and nack callbacks must not panic. If they do, the panic will
+// propagate after cleanup (the done channel will still be closed to prevent
+// resource leaks, but the program will crash).
 func NewSharedAcking(ack func(), nack func(error), expectedCount int) *Acking {
 	if expectedCount <= 0 || ack == nil || nack == nil {
 		return nil
@@ -150,9 +158,11 @@ func (a *Acking) ack() bool {
 	a.settled = true
 	a.mu.Unlock()
 
-	// Call callback and close done channel outside mutex to prevent deadlock
+	// Ensure done channel closes even if callback panics
+	defer close(done)
+
+	// Call callback outside mutex to prevent deadlock
 	ackFn()
-	close(done)
 	return true
 }
 
@@ -176,9 +186,11 @@ func (a *Acking) nack(err error) bool {
 	a.nackErr = err
 	a.mu.Unlock()
 
-	// Call callback and close done channel outside mutex to prevent deadlock
+	// Ensure done channel closes even if callback panics
+	defer close(done)
+
+	// Call callback outside mutex to prevent deadlock
 	nackFn(err)
-	close(done)
 	return true
 }
 

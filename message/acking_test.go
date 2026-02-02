@@ -801,6 +801,54 @@ func TestAckingEdgeCases(t *testing.T) {
 			t.Error("expected ack callback")
 		}
 	})
+
+	t.Run("ack callback panic - done channel still closes", func(t *testing.T) {
+		acking := NewAcking(
+			func() { panic("ack callback panic") },
+			func(error) {},
+		)
+		msg := New("data", nil, acking)
+
+		// Ack with panic - should propagate but done channel closes
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic to propagate")
+			}
+			// Verify done channel was closed despite panic
+			select {
+			case <-msg.Done():
+				// OK - channel closed as expected
+			default:
+				t.Error("done channel should be closed even after panic")
+			}
+		}()
+
+		msg.Ack()
+	})
+
+	t.Run("nack callback panic - done channel still closes", func(t *testing.T) {
+		acking := NewAcking(
+			func() {},
+			func(error) { panic("nack callback panic") },
+		)
+		msg := New("data", nil, acking)
+
+		// Nack with panic - should propagate but done channel closes
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic to propagate")
+			}
+			// Verify done channel was closed despite panic
+			select {
+			case <-msg.Done():
+				// OK - channel closed as expected
+			default:
+				t.Error("done channel should be closed even after panic")
+			}
+		}()
+
+		msg.Nack(errors.New("test"))
+	})
 }
 
 // TestMessageContextHelpers tests MessageFromContext and RawMessageFromContext.
