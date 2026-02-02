@@ -15,7 +15,7 @@ Update the message module to use the new pipe package API after the refactoring 
 
 ## Dependencies
 
-This plan **must** be executed after Plan 0008 (Pipe Interface Refactoring) is complete. The pipe package changes are breaking, and message module code will not compile until updated.
+This plan **must** be executed after Plan 0014 (Pipe Interface Refactoring) is complete. The pipe package changes are breaking, and message module code will not compile until updated.
 
 ## Essential Updates
 
@@ -64,10 +64,10 @@ Router uses `pipe.ProcessPipe` internally but doesn't expose it. Only constructo
 
 | Before | After |
 |--------|-------|
-| `*pipe.GeneratePipe[*message.RawMessage]` | `*pipe.GeneratorPipe[*message.RawMessage]` |
-| `pipe.NewGenerator(...)` | `pipe.NewGenerator(...)` (unchanged) |
+| `*pipe.GeneratePipe[*message.RawMessage]` | `*pipe.SourcePipe[*message.RawMessage]` |
+| `pipe.NewGenerator(...)` | `pipe.NewSource(...)` |
 
-Note: Constructor name unchanged, only struct type name changes.
+Both struct type and constructor name change.
 
 ### Task 6: Update Middleware Type References
 
@@ -96,7 +96,6 @@ The following pipe package items are used by message module but **do not change*
 | `pipe.Config` | Unchanged |
 | `pipe.ErrAlreadyStarted` | Unchanged |
 | `pipe.ErrShutdownDropped` | Unchanged |
-| `pipe.NewGenerator` | Constructor name unchanged |
 
 ## Optional Enhancements
 
@@ -109,11 +108,11 @@ CloudEvents Subscriber could use the new `Producer` pattern:
 ```go
 // Current
 type Subscriber struct {
-    gen *pipe.GeneratorPipe[*message.RawMessage]
+    src *pipe.SourcePipe[*message.RawMessage]
 }
 
 func (s *Subscriber) Subscribe(ctx context.Context) (<-chan *message.RawMessage, error) {
-    return s.gen.Generate(ctx)  // Generate() API changes
+    return s.src.Pipe(ctx, triggerChan)  // needs external trigger
 }
 
 // Optional future enhancement
@@ -122,8 +121,8 @@ type Subscriber struct {
 }
 
 func NewSubscriber(...) *Subscriber {
-    gen := pipe.NewGenerator(s.receive, pipeCfg)
-    producer := pipe.NewProducer(trigger.Infinite(), gen)
+    src := pipe.NewSource(s.receive, pipeCfg)
+    producer := pipe.NewProducer(trigger.Infinite(), src)
     return &Subscriber{producer: producer}
 }
 ```
@@ -132,7 +131,7 @@ func NewSubscriber(...) *Subscriber {
 
 ### Enhancement 2: Pre/Post Mapping for Router
 
-Add optional type mapping before/after handler processing (see Plan 0008 Outlook).
+Add optional type mapping before/after handler processing (see Plan 0014 Outlook).
 
 **Decision:** Defer to separate feature work if needed.
 
@@ -165,7 +164,7 @@ Internal implementation changes only.
 
 Users who directly use pipe types from message module fields (e.g., accessing `publisher.sink`) will need to update type references:
 - `ProcessPipe` → `ProcessorPipe`
-- `GeneratePipe` → `GeneratorPipe`
+- `GeneratePipe` → `SourcePipe`
 
 This is rare and considered acceptable breakage.
 
@@ -192,6 +191,6 @@ This is rare and considered acceptable breakage.
 ## Release Notes
 
 When releasing, document:
-1. Pipe package breaking changes (see Plan 0008)
+1. Pipe package breaking changes (see Plan 0014)
 2. Message module: internal updates only, no public API changes
 3. Migration guide for users extending internal types

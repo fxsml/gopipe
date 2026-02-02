@@ -4,15 +4,15 @@
 
 ## Overview
 
-Refactor the pipe package to introduce semantic interfaces (`Processor`, `Generator`, `BatchProcessor`, `Filter`, `Map`, `FlatMap`, `Sink`) alongside the composition interface (`Pipe`). Concrete structs use `*Pipe` suffix and implement both their semantic interface and the `Pipe` interface. An internal base type reduces code duplication.
+Refactor the pipe package to introduce semantic interfaces (`Processor`, `Source`, `BatchProcessor`, `Filter`, `Mapper`, `Expander`, `Sink`) alongside the composition interface (`Pipe`). Concrete structs use `*Pipe` suffix and implement both their semantic interface and the `Pipe` interface. An internal base type reduces code duplication.
 
-Key distinction: **Pure** operations (Filter, Map, FlatMap) have no context or error returns, while **Impure** operations (Processor, Generator, BatchProcessor, Sink) include context and error handling for I/O, external calls, or fallible operations.
+Key distinction: **Pure** operations (Filter, Mapper, Expander) have no context or error returns, while **Impure** operations (Processor, Source, BatchProcessor, Sink) include context and error handling for I/O, external calls, or fallible operations.
 
 ## Goals
 
 1. Clearer type semantics - interfaces describe component capabilities
-2. Better API ergonomics - `Generator[Out]` cleaner than `Pipe[struct{}, Out]`
-3. Direct invocation - call `Process()` or `Generate()` without channel setup
+2. Better API ergonomics - `Source[Out]` cleaner than `Pipe[struct{}, Out]`
+3. Direct invocation - call `Process()` or `Source()` without channel setup
 4. Composition via `Pipe` - all components still work with `Apply()`
 5. Consistent naming - interface is concept, struct has `*Pipe` suffix
 6. Reduced duplication - internal base type for shared lifecycle management
@@ -43,26 +43,26 @@ type Filter[T any] interface {
     Filter(in T) bool
 }
 
-// Map transforms individual items (1:1 cardinality).
+// Mapper transforms individual items (1:1 cardinality).
 // Pure transformation - no side effects.
-type Map[In, Out any] interface {
+type Mapper[In, Out any] interface {
     Map(in In) Out
 }
 
-// FlatMap transforms items to zero or more outputs (1:N cardinality).
+// Expander transforms items to zero or more outputs (1:N cardinality).
 // Pure transformation - no side effects.
-type FlatMap[In, Out any] interface {
-    FlatMap(in In) []Out
+type Expander[In, Out any] interface {
+    Expand(in In) []Out
 }
 
 // ============================================
 // IMPURE SEMANTIC INTERFACES (with ctx, error)
 // ============================================
 
-// Generator produces values on demand.
+// Source produces values on demand.
 // Impure - may involve I/O or external state.
-type Generator[Out any] interface {
-    Generate(ctx context.Context) ([]Out, error)  // single batch
+type Source[Out any] interface {
+    Source(ctx context.Context) ([]Out, error)  // single batch
 }
 
 // Processor transforms individual items with potential side effects (0:N cardinality).
@@ -121,22 +121,18 @@ func (p *pipe[In, Out]) start() error {
 ### Concrete Types
 
 ```go
-// GeneratorPipe implements Generator and Pipe[struct{}, Out]
-type GeneratorPipe[Out any] struct {
+// SourcePipe implements Source and Pipe[struct{}, Out]
+type SourcePipe[Out any] struct {
     pipe[struct{}, Out]
-    handle GenerateFunc[Out]
+    handle SourceFunc[Out]
 }
 
-// Generate produces a single batch (semantic interface).
-func (g *GeneratorPipe[Out]) Generate(ctx context.Context) ([]Out, error)
-
-// Produce starts autonomous generation (internal trigger channel).
-// TBD: May be renamed to Subscribe or other name.
-func (g *GeneratorPipe[Out]) Produce(ctx context.Context) (<-chan Out, error)
+// Source produces a single batch (semantic interface).
+func (s *SourcePipe[Out]) Source(ctx context.Context) ([]Out, error)
 
 // Pipe implements Pipe interface - triggered by input channel.
-// Each struct{} received triggers one Generate() call.
-func (g *GeneratorPipe[Out]) Pipe(ctx context.Context, in <-chan struct{}) (<-chan Out, error)
+// Each struct{} received triggers one Source() call.
+func (s *SourcePipe[Out]) Pipe(ctx context.Context, in <-chan struct{}) (<-chan Out, error)
 
 
 // ProcessorPipe implements Processor and Pipe[In, Out]
@@ -170,24 +166,24 @@ func (f *FilterPipe[T]) Filter(in T) bool  // pure - no ctx, no error
 func (f *FilterPipe[T]) Pipe(ctx context.Context, in <-chan T) (<-chan T, error)
 
 
-// MapPipe implements Map and Pipe[In, Out]
-type MapPipe[In, Out any] struct {
+// MapperPipe implements Mapper and Pipe[In, Out]
+type MapperPipe[In, Out any] struct {
     pipe[In, Out]
     handle MapFunc[In, Out]
 }
 
-func (m *MapPipe[In, Out]) Map(in In) Out  // pure - no ctx, no error
-func (m *MapPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out, error)
+func (m *MapperPipe[In, Out]) Map(in In) Out  // pure - no ctx, no error
+func (m *MapperPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out, error)
 
 
-// FlatMapPipe implements FlatMap and Pipe[In, Out]
-type FlatMapPipe[In, Out any] struct {
+// ExpanderPipe implements Expander and Pipe[In, Out]
+type ExpanderPipe[In, Out any] struct {
     pipe[In, Out]
-    handle FlatMapFunc[In, Out]
+    handle ExpandFunc[In, Out]
 }
 
-func (f *FlatMapPipe[In, Out]) FlatMap(in In) []Out  // pure - no ctx, no error
-func (f *FlatMapPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out, error)
+func (e *ExpanderPipe[In, Out]) Expand(in In) []Out  // pure - no ctx, no error
+func (e *ExpanderPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out, error)
 
 
 // SinkPipe implements Sink and Pipe[In, struct{}]
@@ -204,22 +200,22 @@ func (s *SinkPipe[In]) Pipe(ctx context.Context, in <-chan In) (<-chan struct{},
 
 ```go
 // Impure constructors (operations with ctx and error)
-func NewGenerator[Out any](fn GenerateFunc[Out], cfg Config) *GeneratorPipe[Out]
+func NewSource[Out any](fn SourceFunc[Out], cfg Config) *SourcePipe[Out]
 func NewProcessor[In, Out any](fn ProcessFunc[In, Out], cfg Config) *ProcessorPipe[In, Out]
 func NewBatchProcessor[In, Out any](fn BatchFunc[In, Out], cfg BatchConfig) *BatchProcessorPipe[In, Out]
 func NewSink[In any](fn SinkFunc[In], cfg Config) *SinkPipe[In]
 
 // Pure constructors (operations without ctx or error)
 func NewFilter[T any](fn FilterFunc[T], cfg Config) *FilterPipe[T]
-func NewMap[In, Out any](fn MapFunc[In, Out], cfg Config) *MapPipe[In, Out]
-func NewFlatMap[In, Out any](fn FlatMapFunc[In, Out], cfg Config) *FlatMapPipe[In, Out]
+func NewMapper[In, Out any](fn MapFunc[In, Out], cfg Config) *MapperPipe[In, Out]
+func NewExpander[In, Out any](fn ExpandFunc[In, Out], cfg Config) *ExpanderPipe[In, Out]
 ```
 
 ### Function Type Aliases
 
 ```go
 // Impure function types (with ctx and error)
-type GenerateFunc[Out any] func(ctx context.Context) ([]Out, error)
+type SourceFunc[Out any] func(ctx context.Context) ([]Out, error)
 type ProcessFunc[In, Out any] func(ctx context.Context, in In) ([]Out, error)
 type BatchFunc[In, Out any] func(ctx context.Context, batch []In) ([]Out, error)
 type SinkFunc[In any] func(ctx context.Context, in In) error
@@ -227,54 +223,49 @@ type SinkFunc[In any] func(ctx context.Context, in In) error
 // Pure function types (no ctx, no error)
 type FilterFunc[T any] func(in T) bool
 type MapFunc[In, Out any] func(in In) Out
-type FlatMapFunc[In, Out any] func(in In) []Out
+type ExpandFunc[In, Out any] func(in In) []Out
 ```
 
 ## Design Decisions (Resolved)
 
 ### 1. Struct naming uses `*Pipe` suffix
-- Interface: `Generator` → Struct: `GeneratorPipe`
+- Interface: `Source` → Struct: `SourcePipe`
 - Interface: `Processor` → Struct: `ProcessorPipe`
 - Interface: `BatchProcessor` → Struct: `BatchProcessorPipe`
 - Interface: `Filter` → Struct: `FilterPipe`
-- Interface: `Map` → Struct: `MapPipe`
-- Interface: `FlatMap` → Struct: `FlatMapPipe`
+- Interface: `Mapper` → Struct: `MapperPipe`
+- Interface: `Expander` → Struct: `ExpanderPipe`
 - Interface: `Sink` → Struct: `SinkPipe`
 
-### 2. GeneratorPipe.Pipe() uses input as trigger
-Input channel is NOT ignored. Each `struct{}` received triggers one `Generate()` call. This enables controlled generation in pipelines.
+### 2. SourcePipe.Pipe() uses input as trigger
+Input channel is NOT ignored. Each `struct{}` received triggers one `Source()` call. This enables controlled generation in pipelines.
 
-### 3. GeneratorPipe.Produce() is autonomous
-`Produce()` creates an internal trigger channel for convenience (self-triggering continuous generation). This is the current `Generate()` behavior.
-
-**Naming TBD:** `Produce` vs `Subscribe` vs other options - see Open Questions.
-
-### 4. No Consume method on SinkPipe
+### 3. No Consume method on SinkPipe
 `Consume()` would be identical to `Pipe()` - redundant. Users just call `Pipe()`.
 
-### 5. Direct methods don't apply middleware
-`Process()`, `Sink()`, `Generate()`, `ProcessBatch()` call the raw handler function. Middleware only applies through `Pipe()`. This keeps direct methods simple, predictable, and useful for testing.
+### 4. Direct methods don't apply middleware
+`Process()`, `Sink()`, `Source()`, `ProcessBatch()` call the raw handler function. Middleware only applies through `Pipe()`. This keeps direct methods simple, predictable, and useful for testing.
 
-### 6. Internal base type for shared lifecycle
+### 5. Internal base type for shared lifecycle
 Unexported `pipe[In, Out]` struct handles:
 - Config storage
 - Middleware collection
 - Started state with mutex
 - `use()` and `start()` methods
 
-Reduces duplication across ProcessorPipe, SinkPipe, GeneratorPipe, BatchProcessorPipe.
+Reduces duplication across ProcessorPipe, SinkPipe, SourcePipe, BatchProcessorPipe.
 
-### 7. Filter/Map/FlatMap are pure operations
-For consistency, `Filter`, `Map`, and `FlatMap` have their own interfaces and `*Pipe` structs:
+### 6. Filter/Mapper/Expander are pure operations
+For consistency, `Filter`, `Mapper`, and `Expander` have their own interfaces and `*Pipe` structs:
 - `Filter[T]` interface with `Filter(T) bool` → `FilterPipe[T]` struct
-- `Map[In, Out]` interface with `Map(In) Out` → `MapPipe[In, Out]` struct
-- `FlatMap[In, Out]` interface with `FlatMap(In) []Out` → `FlatMapPipe[In, Out]` struct
+- `Mapper[In, Out]` interface with `Map(In) Out` → `MapperPipe[In, Out]` struct
+- `Expander[In, Out]` interface with `Expand(In) []Out` → `ExpanderPipe[In, Out]` struct
 
 These are **pure** operations - no context, no error returns. This distinguishes them from `Processor` which is impure (has context and error for I/O operations).
 
-Naming follows Go ecosystem conventions (go-streams, etc.): Map for 1:1, FlatMap for 1:N.
+Naming follows Go `-er` convention: Mapper (like Reader/Writer), Expander (1:N expansion).
 
-### 8. Merger/Distributor stay as infrastructure
+### 7. Merger/Distributor stay as infrastructure
 They are fan-in/fan-out primitives, not pipeline stages. No semantic interfaces needed.
 
 ## Producer and Trigger Design
@@ -287,7 +278,7 @@ They are fan-in/fan-out primitives, not pipeline stages. No semantic interfaces 
 │                                                              │
 │   ┌─────────────┐         ┌─────────────────────────────┐   │
 │   │   Trigger   │ ──────► │     Pipe[struct{}, Out]     │   │
-│   │ TriggerFunc │         │  (e.g., GeneratorPipe)      │   │
+│   │ TriggerFunc │         │  (e.g., SourcePipe)         │   │
 │   └─────────────┘         └─────────────────────────────┘   │
 │                                                              │
 │   Produce(ctx) (<-chan Out, error)                          │
@@ -295,7 +286,7 @@ They are fan-in/fan-out primitives, not pipeline stages. No semantic interfaces 
 ```
 
 **Separation of concerns:**
-- **Generator** = what to produce (the data)
+- **Source** = what to produce (the data)
 - **Trigger** = when to produce (the timing)
 - **Producer** = autonomous streaming (combines trigger + pipe)
 
@@ -346,27 +337,27 @@ import (
     "github.com/fxsml/gopipe/pipe/trigger"
 )
 
-// Create generator (no autonomous streaming capability)
-gen := pipe.NewGenerator(fn, cfg)
+// Create source (no autonomous streaming capability)
+src := pipe.NewSource(fn, cfg)
 
 // Use with explicit trigger via Pipe()
-gen.Pipe(ctx, triggerChan)
+src.Pipe(ctx, triggerChan)
 
 // Or wrap as Producer for autonomous operation
-producer := pipe.NewProducer(trigger.Infinite(), gen)
+producer := pipe.NewProducer(trigger.Infinite(), src)
 out, _ := producer.Produce(ctx)
 
 // With ticker
-producer := pipe.NewProducer(trigger.Ticker(time.Second), gen)
+producer := pipe.NewProducer(trigger.Ticker(time.Second), src)
 
 // Producer works with any Pipe[struct{}, Out], including pipelines
-pipeline := pipe.Apply(gen, transform, filter)
+pipeline := pipe.Apply(src, mapper, filter)
 producer := pipe.NewProducer(trigger.Ticker(time.Second), pipeline)
 ```
 
 ### Design Decisions
 
-1. **GeneratorPipe has no Produce() method** - Keep it simple. Producer is a separate composition.
+1. **SourcePipe has no Produce() method** - Keep it simple. Producer is a separate composition.
 2. **TriggerFunc defined in `pipe` package** - Core type alongside other func types.
 3. **Trigger implementations in `trigger` subpackage** - Mirrors `middleware` pattern.
 4. **Factory functions for triggers** - `trigger.Infinite()`, `trigger.Ticker(d)` - consistent, allows params.
@@ -396,7 +387,7 @@ func (p *pipe[In, Out]) start() error
 
 **Files to Modify:**
 - `pipe/pipe.go` - Add `Processor`, `BatchProcessor`, `Sink` interfaces
-- `pipe/generator.go` - Update `Generator` interface (now returns single batch)
+- `pipe/source.go` - Add `Source` interface
 
 ### Task 3: Rename ProcessPipe to ProcessorPipe
 
@@ -408,12 +399,11 @@ func (p *pipe[In, Out]) start() error
 **Files to Modify:**
 - `pipe/pipe.go` - Rename struct, embed base type, add `ProcessBatch()` method
 
-### Task 5: Rename GeneratePipe to GeneratorPipe
+### Task 5: Rename GeneratePipe to SourcePipe
 
 **Files to Modify:**
-- `pipe/generator.go` - Rename struct, embed base type
-- Update `Generate()` to return single batch
-- Add `Produce()` for autonomous streaming
+- `pipe/source.go` (rename from `pipe/generator.go`) - Rename struct, embed base type
+- Update `Source()` to return single batch
 - Add `Pipe()` with trigger semantics
 
 ### Task 6: Create FilterPipe
@@ -438,48 +428,48 @@ func (f *FilterPipe[T]) Filter(in T) bool  // direct call
 func (f *FilterPipe[T]) Pipe(ctx, <-chan T) (<-chan T, error)
 ```
 
-### Task 7: Create MapPipe
+### Task 7: Create MapperPipe
 
 **Files to Create:**
-- `pipe/map.go` - Create `Map` interface and `MapPipe` struct
+- `pipe/mapper.go` - Create `Mapper` interface and `MapperPipe` struct
 
 ```go
-type Map[In, Out any] interface {
+type Mapper[In, Out any] interface {
     Map(in In) Out  // pure - no ctx, no error
 }
 
 type MapFunc[In, Out any] func(in In) Out
 
-type MapPipe[In, Out any] struct {
+type MapperPipe[In, Out any] struct {
     pipe[In, Out]
     handle MapFunc[In, Out]
 }
 
-func NewMap[In, Out any](fn MapFunc[In, Out], cfg Config) *MapPipe[In, Out]
-func (m *MapPipe[In, Out]) Map(in In) Out  // direct call
-func (m *MapPipe[In, Out]) Pipe(ctx, <-chan In) (<-chan Out, error)
+func NewMapper[In, Out any](fn MapFunc[In, Out], cfg Config) *MapperPipe[In, Out]
+func (m *MapperPipe[In, Out]) Map(in In) Out  // direct call
+func (m *MapperPipe[In, Out]) Pipe(ctx, <-chan In) (<-chan Out, error)
 ```
 
-### Task 8: Create FlatMapPipe
+### Task 8: Create ExpanderPipe
 
 **Files to Create:**
-- `pipe/flatmap.go` - Create `FlatMap` interface and `FlatMapPipe` struct
+- `pipe/expander.go` - Create `Expander` interface and `ExpanderPipe` struct
 
 ```go
-type FlatMap[In, Out any] interface {
-    FlatMap(in In) []Out  // pure - no ctx, no error
+type Expander[In, Out any] interface {
+    Expand(in In) []Out  // pure - no ctx, no error
 }
 
-type FlatMapFunc[In, Out any] func(in In) []Out
+type ExpandFunc[In, Out any] func(in In) []Out
 
-type FlatMapPipe[In, Out any] struct {
+type ExpanderPipe[In, Out any] struct {
     pipe[In, Out]
-    handle FlatMapFunc[In, Out]
+    handle ExpandFunc[In, Out]
 }
 
-func NewFlatMap[In, Out any](fn FlatMapFunc[In, Out], cfg Config) *FlatMapPipe[In, Out]
-func (f *FlatMapPipe[In, Out]) FlatMap(in In) []Out  // direct call
-func (f *FlatMapPipe[In, Out]) Pipe(ctx, <-chan In) (<-chan Out, error)
+func NewExpander[In, Out any](fn ExpandFunc[In, Out], cfg Config) *ExpanderPipe[In, Out]
+func (e *ExpanderPipe[In, Out]) Expand(in In) []Out  // direct call
+func (e *ExpanderPipe[In, Out]) Pipe(ctx, <-chan In) (<-chan Out, error)
 ```
 
 ### Task 9: Update SinkPipe
@@ -490,7 +480,7 @@ func (f *FlatMapPipe[In, Out]) Pipe(ctx, <-chan In) (<-chan Out, error)
 ### Task 10: Add Function Type Aliases
 
 **Files to Modify:**
-- `pipe/processing.go` - Add `GenerateFunc`, `BatchFunc`, `SinkFunc`, `FilterFunc`, `MapFunc`, `FlatMapFunc`
+- `pipe/processing.go` - Add `SourceFunc`, `BatchFunc`, `SinkFunc`, `FilterFunc`, `MapFunc`, `ExpandFunc`
 
 ### Task 11: Rename Constructors
 
@@ -499,16 +489,16 @@ func (f *FlatMapPipe[In, Out]) Pipe(ctx, <-chan In) (<-chan Out, error)
 | `NewProcessPipe` | `NewProcessor` |
 | `NewBatchPipe` | `NewBatchProcessor` |
 | `NewFilterPipe` | `NewFilter` |
-| `NewTransformPipe` | `NewMap` |
-| (new) | `NewFlatMap` |
+| `NewTransformPipe` | `NewMapper` |
+| (new) | `NewExpander` |
 | `NewSinkPipe` | `NewSink` |
-| `NewGenerator` | `NewGenerator` (unchanged) |
+| `NewGenerator` | `NewSource` |
 
 ### Task 12: Update Tests
 
 - Rename all test references
 - Add tests for new semantic methods
-- Add tests for Pipe() trigger behavior on GeneratorPipe
+- Add tests for Pipe() trigger behavior on SourcePipe
 - Add tests for pure vs impure operations
 - Verify middleware NOT applied to direct methods
 
@@ -564,41 +554,44 @@ func Once() pipe.TriggerFunc
 |--------|-------|
 | `ProcessPipe` | `ProcessorPipe` |
 | `BatchPipe` | `BatchProcessorPipe` |
-| `GeneratePipe` | `GeneratorPipe` |
+| `GeneratePipe` | `SourcePipe` |
 | `NewProcessPipe` | `NewProcessor` |
 | `NewBatchPipe` | `NewBatchProcessor` |
 | `NewFilterPipe` | `NewFilter` |
-| `NewTransformPipe` | `NewMap` |
-| (new) | `NewFlatMap` |
+| `NewTransformPipe` | `NewMapper` |
+| (new) | `NewExpander` |
 | `NewSinkPipe` | `NewSink` |
+| `NewGenerator` | `NewSource` |
 | `NewFilterPipe() -> *ProcessPipe` | `NewFilter() -> *FilterPipe` |
-| `NewTransformPipe() -> *ProcessPipe` | `NewMap() -> *MapPipe` |
-| (new) | `NewFlatMap() -> *FlatMapPipe` |
+| `NewTransformPipe() -> *ProcessPipe` | `NewMapper() -> *MapperPipe` |
+| (new) | `NewExpander() -> *ExpanderPipe` |
 | `FilterFunc(ctx, T) (bool, error)` | `FilterFunc(T) bool` (pure) |
 | `TransformFunc(ctx, In) (Out, error)` | `MapFunc(In) Out` (pure) |
-| (new) | `FlatMapFunc(In) []Out` (pure) |
-| `GeneratePipe.Generate()` returns channel | `GeneratorPipe.Generate()` returns single batch |
+| (new) | `ExpandFunc(In) []Out` (pure) |
+| `GenerateFunc` | `SourceFunc` |
+| `GeneratePipe.Generate()` returns channel | `SourcePipe.Source()` returns single batch |
 
 ### New APIs
 
 | API | Description |
 |-----|-------------|
+| `Source[Out]` interface | Impure semantic interface with `Source(ctx) ([]Out, error)` |
 | `Processor[In, Out]` interface | Impure semantic interface with `Process(ctx, In) ([]Out, error)` |
 | `BatchProcessor[In, Out]` interface | Impure semantic interface with `ProcessBatch()` |
 | `Filter[T]` interface | Pure semantic interface with `Filter(T) bool` |
-| `Map[In, Out]` interface | Pure semantic interface with `Map(In) Out` |
-| `FlatMap[In, Out]` interface | Pure semantic interface with `FlatMap(In) []Out` |
+| `Mapper[In, Out]` interface | Pure semantic interface with `Map(In) Out` |
+| `Expander[In, Out]` interface | Pure semantic interface with `Expand(In) []Out` |
 | `Sink[In]` interface | Impure semantic interface with `Sink()` |
+| `SourcePipe.Source()` | Single batch generation (impure) |
+| `SourcePipe.Pipe()` | Triggered streaming (input as trigger) |
 | `ProcessorPipe.Process()` | Direct single-item invocation (impure) |
 | `BatchProcessorPipe.ProcessBatch()` | Direct batch invocation (impure) |
 | `FilterPipe[T]` struct | Implements `Filter` and `Pipe[T, T]` |
 | `FilterPipe.Filter()` | Direct single-item filtering (pure) |
-| `MapPipe[In, Out]` struct | Implements `Map` and `Pipe[In, Out]` |
-| `MapPipe.Map()` | Direct 1:1 transformation (pure) |
-| `FlatMapPipe[In, Out]` struct | Implements `FlatMap` and `Pipe[In, Out]` |
-| `FlatMapPipe.FlatMap()` | Direct 1:N transformation (pure) |
-| `GeneratorPipe.Generate()` | Single batch generation |
-| `GeneratorPipe.Pipe()` | Triggered streaming (input as trigger) |
+| `MapperPipe[In, Out]` struct | Implements `Mapper` and `Pipe[In, Out]` |
+| `MapperPipe.Map()` | Direct 1:1 transformation (pure) |
+| `ExpanderPipe[In, Out]` struct | Implements `Expander` and `Pipe[In, Out]` |
+| `ExpanderPipe.Expand()` | Direct 1:N transformation (pure) |
 | `SinkPipe.Sink()` | Direct single-item consumption |
 | `TriggerFunc` | Type for trigger functions |
 | `Producer[Out]` interface | Autonomous streaming with `Produce()` |
@@ -611,15 +604,15 @@ func Once() pipe.TriggerFunc
 ## Acceptance Criteria
 
 - [ ] Internal base type created
-- [ ] All semantic interfaces defined (Generator, Processor, BatchProcessor, Filter, Map, FlatMap, Sink)
+- [ ] All semantic interfaces defined (Source, Processor, BatchProcessor, Filter, Mapper, Expander, Sink)
 - [ ] All structs renamed with `*Pipe` suffix
 - [ ] All structs implement their semantic interface
 - [ ] FilterPipe created with pure Filter(T) bool method
-- [ ] MapPipe created with pure Map(In) Out method
-- [ ] FlatMapPipe created with pure FlatMap(In) []Out method
-- [ ] GeneratorPipe.Pipe() uses input as trigger
-- [ ] GeneratorPipe.Generate() returns single batch (not channel)
-- [ ] All constructors renamed (NewMap, NewFlatMap, etc.)
+- [ ] MapperPipe created with pure Map(In) Out method
+- [ ] ExpanderPipe created with pure Expand(In) []Out method
+- [ ] SourcePipe.Pipe() uses input as trigger
+- [ ] SourcePipe.Source() returns single batch (not channel)
+- [ ] All constructors renamed (NewSource, NewMapper, NewExpander, etc.)
 - [ ] Direct methods don't apply middleware
 - [ ] TriggerFunc type defined in pipe package
 - [ ] Producer interface and NewProducer implemented
