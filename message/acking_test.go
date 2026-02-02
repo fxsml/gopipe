@@ -324,50 +324,48 @@ func TestAckingTableTests(t *testing.T) {
 	})
 
 	t.Run("ContextBehavior", func(t *testing.T) {
+		// Context does NOT cancel on message settlement.
+		// Context is for lifecycle (parent cancellation, deadline).
+		// Settlement detection uses msg.Done() directly.
 		tests := []struct {
 			name        string
 			setup       func() (*Message, func())
-			wantErr     error
 			wantMessage bool
 		}{
 			{
-				name: "context cancelled after ack",
+				name: "context has message after ack",
 				setup: func() (*Message, func()) {
 					acking := NewAcking(func() {}, func(error) {})
 					msg := New("data", nil, acking)
 					return msg, func() { msg.Ack() }
 				},
-				wantErr:     context.Canceled,
 				wantMessage: true,
 			},
 			{
-				name: "context cancelled after nack",
+				name: "context has message after nack",
 				setup: func() (*Message, func()) {
 					acking := NewAcking(func() {}, func(error) {})
 					msg := New("data", nil, acking)
 					return msg, func() { msg.Nack(errors.New("fail")) }
 				},
-				wantErr:     context.Canceled,
 				wantMessage: true,
 			},
 			{
-				name: "context not cancelled before settlement",
+				name: "context not cancelled on settlement",
 				setup: func() (*Message, func()) {
 					acking := NewAcking(func() {}, func(error) {})
 					msg := New("data", nil, acking)
-					return msg, func() {} // No action
+					return msg, func() { msg.Ack() }
 				},
-				wantErr:     nil,
 				wantMessage: true,
 			},
 			{
-				name: "nil acking returns background context",
+				name: "nil acking still stores message in context",
 				setup: func() (*Message, func()) {
 					msg := New("data", nil, nil)
 					return msg, func() {}
 				},
-				wantErr:     nil,
-				wantMessage: false, // No message in background context
+				wantMessage: true, // Message stored even with nil acking
 			},
 		}
 
@@ -377,27 +375,16 @@ func TestAckingTableTests(t *testing.T) {
 				ctx := msg.Context(context.Background())
 
 				// Verify context not cancelled before action
-				if tt.wantErr == nil {
-					if ctx.Err() != nil {
-						t.Errorf("Context.Err() = %v before action, want nil", ctx.Err())
-					}
+				if ctx.Err() != nil {
+					t.Errorf("Context.Err() = %v before action, want nil", ctx.Err())
 				}
 
 				action()
 
-				// Wait for context cancellation if expected
-				if tt.wantErr != nil {
-					select {
-					case <-ctx.Done():
-						// OK - context cancelled
-					case <-time.After(time.Second):
-						t.Errorf("Context not cancelled, want %v", tt.wantErr)
-					}
-				}
-
-				// Verify context state after action
-				if got := ctx.Err(); got != tt.wantErr {
-					t.Errorf("Context.Err() = %v, want %v", got, tt.wantErr)
+				// Context should NOT be cancelled after settlement
+				// (context lifecycle is separate from message settlement)
+				if ctx.Err() != nil {
+					t.Errorf("Context.Err() = %v after action, want nil (context should not cancel on settlement)", ctx.Err())
 				}
 
 				// Verify message in context
@@ -745,11 +732,12 @@ func TestAckingEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("message with nil acking - Context returns Background", func(t *testing.T) {
+	t.Run("message with nil acking - Context still stores message", func(t *testing.T) {
 		msg := New("data", nil, nil)
 		ctx := msg.Context(context.Background())
-		if ctx != context.Background() {
-			t.Errorf("Context() on nil acking != context.Background()")
+		// Even with nil acking, message is stored in context
+		if got := MessageFromContext(ctx); got != msg {
+			t.Errorf("MessageFromContext() = %v, want %v", got, msg)
 		}
 	})
 
@@ -795,12 +783,12 @@ func TestMessageContextHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("MessageFromContext returns nil for nil acking message", func(t *testing.T) {
+	t.Run("MessageFromContext returns message for nil acking message", func(t *testing.T) {
 		msg := New("data", nil, nil)
-		ctx := msg.Context(context.Background()) // Returns Background
+		ctx := msg.Context(context.Background()) // Still stores message
 		got := MessageFromContext(ctx)
-		if got != nil {
-			t.Errorf("MessageFromContext() = %v, want nil", got)
+		if got != msg {
+			t.Errorf("MessageFromContext() = %v, want %v", got, msg)
 		}
 	})
 
@@ -1006,33 +994,33 @@ func TestMessageContextWithParent(t *testing.T) {
 		}
 	})
 
-	t.Run("Done channel closes on settlement", func(t *testing.T) {
+	t.Run("msg.Done channel closes on settlement (not ctx.Done)", func(t *testing.T) {
 		acking := NewAcking(func() {}, func(error) {})
 		msg := New("data", nil, acking)
-		ctx := msg.Context(context.Background())
+		_ = msg.Context(context.Background())
 
-		// Done should return non-nil channel
-		done := ctx.Done()
+		// msg.Done() should return non-nil channel
+		done := msg.Done()
 		if done == nil {
-			t.Fatal("Done() returned nil")
+			t.Fatal("msg.Done() returned nil")
 		}
 
 		// Should not be closed yet
 		select {
 		case <-done:
-			t.Error("Done() closed before settlement")
+			t.Error("msg.Done() closed before settlement")
 		default:
 			// OK
 		}
 
 		msg.Ack()
 
-		// Should close after settlement
+		// msg.Done() should close after settlement
 		select {
 		case <-done:
 			// OK
 		case <-time.After(time.Second):
-			t.Error("Done() not closed after settlement")
+			t.Error("msg.Done() not closed after settlement")
 		}
 	})
 
@@ -1079,21 +1067,25 @@ func TestMessageContextWithParent(t *testing.T) {
 			t.Error("ctx3 missing message")
 		}
 
-		// None should be cancelled yet
+		// None should be cancelled
 		if ctx1.Err() != nil || ctx2.Err() != nil || ctx3.Err() != nil {
-			t.Error("contexts should not be cancelled yet")
+			t.Error("contexts should not be cancelled")
 		}
 
 		msg.Ack()
 
-		// All should be cancelled after settlement
-		for i, ctx := range []context.Context{ctx1, ctx2, ctx3} {
-			select {
-			case <-ctx.Done():
-				// OK
-			case <-time.After(time.Second):
-				t.Errorf("ctx%d not cancelled after settlement", i+1)
-			}
+		// Contexts should NOT be cancelled after settlement
+		// (context lifecycle is separate from message settlement)
+		if ctx1.Err() != nil || ctx2.Err() != nil || ctx3.Err() != nil {
+			t.Error("contexts should not be cancelled after settlement (lifecycle separate from settlement)")
+		}
+
+		// Use msg.Done() for settlement detection
+		select {
+		case <-msg.Done():
+			// OK - settlement detected via msg.Done()
+		default:
+			t.Error("msg.Done() should be closed after settlement")
 		}
 	})
 }
@@ -1237,7 +1229,7 @@ func TestSharedAckingWithForwardPattern(t *testing.T) {
 		}
 	})
 
-	t.Run("sibling context cancelled on nack", func(t *testing.T) {
+	t.Run("sibling messages detect settlement via Done channel", func(t *testing.T) {
 		inputAcking := NewAcking(func() {}, func(error) {})
 		input := New("input", nil, inputAcking)
 
@@ -1250,29 +1242,43 @@ func TestSharedAckingWithForwardPattern(t *testing.T) {
 		out1 := New("out1", nil, outputAcking)
 		out2 := New("out2", nil, outputAcking)
 
-		ctx1 := out1.Context(context.Background())
-		ctx2 := out2.Context(context.Background())
-
-		// Contexts should not be cancelled yet
-		if ctx1.Err() != nil || ctx2.Err() != nil {
-			t.Error("contexts should not be cancelled before nack")
+		// Done channels should not be closed yet
+		select {
+		case <-out1.Done():
+			t.Error("out1.Done() should not be closed before nack")
+		default:
+			// OK
+		}
+		select {
+		case <-out2.Done():
+			t.Error("out2.Done() should not be closed before nack")
+		default:
+			// OK
 		}
 
 		// Nack one output
 		out1.Nack(errors.New("fail"))
 
-		// Wait for both contexts to be cancelled (same acking)
+		// Both Done channels should close (shared acking)
 		select {
-		case <-ctx1.Done():
+		case <-out1.Done():
 			// OK
 		case <-time.After(time.Second):
-			t.Error("ctx1 should be cancelled after nack")
+			t.Error("out1.Done() should be closed after nack")
 		}
 		select {
-		case <-ctx2.Done():
+		case <-out2.Done():
 			// OK
 		case <-time.After(time.Second):
-			t.Error("ctx2 should be cancelled after nack (shared acking)")
+			t.Error("out2.Done() should be closed after nack (shared acking)")
+		}
+
+		// Verify state
+		if out1.AckState() != AckNacked {
+			t.Error("out1 should be nacked")
+		}
+		if out2.AckState() != AckNacked {
+			t.Error("out2 should be nacked (shared acking)")
 		}
 	})
 }

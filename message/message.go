@@ -108,95 +108,6 @@ func (a *Acking) done() <-chan struct{} {
 	return a.doneCh
 }
 
-// messageContext wraps a parent context with message-specific behavior.
-// It combines the parent's deadline with the message's expiry time,
-// and cancels when either the parent cancels or the message is settled.
-type messageContext[T any] struct {
-	parent   context.Context
-	msg      *TypedMessage[T]
-	done     chan struct{}
-	deadline time.Time
-	hasDeadline bool
-}
-
-// newMessageContext creates a context that combines parent with message settlement.
-func newMessageContext[T any](parent context.Context, msg *TypedMessage[T]) *messageContext[T] {
-	ctx := &messageContext[T]{
-		parent: parent,
-		msg:    msg,
-	}
-
-	// Compute deadline: minimum of parent deadline and message expiry time
-	if parentDeadline, ok := parent.Deadline(); ok {
-		ctx.deadline = parentDeadline
-		ctx.hasDeadline = true
-	}
-	if expiry := msg.ExpiryTime(); !expiry.IsZero() {
-		if !ctx.hasDeadline || expiry.Before(ctx.deadline) {
-			ctx.deadline = expiry
-			ctx.hasDeadline = true
-		}
-	}
-
-	// Optimization: if parent never cancels, reuse acking's done channel directly
-	if parent.Done() == nil {
-		ctx.done = msg.Acking.doneCh
-		return ctx
-	}
-
-	// Otherwise, spawn goroutine to merge both cancellation sources
-	ctx.done = make(chan struct{})
-	go func() {
-		select {
-		case <-parent.Done():
-		case <-msg.Acking.doneCh:
-		}
-		close(ctx.done)
-	}()
-
-	return ctx
-}
-
-func (c *messageContext[T]) Deadline() (time.Time, bool) {
-	return c.deadline, c.hasDeadline
-}
-
-func (c *messageContext[T]) Done() <-chan struct{} {
-	return c.done
-}
-
-func (c *messageContext[T]) Value(key any) any {
-	switch key {
-	case messageKey:
-		if msg, ok := any(c.msg).(*Message); ok {
-			return msg
-		}
-		return nil
-	case rawMessageKey:
-		if msg, ok := any(c.msg).(*RawMessage); ok {
-			return msg
-		}
-		return nil
-	case attributesKey:
-		return c.msg.Attributes
-	default:
-		return c.parent.Value(key)
-	}
-}
-
-func (c *messageContext[T]) Err() error {
-	select {
-	case <-c.done:
-		// Check which caused cancellation
-		if c.parent.Err() != nil {
-			return c.parent.Err()
-		}
-		return context.Canceled
-	default:
-		return nil
-	}
-}
-
 // TypedMessage wraps a typed data payload with attributes and acknowledgment callbacks.
 // This is the base generic type for all message variants.
 // Data, Attributes, and Acking are public for direct access.
@@ -349,21 +260,38 @@ func (m *TypedMessage[T]) Done() <-chan struct{} {
 	return m.Acking.doneCh
 }
 
-// Context returns a context derived from parent that is cancelled when
-// the message (or any sibling sharing the acking) is settled (acked or nacked).
+// Context returns a context derived from parent with message-specific behavior.
 //
 // The context provides:
-//   - Cancellation when parent cancels OR message settles (whichever first)
 //   - Deadline from minimum of parent deadline and message ExpiryTime
 //   - Message reference via MessageFromContext or RawMessageFromContext
 //   - Attributes via AttributesFromContext
+//   - Parent cancellation propagation
 //
-// If no acking is set, returns the parent context unchanged.
+// For settlement detection (ack/nack), use msg.Done() directly.
+// This keeps context cancellation (lifecycle) separate from message
+// settlement (domain logic).
 func (m *TypedMessage[T]) Context(parent context.Context) context.Context {
-	if m.Acking == nil {
-		return parent
+	ctx := parent
+
+	// Apply deadline from expiry time if earlier than parent
+	if expiry := m.ExpiryTime(); !expiry.IsZero() {
+		if parentDeadline, ok := parent.Deadline(); !ok || expiry.Before(parentDeadline) {
+			ctx, _ = context.WithDeadline(ctx, expiry)
+		}
 	}
-	return newMessageContext(parent, m)
+
+	// Add message to context values
+	// Store as concrete type for type-safe retrieval
+	switch msg := any(m).(type) {
+	case *Message:
+		ctx = context.WithValue(ctx, messageKey, msg)
+	case *RawMessage:
+		ctx = context.WithValue(ctx, rawMessageKey, msg)
+	}
+	ctx = context.WithValue(ctx, attributesKey, m.Attributes)
+
+	return ctx
 }
 
 // ID returns the event identifier. Returns empty string if not set.

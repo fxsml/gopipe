@@ -156,7 +156,7 @@ func TestForwardAck(t *testing.T) {
 		}
 	})
 
-	t.Run("context cancelled on nack", func(t *testing.T) {
+	t.Run("sibling messages detect settlement via Done", func(t *testing.T) {
 		acking := message.NewAcking(func() {}, func(error) {})
 		msg := message.New("test", message.Attributes{"type": "test"}, acking)
 
@@ -170,30 +170,29 @@ func TestForwardAck(t *testing.T) {
 		wrapped := ForwardAck()(handler)
 		outputs, _ := wrapped(context.Background(), msg)
 
-		// Get context before nack
-		ctx1 := outputs[0].Context(context.Background())
-		ctx2 := outputs[1].Context(context.Background())
-
-		// Context should not be cancelled yet
-		if ctx1.Err() != nil {
-			t.Error("context should not be cancelled before nack")
+		// Done should not be closed yet
+		select {
+		case <-outputs[0].Done():
+			t.Error("Done should not be closed before nack")
+		default:
+			// OK
 		}
 
 		// Nack one output
 		outputs[0].Nack(errors.New("fail"))
 
-		// Wait for contexts to be cancelled (they share the same acking)
+		// Both Done channels should close (they share the same acking)
 		select {
-		case <-ctx1.Done():
+		case <-outputs[0].Done():
 			// OK
 		case <-time.After(time.Second):
-			t.Error("context should be cancelled after nack")
+			t.Error("Done should be closed after nack")
 		}
 		select {
-		case <-ctx2.Done():
+		case <-outputs[1].Done():
 			// OK
 		case <-time.After(time.Second):
-			t.Error("sibling context should also be cancelled after nack")
+			t.Error("sibling Done should also be closed after nack")
 		}
 	})
 }
