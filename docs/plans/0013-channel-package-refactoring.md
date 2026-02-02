@@ -22,6 +22,7 @@ Refactor the channel package for naming consistency with the pipe package refact
 | Pure Filter | `Filter` | `Filter` (unchanged) | `Filter.Filter()` |
 | Consume with side effect | `Sink` | `Drain` | `Sink.Sink()` (impure) |
 | Discard all | `Drain` | `Drop` | N/A |
+| Fan-out by index | `Route` | `Switch` | `Distributor` (matcher-based) |
 
 ## Breaking Changes
 
@@ -73,6 +74,22 @@ func Drain[T any](in <-chan T) <-chan struct{}
 func Drop[T any](in <-chan T) <-chan struct{}
 ```
 
+### 5. Rename `Route` to `Switch`
+
+**File:** `channel/route.go` → `channel/switch.go`
+
+```go
+// Before
+func Route[T any](in <-chan T, fn func(T) int, n int) []<-chan T
+
+// After
+func Switch[T any](in <-chan T, fn func(T) int, n int) []<-chan T
+```
+
+The name `Switch` better conveys the semantics: like a switch statement, it selects ONE output channel based on the index returned by the function. This differentiates it from:
+- `pipe.Distributor`: matcher-based routing (first match wins)
+- `message.Router`: event type-based routing with handlers
+
 ## No Changes Required
 
 | Function | Reason |
@@ -83,7 +100,7 @@ func Drop[T any](in <-chan T) <-chan struct{}
 | `FromSlice`, `FromValues`, `FromRange`, `FromFunc` | Source utilities |
 | `ToSlice` | Sink utility |
 | `Collect`, `Batch`, `GroupBy` | Batching operations |
-| `Merge`, `Broadcast`, `Route` | Fan-in/out operations |
+| `Merge`, `Broadcast` | Fan-in/out operations (Route renamed to Switch) |
 | `Cancel` | Control flow |
 
 ## Tasks
@@ -124,20 +141,30 @@ func Drop[T any](in <-chan T) <-chan struct{}
 - Rename function `Drain` → `Drop`
 - Consolidate into `channel/drain.go` with both `Drain` and `Drop`
 
-### Task 4: Update Documentation
+### Task 4: Rename Route to Switch
+
+**Files to modify:**
+- `channel/route.go` → rename to `channel/switch.go`
+- `channel/route_test.go` → rename to `channel/switch_test.go`
+
+**Changes:**
+- Rename function `Route` → `Switch`
+- Update all internal references
+
+### Task 5: Update Documentation
 
 **Files to modify:**
 - `channel/doc.go` - Update package documentation and examples
 - `README.md` - Update examples
 - `AGENTS.md` - Update design guidance
 
-### Task 5: Update Examples
+### Task 6: Update Examples
 
 **Files to modify:**
 - `examples/01-channel/main.go`
 - `examples/02-pipe/main.go`
 
-### Task 6: Update Tests
+### Task 7: Update Tests
 
 - Rename all test function references
 - Verify all tests pass
@@ -151,6 +178,7 @@ func Drop[T any](in <-chan T) <-chan struct{}
 | `Filter(in, func(T) bool)` | `Filter(in, func(T) bool)` | 1:0/1 (unchanged) |
 | `Sink(in, func(T))` | `Drain(in, func(T))` | consume with effect |
 | `Drain(in)` | `Drop(in)` | discard all |
+| `Route(in, fn, n)` | `Switch(in, fn, n)` | fan-out by index |
 
 ## Final API (After Refactoring)
 
@@ -189,7 +217,7 @@ GroupBy[V, K](in, keyFunc, config) <-chan Group[K, V]
 ```go
 Merge[T](ins ...<-chan T) <-chan T
 Broadcast[T](in, n int) []<-chan T
-Route[T](in, func(T) int, n int) []<-chan T
+Switch[T](in, func(T) int, n int) []<-chan T
 ```
 
 ### Control
@@ -203,6 +231,7 @@ Cancel[T](ctx, in, func(T, error)) <-chan T
 - [ ] `Process` renamed to `Expand`
 - [ ] `Sink` renamed to `Drain`
 - [ ] `Drain` renamed to `Drop`
+- [ ] `Route` renamed to `Switch`
 - [ ] All test files renamed and updated
 - [ ] `channel/doc.go` updated
 - [ ] `README.md` examples updated
@@ -223,9 +252,18 @@ After refactoring, the naming clearly communicates:
 | `Drain` | Consume channel, apply side effect to each item |
 | `Drop` | Consume channel, discard all items |
 | `Flatten` | Unpack slices into individual items |
+| `Switch` | Select one output channel by index (like switch statement) |
 
 The distinction between `Drain` and `Drop` is now explicit:
 - **Drain**: "I want to process each item" (with handler)
 - **Drop**: "I want to discard all items" (no handler)
 
 Both return done signals for graceful shutdown consistency.
+
+The fan-out operations have clear semantic distinctions:
+
+| Function | Semantic | Outputs per item |
+|----------|----------|------------------|
+| `Broadcast` | Copy item to ALL outputs | N (all) |
+| `Switch` | Send item to ONE output by index | 1 (selected) |
+| `pipe.Distributor` | Send item to first matching output | 1 (first match) |
