@@ -4,7 +4,7 @@
 
 ## Overview
 
-Refactor the pipe package to introduce semantic interfaces (`Processor`, `Generator`, `BatchProcessor`, `Sink`) alongside the composition interface (`Pipe`). Each concrete struct (`ProcessPipe`, `GeneratePipe`, `BatchPipe`, `SinkPipe`) implements both its semantic interface and the `Pipe` interface.
+Refactor the pipe package to introduce semantic interfaces (`Processor`, `Generator`, `BatchProcessor`, `Sink`) alongside the composition interface (`Pipe`). Concrete structs use `*Pipe` suffix and implement both their semantic interface and the `Pipe` interface. An internal base type reduces code duplication.
 
 ## Goals
 
@@ -12,35 +12,8 @@ Refactor the pipe package to introduce semantic interfaces (`Processor`, `Genera
 2. Better API ergonomics - `Generator[Out]` cleaner than `Pipe[struct{}, Out]`
 3. Direct invocation - call `Process()` or `Generate()` without channel setup
 4. Composition via `Pipe` - all components still work with `Apply()`
-5. Consistent naming - interface is concept, struct is `*Pipe` implementation
-
-## Current State
-
-```go
-// Single interface for composition
-type Pipe[In, Out any] interface {
-    Pipe(ctx context.Context, in <-chan In) (<-chan Out, error)
-}
-
-// Generator already has its own interface (partial implementation of this pattern)
-type Generator[Out any] interface {
-    Generate(ctx context.Context) (<-chan Out, error)
-}
-
-// Concrete types
-type ProcessPipe[In, Out any] struct { ... }  // implements Pipe
-type BatchPipe[In, Out any] struct { ... }    // implements Pipe
-type GeneratePipe[Out any] struct { ... }     // implements Generator (not Pipe!)
-// No SinkPipe - NewSinkPipe returns *ProcessPipe[In, struct{}]
-
-// Constructors
-func NewProcessPipe(...) *ProcessPipe
-func NewBatchPipe(...) *BatchPipe
-func NewGenerator(...) *GeneratePipe
-func NewFilterPipe(...) *ProcessPipe  // helper
-func NewTransformPipe(...) *ProcessPipe  // helper
-func NewSinkPipe(...) *ProcessPipe  // helper, returns ProcessPipe not SinkPipe
-```
+5. Consistent naming - interface is concept, struct has `*Pipe` suffix
+6. Reduced duplication - internal base type for shared lifecycle management
 
 ## Proposed Design
 
@@ -61,9 +34,9 @@ type Pipe[In, Out any] interface {
 // SEMANTIC INTERFACES
 // ============================================
 
-// Generator produces a stream of values without input.
+// Generator produces values on demand.
 type Generator[Out any] interface {
-    Generate(ctx context.Context) (<-chan Out, error)
+    Generate(ctx context.Context) ([]Out, error)  // single batch
 }
 
 // Processor transforms individual items.
@@ -82,26 +55,88 @@ type Sink[In any] interface {
 }
 ```
 
+### Internal Base Type
+
+```go
+// pipe/base.go (unexported)
+
+// pipe is the internal base type for shared lifecycle management.
+type pipe[In, Out any] struct {
+    cfg     Config
+    mw      []middleware.Middleware[In, Out]
+    mu      sync.Mutex
+    started bool
+}
+
+func (p *pipe[In, Out]) use(mw ...middleware.Middleware[In, Out]) error {
+    p.mu.Lock()
+    defer p.mu.Unlock()
+    if p.started {
+        return ErrAlreadyStarted
+    }
+    p.mw = append(p.mw, mw...)
+    return nil
+}
+
+func (p *pipe[In, Out]) start() error {
+    p.mu.Lock()
+    defer p.mu.Unlock()
+    if p.started {
+        return ErrAlreadyStarted
+    }
+    p.started = true
+    return nil
+}
+```
+
 ### Concrete Types
 
 ```go
-// GeneratePipe implements Generator and Pipe[struct{}, Out]
-type GeneratePipe[Out any] struct { ... }
-func (g *GeneratePipe[Out]) Generate(ctx context.Context) (<-chan Out, error)
-func (g *GeneratePipe[Out]) Pipe(ctx context.Context, in <-chan struct{}) (<-chan Out, error)
+// GeneratorPipe implements Generator and Pipe[struct{}, Out]
+type GeneratorPipe[Out any] struct {
+    pipe[struct{}, Out]
+    handle GenerateFunc[Out]
+}
 
-// ProcessPipe implements Processor and Pipe[In, Out]
-type ProcessPipe[In, Out any] struct { ... }
-func (p *ProcessPipe[In, Out]) Process(ctx context.Context, in In) ([]Out, error)
-func (p *ProcessPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out, error)
+// Generate produces a single batch (semantic interface).
+func (g *GeneratorPipe[Out]) Generate(ctx context.Context) ([]Out, error)
 
-// BatchPipe implements BatchProcessor and Pipe[In, Out]
-type BatchPipe[In, Out any] struct { ... }
-func (b *BatchPipe[In, Out]) ProcessBatch(ctx context.Context, batch []In) ([]Out, error)
-func (b *BatchPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out, error)
+// Produce starts autonomous generation (internal trigger channel).
+// TBD: May be renamed to Subscribe or other name.
+func (g *GeneratorPipe[Out]) Produce(ctx context.Context) (<-chan Out, error)
+
+// Pipe implements Pipe interface - triggered by input channel.
+// Each struct{} received triggers one Generate() call.
+func (g *GeneratorPipe[Out]) Pipe(ctx context.Context, in <-chan struct{}) (<-chan Out, error)
+
+
+// ProcessorPipe implements Processor and Pipe[In, Out]
+type ProcessorPipe[In, Out any] struct {
+    pipe[In, Out]
+    handle ProcessFunc[In, Out]
+}
+
+func (p *ProcessorPipe[In, Out]) Process(ctx context.Context, in In) ([]Out, error)
+func (p *ProcessorPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out, error)
+
+
+// BatchProcessorPipe implements BatchProcessor and Pipe[In, Out]
+type BatchProcessorPipe[In, Out any] struct {
+    pipe[In, Out]
+    handle    BatchFunc[In, Out]
+    batchCfg  BatchConfig
+}
+
+func (b *BatchProcessorPipe[In, Out]) ProcessBatch(ctx context.Context, batch []In) ([]Out, error)
+func (b *BatchProcessorPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out, error)
+
 
 // SinkPipe implements Sink and Pipe[In, struct{}]
-type SinkPipe[In any] struct { ... }
+type SinkPipe[In any] struct {
+    pipe[In, struct{}]
+    handle SinkFunc[In]
+}
+
 func (s *SinkPipe[In]) Sink(ctx context.Context, in In) error
 func (s *SinkPipe[In]) Pipe(ctx context.Context, in <-chan In) (<-chan struct{}, error)
 ```
@@ -109,275 +144,134 @@ func (s *SinkPipe[In]) Pipe(ctx context.Context, in <-chan In) (<-chan struct{},
 ### Constructors
 
 ```go
-// Primary constructors - return concrete types
-func NewGenerator[Out any](fn GenerateFunc[Out], cfg Config) *GeneratePipe[Out]
-func NewProcessor[In, Out any](fn ProcessFunc[In, Out], cfg Config) *ProcessPipe[In, Out]
-func NewBatchProcessor[In, Out any](fn BatchFunc[In, Out], cfg BatchConfig) *BatchPipe[In, Out]
+func NewGenerator[Out any](fn GenerateFunc[Out], cfg Config) *GeneratorPipe[Out]
+func NewProcessor[In, Out any](fn ProcessFunc[In, Out], cfg Config) *ProcessorPipe[In, Out]
+func NewBatchProcessor[In, Out any](fn BatchFunc[In, Out], cfg BatchConfig) *BatchProcessorPipe[In, Out]
 func NewSink[In any](fn SinkFunc[In], cfg Config) *SinkPipe[In]
 
-// Helper constructors - return ProcessPipe with adapted signatures
-func NewFilter[T any](fn FilterFunc[T], cfg Config) *ProcessPipe[T, T]
-func NewTransform[In, Out any](fn TransformFunc[In, Out], cfg Config) *ProcessPipe[In, Out]
+// Helpers - return ProcessorPipe with adapted signatures
+func NewFilter[T any](fn FilterFunc[T], cfg Config) *ProcessorPipe[T, T]
+func NewTransform[In, Out any](fn TransformFunc[In, Out], cfg Config) *ProcessorPipe[In, Out]
 ```
 
 ### Function Type Aliases
 
 ```go
-// Existing (unchanged)
-type ProcessFunc[In, Out any] func(ctx context.Context, in In) ([]Out, error)
-
-// New/renamed
 type GenerateFunc[Out any] func(ctx context.Context) ([]Out, error)
+type ProcessFunc[In, Out any] func(ctx context.Context, in In) ([]Out, error)
 type BatchFunc[In, Out any] func(ctx context.Context, batch []In) ([]Out, error)
 type SinkFunc[In any] func(ctx context.Context, in In) error
 type FilterFunc[T any] func(ctx context.Context, in T) (bool, error)
 type TransformFunc[In, Out any] func(ctx context.Context, in In) (Out, error)
 ```
 
-## Design Decisions
+## Design Decisions (Resolved)
 
-### 1. Semantic Methods Don't Apply Middleware
+### 1. Struct naming uses `*Pipe` suffix
+- Interface: `Processor` → Struct: `ProcessorPipe`
+- Interface: `Generator` → Struct: `GeneratorPipe`
+- Interface: `BatchProcessor` → Struct: `BatchProcessorPipe`
+- Interface: `Sink` → Struct: `SinkPipe`
 
-```go
-proc := NewProcessor(fn, cfg)
-proc.Use(middleware.Retry(...))
+### 2. GeneratorPipe.Pipe() uses input as trigger
+Input channel is NOT ignored. Each `struct{}` received triggers one `Generate()` call. This enables controlled generation in pipelines.
 
-proc.Process(ctx, item)  // Calls fn directly, NO middleware
-proc.Pipe(ctx, in)       // Applies middleware, full streaming path
-```
+### 3. GeneratorPipe.Produce() is autonomous
+`Produce()` creates an internal trigger channel for convenience (self-triggering continuous generation). This is the current `Generate()` behavior.
 
-**Rationale:**
-- `Process()` is the raw function - useful for testing, single-item invocation
-- `Pipe()` is the full pipeline with concurrency, middleware, error handling
-- Avoids two code paths with different behavior
-- Users who want middleware on single items can wrap manually
+**Naming TBD:** `Produce` vs `Subscribe` vs other options - see Open Questions.
 
-### 2. SinkPipe as Separate Type (not ProcessPipe alias)
+### 4. No Consume method on SinkPipe
+`Consume()` would be identical to `Pipe()` - redundant. Users just call `Pipe()`.
 
-**Before:** `NewSinkPipe() -> *ProcessPipe[In, struct{}]`
-**After:** `NewSink() -> *SinkPipe[In]`
+### 5. Direct methods don't apply middleware
+`Process()`, `Sink()`, `Generate()`, `ProcessBatch()` call the raw handler function. Middleware only applies through `Pipe()`. This keeps direct methods simple, predictable, and useful for testing.
 
-**Rationale:**
-- `SinkPipe` can implement `Sink` interface with proper `Sink(In) error` signature
-- Cleaner type in function signatures: `func NeedsSink(s Sink[T])`
-- Output is always `struct{}` - no need for full ProcessPipe generics
+### 6. Internal base type for shared lifecycle
+Unexported `pipe[In, Out]` struct handles:
+- Config storage
+- Middleware collection
+- Started state with mutex
+- `use()` and `start()` methods
 
-### 3. Filter/Transform Stay as Helpers
+Reduces duplication across ProcessorPipe, SinkPipe, GeneratorPipe, BatchProcessorPipe.
 
-`NewFilter` and `NewTransform` return `*ProcessPipe`, not separate types.
+### 7. Filter/Transform are constructor helpers only
+`NewFilter` and `NewTransform` return `*ProcessorPipe` with adapted function signatures. No separate types needed.
 
-**Rationale:**
-- They're just constrained versions of Process (1:1 or 1:0/1)
-- No unique interface method needed
-- Fewer types to maintain
-- Users can still use type assertions if needed
+### 8. Merger/Distributor stay as infrastructure
+They are fan-in/fan-out primitives, not pipeline stages. No semantic interfaces needed.
 
-### 4. GeneratePipe.Pipe() Accepts struct{} Channel
+## Open Questions
 
-```go
-func (g *GeneratePipe[Out]) Pipe(ctx context.Context, in <-chan struct{}) (<-chan Out, error)
-```
+### Naming for GeneratorPipe autonomous method
 
-**Rationale:**
-- Enables `Apply(gen, proc)` composition
-- Input is ignored internally (already the case)
-- Explicit about the "trigger" semantics
+Current proposal: `Produce(ctx) (<-chan Out, error)`
+
+Alternatives to consider:
+- `Subscribe(ctx) (<-chan Out, error)` - message/event semantics
+- `Start(ctx) (<-chan Out, error)` - lifecycle semantics
+- `Run(ctx) (<-chan Out, error)` - execution semantics
+- `Stream(ctx) (<-chan Out, error)` - streaming semantics
+
+Need to check message package `Subscribe` pattern for consistency.
 
 ## Tasks
 
-### Task 1: Add Semantic Interfaces
+### Task 1: Create Internal Base Type
 
-**Files to Modify:**
-- `pipe/pipe.go` - Add `Processor`, `BatchProcessor`, `Sink` interfaces
-- `pipe/generator.go` - `Generator` interface already exists (keep)
-
-**Changes:**
-```go
-// Add to pipe/pipe.go
-type Processor[In, Out any] interface {
-    Process(ctx context.Context, in In) ([]Out, error)
-}
-
-type BatchProcessor[In, Out any] interface {
-    ProcessBatch(ctx context.Context, batch []In) ([]Out, error)
-}
-
-type Sink[In any] interface {
-    Sink(ctx context.Context, in In) error
-}
-```
-
-**Acceptance Criteria:**
-- [ ] Interfaces defined in pipe/pipe.go
-- [ ] Generator interface unchanged in pipe/generator.go
-
-### Task 2: Add Process() Method to ProcessPipe
-
-**Files to Modify:**
-- `pipe/pipe.go` - Add `Process()` method to `ProcessPipe`
+**Files to Create:**
+- `pipe/base.go` - Internal `pipe[In, Out]` struct
 
 **Changes:**
 ```go
-// Process invokes the handler for a single item without streaming.
-// Does not apply middleware - use Pipe() for full pipeline behavior.
-func (p *ProcessPipe[In, Out]) Process(ctx context.Context, in In) ([]Out, error) {
-    return p.handle(ctx, in)
-}
-```
-
-**Acceptance Criteria:**
-- [ ] ProcessPipe has Process() method
-- [ ] ProcessPipe implements Processor interface
-- [ ] Process() calls handle directly (no middleware)
-
-### Task 3: Add ProcessBatch() Method to BatchPipe
-
-**Files to Modify:**
-- `pipe/pipe.go` - Add `ProcessBatch()` method to `BatchPipe`
-
-**Changes:**
-```go
-// ProcessBatch invokes the handler for a batch without streaming.
-// Does not apply middleware - use Pipe() for full pipeline behavior.
-func (p *BatchPipe[In, Out]) ProcessBatch(ctx context.Context, batch []In) ([]Out, error) {
-    return p.handle(ctx, batch)
-}
-```
-
-**Acceptance Criteria:**
-- [ ] BatchPipe has ProcessBatch() method
-- [ ] BatchPipe implements BatchProcessor interface
-- [ ] ProcessBatch() calls handle directly (no middleware)
-
-### Task 4: Add Pipe() Method to GeneratePipe
-
-**Files to Modify:**
-- `pipe/generator.go` - Add `Pipe()` method to implement `Pipe[struct{}, Out]`
-
-**Changes:**
-```go
-// Pipe implements the Pipe interface for composition with Apply().
-// The input channel is used as a trigger; values are ignored.
-// Returns ErrAlreadyStarted if the generator has already been started.
-func (g *GeneratePipe[Out]) Pipe(ctx context.Context, in <-chan struct{}) (<-chan Out, error) {
-    return g.Generate(ctx)  // Input ignored, just use Generate()
-}
-```
-
-**Design Note:** Should `Pipe()` drain the input channel or ignore it entirely?
-
-Option A: Ignore input (current proposal)
-```go
-func (g *GeneratePipe[Out]) Pipe(ctx context.Context, in <-chan struct{}) (<-chan Out, error) {
-    return g.Generate(ctx)
-}
-```
-
-Option B: Use input as trigger (one output batch per input)
-```go
-// This would change Generator semantics significantly
-```
-
-**Recommendation:** Option A - Generator is inherently push-based, input is just for type compatibility.
-
-**Acceptance Criteria:**
-- [ ] GeneratePipe has Pipe() method
-- [ ] GeneratePipe implements Pipe[struct{}, Out]
-- [ ] Pipe() ignores input channel, calls Generate()
-
-### Task 5: Create SinkPipe Type
-
-**Files to Modify:**
-- `pipe/pipe.go` - Add `SinkPipe` struct and methods
-
-**Changes:**
-```go
-// SinkPipe is a Pipe that consumes items without producing meaningful output.
-type SinkPipe[In any] struct {
-    handle SinkFunc[In]
-    cfg    Config
-    mw     []middleware.Middleware[In, struct{}]
-
+type pipe[In, Out any] struct {
+    cfg     Config
+    mw      []middleware.Middleware[In, Out]
     mu      sync.Mutex
     started bool
 }
 
-// Sink invokes the handler for a single item without streaming.
-// Does not apply middleware - use Pipe() for full pipeline behavior.
-func (s *SinkPipe[In]) Sink(ctx context.Context, in In) error {
-    return s.handle(ctx, in)
-}
-
-// Pipe begins consuming items from the input channel.
-// Returns ErrAlreadyStarted if the sink has already been started.
-func (s *SinkPipe[In]) Pipe(ctx context.Context, in <-chan In) (<-chan struct{}, error) {
-    s.mu.Lock()
-    defer s.mu.Unlock()
-    if s.started {
-        return nil, ErrAlreadyStarted
-    }
-    s.started = true
-
-    // Adapt SinkFunc to ProcessFunc for startProcessing
-    fn := func(ctx context.Context, in In) ([]struct{}, error) {
-        return nil, s.handle(ctx, in)
-    }
-    handle := applyMiddleware(fn, s.mw)
-    return startProcessing(ctx, in, handle, s.cfg), nil
-}
-
-// Use adds middleware to the processing chain.
-func (s *SinkPipe[In]) Use(mw ...middleware.Middleware[In, struct{}]) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
-    if s.started {
-        return ErrAlreadyStarted
-    }
-    s.mw = append(s.mw, mw...)
-    return nil
-}
+func (p *pipe[In, Out]) use(mw ...middleware.Middleware[In, Out]) error
+func (p *pipe[In, Out]) start() error
 ```
 
-**Acceptance Criteria:**
-- [ ] SinkPipe struct defined
-- [ ] SinkPipe implements Sink interface
-- [ ] SinkPipe implements Pipe[In, struct{}]
-- [ ] SinkPipe has Use() for middleware
-
-### Task 6: Add Function Type Aliases
+### Task 2: Add Semantic Interfaces
 
 **Files to Modify:**
-- `pipe/processing.go` - Add type aliases
+- `pipe/pipe.go` - Add `Processor`, `BatchProcessor`, `Sink` interfaces
+- `pipe/generator.go` - Update `Generator` interface (now returns single batch)
 
-**Changes:**
-```go
-// GenerateFunc is the function signature for generators.
-type GenerateFunc[Out any] func(ctx context.Context) ([]Out, error)
-
-// BatchFunc is the function signature for batch processors.
-type BatchFunc[In, Out any] func(ctx context.Context, batch []In) ([]Out, error)
-
-// SinkFunc is the function signature for sinks.
-type SinkFunc[In any] func(ctx context.Context, in In) error
-
-// FilterFunc is the function signature for filters.
-type FilterFunc[T any] func(ctx context.Context, in T) (bool, error)
-
-// TransformFunc is the function signature for transforms.
-type TransformFunc[In, Out any] func(ctx context.Context, in In) (Out, error)
-```
-
-**Acceptance Criteria:**
-- [ ] All function types defined
-- [ ] Constructors updated to use named types
-
-### Task 7: Rename Constructors
+### Task 3: Rename ProcessPipe to ProcessorPipe
 
 **Files to Modify:**
-- `pipe/pipe.go` - Rename constructors
-- `pipe/generator.go` - Keep NewGenerator (already good)
+- `pipe/pipe.go` - Rename struct, embed base type, add `Process()` method
 
-**Renames:**
+### Task 4: Rename BatchPipe to BatchProcessorPipe
+
+**Files to Modify:**
+- `pipe/pipe.go` - Rename struct, embed base type, add `ProcessBatch()` method
+
+### Task 5: Rename GeneratePipe to GeneratorPipe
+
+**Files to Modify:**
+- `pipe/generator.go` - Rename struct, embed base type
+- Update `Generate()` to return single batch
+- Add `Produce()` for autonomous streaming
+- Add `Pipe()` with trigger semantics
+
+### Task 6: Update SinkPipe
+
+**Files to Modify:**
+- `pipe/pipe.go` - Create proper `SinkPipe` struct with base type, add `Sink()` method
+
+### Task 7: Add Function Type Aliases
+
+**Files to Modify:**
+- `pipe/processing.go` - Add `GenerateFunc`, `BatchFunc`, `SinkFunc`, `FilterFunc`, `TransformFunc`
+
+### Task 8: Rename Constructors
+
 | Before | After |
 |--------|-------|
 | `NewProcessPipe` | `NewProcessor` |
@@ -387,105 +281,25 @@ type TransformFunc[In, Out any] func(ctx context.Context, in In) (Out, error)
 | `NewSinkPipe` | `NewSink` |
 | `NewGenerator` | `NewGenerator` (unchanged) |
 
-**Acceptance Criteria:**
-- [ ] All constructors renamed
-- [ ] Old names removed (breaking change)
+### Task 9: Update Tests
 
-### Task 8: Update NewSink to Return *SinkPipe
-
-**Files to Modify:**
-- `pipe/pipe.go` - Change NewSink return type
-
-**Before:**
-```go
-func NewSinkPipe[In any](handle func(context.Context, In) error, cfg Config) *ProcessPipe[In, struct{}]
-```
-
-**After:**
-```go
-func NewSink[In any](fn SinkFunc[In], cfg Config) *SinkPipe[In] {
-    return &SinkPipe[In]{
-        handle: fn,
-        cfg:    cfg,
-    }
-}
-```
-
-**Acceptance Criteria:**
-- [ ] NewSink returns *SinkPipe[In]
-- [ ] SinkPipe implements both Sink and Pipe interfaces
-
-### Task 9: Update Internal Tests
-
-**Files to Modify:**
-- `pipe/pipe_test.go` - Update constructor names
-- `pipe/generator_test.go` - Add Pipe() method tests
-- `pipe/processing_test.go` - Add Process()/ProcessBatch() tests
-
-**New Test Cases:**
-```go
-func TestProcessPipe_Process(t *testing.T) {
-    // Test direct invocation without channels
-}
-
-func TestBatchPipe_ProcessBatch(t *testing.T) {
-    // Test direct invocation without channels
-}
-
-func TestGeneratePipe_Pipe(t *testing.T) {
-    // Test Pipe interface implementation
-}
-
-func TestSinkPipe_Sink(t *testing.T) {
-    // Test direct invocation
-}
-
-func TestSinkPipe_Pipe(t *testing.T) {
-    // Test streaming behavior
-}
-```
-
-**Acceptance Criteria:**
-- [ ] All existing tests pass with new names
-- [ ] New tests for semantic interface methods
-- [ ] Tests verify middleware NOT applied to direct methods
+- Rename all test references
+- Add tests for new semantic methods
+- Add tests for Pipe() trigger behavior on GeneratorPipe
+- Verify middleware NOT applied to direct methods
 
 ### Task 10: Update message Package
 
-**Files to Modify:**
-- `message/pipes.go` - Update constructor calls
-- `message/router.go` - Update constructor calls
-- `message/cloudevents/publisher.go` - Update constructor calls
-- `message/cloudevents/subscriber.go` - Update constructor calls
-
-**Changes:**
-```go
-// Before
-pipe.NewProcessPipe(fn, cfg)
-pipe.NewSinkPipe(fn, cfg)
-pipe.NewGenerator(fn, cfg)
-
-// After
-pipe.NewProcessor(fn, cfg)
-pipe.NewSink(fn, cfg)
-pipe.NewGenerator(fn, cfg)
-```
-
-**Acceptance Criteria:**
-- [ ] All message package code compiles
-- [ ] All message package tests pass
+- `message/pipes.go`
+- `message/router.go`
+- `message/cloudevents/publisher.go`
+- `message/cloudevents/subscriber.go`
 
 ### Task 11: Update Documentation
 
-**Files to Modify:**
-- `pipe/doc.go` - Update package documentation
-- `README.md` - Update examples
-- `docs/adr/` - Create ADR for this change
-
-**Acceptance Criteria:**
-- [ ] Package docs reflect new API
-- [ ] README examples use new constructors
-- [ ] ADR documents rationale
+- `pipe/doc.go`
+- `README.md`
+- Create ADR
 
 ## API Changes Summary
 
@@ -493,11 +307,15 @@ pipe.NewGenerator(fn, cfg)
 
 | Before | After |
 |--------|-------|
-| `NewProcessPipe(fn, cfg)` | `NewProcessor(fn, cfg)` |
-| `NewBatchPipe(fn, cfg)` | `NewBatchProcessor(fn, cfg)` |
-| `NewFilterPipe(fn, cfg)` | `NewFilter(fn, cfg)` |
-| `NewTransformPipe(fn, cfg)` | `NewTransform(fn, cfg)` |
-| `NewSinkPipe(fn, cfg) -> *ProcessPipe` | `NewSink(fn, cfg) -> *SinkPipe` |
+| `ProcessPipe` | `ProcessorPipe` |
+| `BatchPipe` | `BatchProcessorPipe` |
+| `GeneratePipe` | `GeneratorPipe` |
+| `NewProcessPipe` | `NewProcessor` |
+| `NewBatchPipe` | `NewBatchProcessor` |
+| `NewFilterPipe` | `NewFilter` |
+| `NewTransformPipe` | `NewTransform` |
+| `NewSinkPipe` | `NewSink` |
+| `GeneratePipe.Generate()` returns channel | `GeneratorPipe.Generate()` returns single batch |
 
 ### New APIs
 
@@ -506,138 +324,24 @@ pipe.NewGenerator(fn, cfg)
 | `Processor[In, Out]` interface | Semantic interface with `Process()` |
 | `BatchProcessor[In, Out]` interface | Semantic interface with `ProcessBatch()` |
 | `Sink[In]` interface | Semantic interface with `Sink()` |
-| `ProcessPipe.Process()` | Direct single-item invocation |
-| `BatchPipe.ProcessBatch()` | Direct batch invocation |
-| `GeneratePipe.Pipe()` | Pipe interface for composition |
-| `SinkPipe` struct | Dedicated sink type |
-| `SinkPipe.Sink()` | Direct single-item invocation |
-
-### Unchanged
-
-| API | Notes |
-|-----|-------|
-| `Pipe[In, Out]` interface | Core composition interface |
-| `Generator[Out]` interface | Already exists |
-| `NewGenerator()` | Name unchanged |
-| `Apply()` | Works with all Pipe implementations |
-
-## Implementation Order
-
-```
-Task 1 (interfaces) ──► Task 2 (Process) ──┐
-                                           │
-Task 3 (ProcessBatch) ─────────────────────┼──► Task 9 (tests)
-                                           │
-Task 4 (GeneratePipe.Pipe) ────────────────┤
-                                           │
-Task 5 (SinkPipe) ──► Task 8 (NewSink) ────┤
-                                           │
-Task 6 (type aliases) ─────────────────────┤
-                                           │
-Task 7 (rename constructors) ──────────────┴──► Task 10 (message pkg) ──► Task 11 (docs)
-```
-
-Tasks 1-6 can proceed in parallel.
-Task 7 depends on all interface/struct changes.
-Task 9 can start after Tasks 2-5.
-Task 10 depends on Task 7.
-Task 11 depends on Task 10.
-
-## Design Decisions (Resolved)
-
-### 1. GeneratePipe.Pipe() ignores input
-Accepts `<-chan struct{}` for type compatibility with `Pipe` interface, but ignores the channel entirely. Just calls `Generate()`. This is the simplest approach and enables composition via `Apply()`.
-
-### 2. Direct methods don't apply middleware
-`Process()`, `Sink()`, `ProcessBatch()` call the raw handler function. Middleware only applies through `Pipe()`. This keeps direct methods simple, predictable, and useful for testing.
-
-### 3. Filter/Transform are constructor helpers only
-`NewFilter` and `NewTransform` return `*ProcessPipe` with adapted function signatures. No separate `Filter` or `Transform` interfaces/types. They're just constrained processors.
-
-### 4. No SinkMiddleware type alias
-`middleware.Middleware[In, struct{}]` works for sinks. No special alias needed.
-
-### 5. Keep Pipe as universal streaming interface
-All components implement `Pipe` interface for composition via `Apply()`. No alternative streaming method names (`Produce`, `Consume`, etc.) - they would be redundant. `Generate()` is already the streaming method for Generator (it has no single-item equivalent).
-
-### 6. Merger/Distributor stay as infrastructure
-They are fan-in/fan-out primitives, not pipeline stages. They don't fit Producer/Consumer patterns cleanly:
-- Merger needs inputs added before producing output
-- Distributor routes to outputs, doesn't terminally consume
-
-No semantic interfaces needed - their current APIs (`Merge()`, `Distribute()`, `AddInput()`, `AddOutput()`) are already clear.
-
-## Migration Guide
-
-### Constructor Renames
-
-```go
-// Before
-proc := pipe.NewProcessPipe(fn, cfg)
-batch := pipe.NewBatchPipe(fn, cfg)
-filter := pipe.NewFilterPipe(fn, cfg)
-transform := pipe.NewTransformPipe(fn, cfg)
-sink := pipe.NewSinkPipe(fn, cfg)
-
-// After
-proc := pipe.NewProcessor(fn, cfg)
-batch := pipe.NewBatchProcessor(fn, cfg)
-filter := pipe.NewFilter(fn, cfg)
-transform := pipe.NewTransform(fn, cfg)
-sink := pipe.NewSink(fn, cfg)
-```
-
-### Type Annotations
-
-```go
-// Before
-var sink *pipe.ProcessPipe[MyType, struct{}]
-
-// After
-var sink *pipe.SinkPipe[MyType]
-```
-
-### Interface Usage
-
-```go
-// New capability: accept specific component types
-func processItems(p pipe.Processor[int, string]) {
-    // Can call p.Process(ctx, item) directly
-    // Or p.Pipe(ctx, ch) for streaming
-}
-
-func consumeItems(s pipe.Sink[int]) {
-    // Can call s.Sink(ctx, item) directly
-}
-```
+| `ProcessorPipe.Process()` | Direct single-item invocation |
+| `BatchProcessorPipe.ProcessBatch()` | Direct batch invocation |
+| `GeneratorPipe.Generate()` | Single batch generation |
+| `GeneratorPipe.Produce()` | Autonomous streaming (TBD naming) |
+| `GeneratorPipe.Pipe()` | Triggered streaming |
+| `SinkPipe.Sink()` | Direct single-item consumption |
 
 ## Acceptance Criteria
 
-- [ ] All semantic interfaces defined (Processor, BatchProcessor, Sink)
+- [ ] Internal base type created
+- [ ] All semantic interfaces defined
+- [ ] All structs renamed with `*Pipe` suffix
 - [ ] All structs implement their semantic interface
-- [ ] GeneratePipe implements Pipe[struct{}, Out]
-- [ ] SinkPipe is a separate type implementing Sink and Pipe
+- [ ] GeneratorPipe.Pipe() uses input as trigger
+- [ ] GeneratorPipe.Produce() is autonomous
 - [ ] All constructors renamed
-- [ ] Direct methods (Process, ProcessBatch, Sink) don't apply middleware
+- [ ] Direct methods don't apply middleware
 - [ ] All pipe package tests pass
 - [ ] All message package tests pass
 - [ ] Build passes (`make build && make vet`)
 - [ ] Documentation updated
-
-## Trade-offs
-
-### What We Gain
-- **Type safety** - Accept `Processor[In,Out]` when you need a processor
-- **Cleaner APIs** - `Sink[T]` vs `Pipe[T, struct{}]`
-- **Direct invocation** - Test/use without channel setup
-- **Self-documenting** - Interfaces describe capabilities
-
-### What We Lose
-- **API stability** - Breaking changes to constructor names
-- **Simplicity** - More interfaces to understand
-- **Consistency** - Direct methods behave differently than Pipe()
-
-### Risks
-- **Message package coupling** - Need to update consumers
-- **Middleware confusion** - Users may expect Process() to apply middleware
-- **GeneratePipe.Pipe() semantics** - Ignoring input may surprise users
