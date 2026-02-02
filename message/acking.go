@@ -5,18 +5,6 @@ import (
 	"sync"
 )
 
-// AckState represents the current acknowledgment state.
-type AckState int
-
-const (
-	// AckPending indicates the message has not been acked or nacked yet.
-	AckPending AckState = iota
-	// AckDone indicates the message was successfully acknowledged.
-	AckDone
-	// AckNacked indicates the message was negatively acknowledged.
-	AckNacked
-)
-
 // AckStrategy determines how the router handles message acknowledgment.
 type AckStrategy int
 
@@ -68,9 +56,10 @@ func (s AckStrategy) middleware() Middleware {
 // Acking is thread-safe and can be shared between multiple messages.
 type Acking struct {
 	mu               sync.Mutex
-	ack              func()
-	nack             func(error)
-	ackState         AckState
+	ackFn            func()
+	nackFn           func(error)
+	settled          bool
+	nackErr          error
 	ackCount         int
 	expectedAckCount int
 	doneCh           chan struct{}
@@ -83,8 +72,8 @@ func NewAcking(ack func(), nack func(error)) *Acking {
 		return nil
 	}
 	return &Acking{
-		ack:              ack,
-		nack:             nack,
+		ackFn:            ack,
+		nackFn:           nack,
 		expectedAckCount: 1,
 		doneCh:           make(chan struct{}),
 	}
@@ -99,22 +88,98 @@ func NewSharedAcking(ack func(), nack func(error), expectedCount int) *Acking {
 		return nil
 	}
 	return &Acking{
-		ack:              ack,
-		nack:             nack,
+		ackFn:            ack,
+		nackFn:           nack,
 		expectedAckCount: expectedCount,
 		doneCh:           make(chan struct{}),
 	}
 }
 
-// state returns the current acknowledgment state.
+// isSettled returns true if the acking has been settled (acked or nacked).
 // Thread-safe.
-func (a *Acking) state() AckState {
+func (a *Acking) isSettled() bool {
 	if a == nil {
-		return AckPending
+		return false
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.ackState
+	return a.settled
+}
+
+// err returns the nack error, or nil if pending or acked.
+// Thread-safe.
+func (a *Acking) err() error {
+	if a == nil {
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.nackErr
+}
+
+// done returns the done channel, or nil if no acking.
+func (a *Acking) done() <-chan struct{} {
+	if a == nil {
+		return nil
+	}
+	return a.doneCh
+}
+
+// ack acknowledges successful processing.
+func (a *Acking) ack() bool {
+	if a == nil {
+		return false
+	}
+	a.mu.Lock()
+
+	if a.settled {
+		wasAcked := a.nackErr == nil
+		a.mu.Unlock()
+		return wasAcked
+	}
+
+	a.ackCount++
+	if a.ackCount < a.expectedAckCount {
+		a.mu.Unlock()
+		return true
+	}
+
+	// Capture callback and done channel before releasing lock
+	ackFn := a.ackFn
+	done := a.doneCh
+	a.settled = true
+	a.mu.Unlock()
+
+	// Call callback and close done channel outside mutex to prevent deadlock
+	ackFn()
+	close(done)
+	return true
+}
+
+// nack negatively acknowledges due to a processing error.
+func (a *Acking) nack(err error) bool {
+	if a == nil {
+		return false
+	}
+	a.mu.Lock()
+
+	if a.settled {
+		wasNacked := a.nackErr != nil
+		a.mu.Unlock()
+		return wasNacked
+	}
+
+	// Capture callback and done channel before releasing lock
+	nackFn := a.nackFn
+	done := a.doneCh
+	a.settled = true
+	a.nackErr = err
+	a.mu.Unlock()
+
+	// Call callback and close done channel outside mutex to prevent deadlock
+	nackFn(err)
+	close(done)
+	return true
 }
 
 // manualAckMiddleware returns middleware that lets the handler manage acking.
@@ -123,7 +188,7 @@ func manualAckMiddleware() Middleware {
 	return func(next ProcessFunc) ProcessFunc {
 		return func(ctx context.Context, msg *Message) ([]*Message, error) {
 			outputs, err := next(ctx, msg)
-			if err != nil && msg.AckState() == AckPending {
+			if err != nil && !msg.Settled() {
 				msg.Nack(err)
 			}
 			return outputs, err
@@ -163,7 +228,7 @@ func forwardAckMiddleware() Middleware {
 			}
 
 			// Check if input was already acked (handler acked manually)
-			if msg.AckState() != AckPending {
+			if msg.Settled() {
 				return outputs, nil
 			}
 

@@ -73,40 +73,11 @@ func NewRaw(data []byte, attrs Attributes, acking *Acking) *RawMessage {
 
 // Ack acknowledges successful processing of the message.
 // Returns true if acknowledgment succeeded or was already performed.
-// Returns false if no ack callback was provided, if the message was already nacked, or if expectedAckCount <= 0.
+// Returns false if no ack callback was provided or if the message was already nacked.
 // The ack callback is invoked at most once when all stages have acked. Thread-safe.
 // Callbacks are invoked outside the mutex to prevent deadlocks.
 func (m *TypedMessage[T]) Ack() bool {
-	if m.acking == nil {
-		return false
-	}
-	m.acking.mu.Lock()
-
-	switch m.acking.ackState {
-	case AckDone:
-		m.acking.mu.Unlock()
-		return true
-	case AckNacked:
-		m.acking.mu.Unlock()
-		return false
-	}
-
-	m.acking.ackCount++
-	if m.acking.ackCount < m.acking.expectedAckCount {
-		m.acking.mu.Unlock()
-		return true
-	}
-
-	// Capture callback and done channel before releasing lock
-	ackFn := m.acking.ack
-	done := m.acking.doneCh
-	m.acking.ackState = AckDone
-	m.acking.mu.Unlock()
-
-	// Call callback and close done channel outside mutex to prevent deadlock
-	ackFn()
-	close(done)
-	return true
+	return m.acking.ack()
 }
 
 // Nack negatively acknowledges the message due to a processing error.
@@ -116,48 +87,36 @@ func (m *TypedMessage[T]) Ack() bool {
 // Also closes the done channel, allowing sibling messages to detect the settlement.
 // Thread-safe. Callbacks are invoked outside the mutex to prevent deadlocks.
 func (m *TypedMessage[T]) Nack(err error) bool {
-	if m.acking == nil {
-		return false
-	}
-	m.acking.mu.Lock()
-
-	switch m.acking.ackState {
-	case AckDone:
-		m.acking.mu.Unlock()
-		return false
-	case AckNacked:
-		m.acking.mu.Unlock()
-		return true
-	}
-
-	// Capture callback and done channel before releasing lock
-	nackFn := m.acking.nack
-	done := m.acking.doneCh
-	m.acking.ackState = AckNacked
-	m.acking.mu.Unlock()
-
-	// Call callback and close done channel outside mutex to prevent deadlock
-	nackFn(err)
-	close(done)
-	return true
+	return m.acking.nack(err)
 }
 
-// AckState returns the current acknowledgment state of the message.
-// Returns AckPending if no acking is set.
-func (m *TypedMessage[T]) AckState() AckState {
-	if m.acking == nil {
-		return AckPending
-	}
-	return m.acking.state()
+// Settled returns true if the message has been acked or nacked.
+// Returns false if no acking is set.
+func (m *TypedMessage[T]) Settled() bool {
+	return m.acking.isSettled()
+}
+
+// Err returns the error from Nack, or nil if pending or acked.
+// Use with Done() to check settlement status, similar to context.Context:
+//
+//	select {
+//	case <-msg.Done():
+//	    if err := msg.Err(); err != nil {
+//	        // nacked with error
+//	    } else {
+//	        // acked successfully
+//	    }
+//	default:
+//	    // still pending
+//	}
+func (m *TypedMessage[T]) Err() error {
+	return m.acking.err()
 }
 
 // Done returns a channel that is closed when the message is settled (acked or nacked).
 // Returns nil if no acking is set.
 func (m *TypedMessage[T]) Done() <-chan struct{} {
-	if m.acking == nil {
-		return nil
-	}
-	return m.acking.doneCh
+	return m.acking.done()
 }
 
 // Context returns a context derived from parent with message-specific behavior.

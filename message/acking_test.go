@@ -18,7 +18,8 @@ func TestAckingTableTests(t *testing.T) {
 			action      func(*Message)
 			wantAcked   int32
 			wantNacked  int32
-			wantState   AckState
+			wantSettled bool
+			wantErr     bool // whether Err() should be non-nil
 			wantDone    bool
 			wantAckRet  bool
 			wantNackRet bool
@@ -35,11 +36,12 @@ func TestAckingTableTests(t *testing.T) {
 					msg := New("data", nil, acking)
 					return msg, &ackCount, &nackCount, &nackErr
 				},
-				action:     func(m *Message) { m.Ack() },
-				wantAcked:  1,
-				wantNacked: 0,
-				wantState:  AckDone,
-				wantDone:   true,
+				action:      func(m *Message) { m.Ack() },
+				wantAcked:   1,
+				wantNacked:  0,
+				wantSettled: true,
+				wantErr:     false,
+				wantDone:    true,
 			},
 			{
 				name: "nack succeeds on first call",
@@ -53,11 +55,12 @@ func TestAckingTableTests(t *testing.T) {
 					msg := New("data", nil, acking)
 					return msg, &ackCount, &nackCount, &nackErr
 				},
-				action:     func(m *Message) { m.Nack(errors.New("test error")) },
-				wantAcked:  0,
-				wantNacked: 1,
-				wantState:  AckNacked,
-				wantDone:   true,
+				action:      func(m *Message) { m.Nack(errors.New("test error")) },
+				wantAcked:   0,
+				wantNacked:  1,
+				wantSettled: true,
+				wantErr:     true,
+				wantDone:    true,
 			},
 			{
 				name: "ack is idempotent - second call returns true but no callback",
@@ -76,10 +79,11 @@ func TestAckingTableTests(t *testing.T) {
 					m.Ack()
 					m.Ack()
 				},
-				wantAcked:  1,
-				wantNacked: 0,
-				wantState:  AckDone,
-				wantDone:   true,
+				wantAcked:   1,
+				wantNacked:  0,
+				wantSettled: true,
+				wantErr:     false,
+				wantDone:    true,
 			},
 			{
 				name: "nack is idempotent - second call returns true but no callback",
@@ -97,10 +101,11 @@ func TestAckingTableTests(t *testing.T) {
 					m.Nack(errors.New("first"))
 					m.Nack(errors.New("second"))
 				},
-				wantAcked:  0,
-				wantNacked: 1, // Only first nack callback invoked
-				wantState:  AckNacked,
-				wantDone:   true,
+				wantAcked:   0,
+				wantNacked:  1, // Only first nack callback invoked
+				wantSettled: true,
+				wantErr:     true,
+				wantDone:    true,
 			},
 			{
 				name: "ack after nack returns false",
@@ -118,10 +123,11 @@ func TestAckingTableTests(t *testing.T) {
 					m.Nack(errors.New("failed"))
 					m.Ack() // Should return false and not invoke callback
 				},
-				wantAcked:  0,
-				wantNacked: 1,
-				wantState:  AckNacked,
-				wantDone:   true,
+				wantAcked:   0,
+				wantNacked:  1,
+				wantSettled: true,
+				wantErr:     true,
+				wantDone:    true,
 			},
 			{
 				name: "nack after ack returns false",
@@ -139,10 +145,11 @@ func TestAckingTableTests(t *testing.T) {
 					m.Ack()
 					m.Nack(errors.New("failed")) // Should return false and not invoke callback
 				},
-				wantAcked:  1,
-				wantNacked: 0,
-				wantState:  AckDone,
-				wantDone:   true,
+				wantAcked:   1,
+				wantNacked:  0,
+				wantSettled: true,
+				wantErr:     false,
+				wantDone:    true,
 			},
 			{
 				name: "nil acking - ack returns false",
@@ -150,11 +157,12 @@ func TestAckingTableTests(t *testing.T) {
 					msg := New("data", nil, nil)
 					return msg, new(int32), new(int32), new(error)
 				},
-				action:     func(m *Message) {},
-				wantAcked:  0,
-				wantNacked: 0,
-				wantState:  AckPending, // nil acking returns AckPending
-				wantDone:   false,      // No done channel
+				action:      func(m *Message) {},
+				wantAcked:   0,
+				wantNacked:  0,
+				wantSettled: false, // nil acking is not settled
+				wantErr:     false,
+				wantDone:    false, // No done channel
 			},
 		}
 
@@ -169,8 +177,11 @@ func TestAckingTableTests(t *testing.T) {
 				if got := atomic.LoadInt32(nackCount); got != tt.wantNacked {
 					t.Errorf("nack callback count = %d, want %d", got, tt.wantNacked)
 				}
-				if got := msg.AckState(); got != tt.wantState {
-					t.Errorf("AckState() = %v, want %v", got, tt.wantState)
+				if got := msg.Settled(); got != tt.wantSettled {
+					t.Errorf("Settled() = %v, want %v", got, tt.wantSettled)
+				}
+				if gotErr := msg.Err() != nil; gotErr != tt.wantErr {
+					t.Errorf("Err() != nil = %v, want %v", gotErr, tt.wantErr)
 				}
 
 				// Check done channel
@@ -200,13 +211,14 @@ func TestAckingTableTests(t *testing.T) {
 
 	t.Run("SharedAcking", func(t *testing.T) {
 		tests := []struct {
-			name       string
-			count      int
-			actions    []func([]*Message)
-			wantAcked  int32
-			wantNacked int32
-			wantState  AckState
-			wantDone   bool
+			name        string
+			count       int
+			actions     []func([]*Message)
+			wantAcked   int32
+			wantNacked  int32
+			wantSettled bool
+			wantErr     bool
+			wantDone    bool
 		}{
 			{
 				name:  "all messages ack - callback invoked",
@@ -216,10 +228,11 @@ func TestAckingTableTests(t *testing.T) {
 					func(msgs []*Message) { msgs[1].Ack() },
 					func(msgs []*Message) { msgs[2].Ack() },
 				},
-				wantAcked:  1,
-				wantNacked: 0,
-				wantState:  AckDone,
-				wantDone:   true,
+				wantAcked:   1,
+				wantNacked:  0,
+				wantSettled: true,
+				wantErr:     false,
+				wantDone:    true,
 			},
 			{
 				name:  "one nack blocks all acks",
@@ -229,10 +242,11 @@ func TestAckingTableTests(t *testing.T) {
 					func(msgs []*Message) { msgs[1].Nack(errors.New("fail")) },
 					func(msgs []*Message) { msgs[2].Ack() }, // Should return false
 				},
-				wantAcked:  0,
-				wantNacked: 1,
-				wantState:  AckNacked,
-				wantDone:   true,
+				wantAcked:   0,
+				wantNacked:  1,
+				wantSettled: true,
+				wantErr:     true,
+				wantDone:    true,
 			},
 			{
 				name:  "partial acks - callback not invoked",
@@ -242,10 +256,11 @@ func TestAckingTableTests(t *testing.T) {
 					func(msgs []*Message) { msgs[1].Ack() },
 					// msgs[2] not acked
 				},
-				wantAcked:  0,
-				wantNacked: 0,
-				wantState:  AckPending,
-				wantDone:   false,
+				wantAcked:   0,
+				wantNacked:  0,
+				wantSettled: false,
+				wantErr:     false,
+				wantDone:    false,
 			},
 			{
 				name:  "single message in shared acking",
@@ -253,10 +268,11 @@ func TestAckingTableTests(t *testing.T) {
 				actions: []func([]*Message){
 					func(msgs []*Message) { msgs[0].Ack() },
 				},
-				wantAcked:  1,
-				wantNacked: 0,
-				wantState:  AckDone,
-				wantDone:   true,
+				wantAcked:   1,
+				wantNacked:  0,
+				wantSettled: true,
+				wantErr:     false,
+				wantDone:    true,
 			},
 			{
 				name:  "nack first - all subsequent acks fail",
@@ -268,10 +284,11 @@ func TestAckingTableTests(t *testing.T) {
 					func(msgs []*Message) { msgs[3].Ack() },
 					func(msgs []*Message) { msgs[4].Ack() },
 				},
-				wantAcked:  0,
-				wantNacked: 1,
-				wantState:  AckNacked,
-				wantDone:   true,
+				wantAcked:   0,
+				wantNacked:  1,
+				wantSettled: true,
+				wantErr:     true,
+				wantDone:    true,
 			},
 		}
 
@@ -299,8 +316,11 @@ func TestAckingTableTests(t *testing.T) {
 				if got := atomic.LoadInt32(&nackCount); got != tt.wantNacked {
 					t.Errorf("nack callback count = %d, want %d", got, tt.wantNacked)
 				}
-				if got := msgs[0].AckState(); got != tt.wantState {
-					t.Errorf("AckState() = %v, want %v", got, tt.wantState)
+				if got := msgs[0].Settled(); got != tt.wantSettled {
+					t.Errorf("Settled() = %v, want %v", got, tt.wantSettled)
+				}
+				if gotErr := msgs[0].Err() != nil; gotErr != tt.wantErr {
+					t.Errorf("Err() != nil = %v, want %v", gotErr, tt.wantErr)
 				}
 
 				done := msgs[0].Done()
@@ -600,7 +620,7 @@ func TestAckingCallbackSafety(t *testing.T) {
 		acking := NewAcking(
 			func() {
 				// Try to access acking state from callback
-				_ = msg.AckState()
+				_ = msg.Settled()
 				close(done)
 			},
 			func(error) {},
@@ -653,7 +673,7 @@ func TestAckingCallbackSafety(t *testing.T) {
 			func() {},
 			func(err error) {
 				// Access message from nack callback
-				_ = msg.AckState()
+				_ = msg.Settled()
 				_ = msg.Context(context.Background())
 				close(done)
 			},
@@ -697,10 +717,17 @@ func TestAckingEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("AckState on message with nil acking returns AckPending", func(t *testing.T) {
+	t.Run("message with nil acking - Settled returns false", func(t *testing.T) {
 		msg := New("data", nil, nil)
-		if got := msg.AckState(); got != AckPending {
-			t.Errorf("msg.AckState() with nil acking = %v, want AckPending", got)
+		if msg.Settled() {
+			t.Error("Settled() on nil acking should return false")
+		}
+	})
+
+	t.Run("message with nil acking - Err returns nil", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		if err := msg.Err(); err != nil {
+			t.Errorf("Err() on nil acking = %v, want nil", err)
 		}
 	})
 
@@ -715,13 +742,6 @@ func TestAckingEdgeCases(t *testing.T) {
 		msg := New("data", nil, nil)
 		if msg.Nack(errors.New("fail")) {
 			t.Error("Nack() on nil acking should return false")
-		}
-	})
-
-	t.Run("message with nil acking - AckState returns AckPending", func(t *testing.T) {
-		msg := New("data", nil, nil)
-		if got := msg.AckState(); got != AckPending {
-			t.Errorf("AckState() on nil acking = %v, want AckPending", got)
 		}
 	})
 
@@ -1127,45 +1147,52 @@ func TestMessageContextWithParent(t *testing.T) {
 // TestAckingStateTransitions tests all valid state transitions.
 func TestAckingStateTransitions(t *testing.T) {
 	tests := []struct {
-		name       string
-		actions    []string // "ack" or "nack"
-		wantState  AckState
+		name        string
+		actions     []string // "ack" or "nack"
+		wantSettled bool
+		wantErr     bool
 		wantReturns []bool
 	}{
 		{
-			name:       "pending -> done (single ack)",
-			actions:    []string{"ack"},
-			wantState:  AckDone,
+			name:        "pending -> done (single ack)",
+			actions:     []string{"ack"},
+			wantSettled: true,
+			wantErr:     false,
 			wantReturns: []bool{true},
 		},
 		{
-			name:       "pending -> nacked (single nack)",
-			actions:    []string{"nack"},
-			wantState:  AckNacked,
+			name:        "pending -> nacked (single nack)",
+			actions:     []string{"nack"},
+			wantSettled: true,
+			wantErr:     true,
 			wantReturns: []bool{true},
 		},
 		{
-			name:       "done -> done (idempotent ack)",
-			actions:    []string{"ack", "ack"},
-			wantState:  AckDone,
+			name:        "done -> done (idempotent ack)",
+			actions:     []string{"ack", "ack"},
+			wantSettled: true,
+			wantErr:     false,
 			wantReturns: []bool{true, true},
 		},
 		{
-			name:       "nacked -> nacked (idempotent nack)",
-			actions:    []string{"nack", "nack"},
-			wantState:  AckNacked,
+			name:        "nacked -> nacked (idempotent nack)",
+			actions:     []string{"nack", "nack"},
+			wantSettled: true,
+			wantErr:     true,
 			wantReturns: []bool{true, true},
 		},
 		{
-			name:       "done -> done (ack after ack, blocked)",
-			actions:    []string{"ack", "nack"},
-			wantState:  AckDone,
+			name:        "done -> done (ack after ack, blocked)",
+			actions:     []string{"ack", "nack"},
+			wantSettled: true,
+			wantErr:     false,
 			wantReturns: []bool{true, false}, // nack returns false
 		},
 		{
-			name:       "nacked -> nacked (nack after nack, blocked)",
-			actions:    []string{"nack", "ack"},
-			wantState:  AckNacked,
+			name:        "nacked -> nacked (nack after nack, blocked)",
+			actions:     []string{"nack", "ack"},
+			wantSettled: true,
+			wantErr:     true,
 			wantReturns: []bool{true, false}, // ack returns false
 		},
 	}
@@ -1188,8 +1215,11 @@ func TestAckingStateTransitions(t *testing.T) {
 				}
 			}
 
-			if got := msg.AckState(); got != tt.wantState {
-				t.Errorf("final state = %v, want %v", got, tt.wantState)
+			if got := msg.Settled(); got != tt.wantSettled {
+				t.Errorf("Settled() = %v, want %v", got, tt.wantSettled)
+			}
+			if gotErr := msg.Err() != nil; gotErr != tt.wantErr {
+				t.Errorf("Err() != nil = %v, want %v", gotErr, tt.wantErr)
 			}
 		})
 	}
@@ -1308,10 +1338,10 @@ func TestSharedAckingWithForwardPattern(t *testing.T) {
 		}
 
 		// Verify state
-		if out1.AckState() != AckNacked {
+		if !out1.Settled() || out1.Err() == nil {
 			t.Error("out1 should be nacked")
 		}
-		if out2.AckState() != AckNacked {
+		if !out2.Settled() || out2.Err() == nil {
 			t.Error("out2 should be nacked (shared acking)")
 		}
 	})
