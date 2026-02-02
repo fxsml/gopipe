@@ -37,6 +37,11 @@ func MessageFromContext(ctx context.Context) *Message {
 	return msg
 }
 
+// FromContext is an alias for MessageFromContext.
+func FromContext(ctx context.Context) *Message {
+	return MessageFromContext(ctx)
+}
+
 // RawMessageFromContext retrieves the RawMessage from context.
 // Returns nil if no raw message is present.
 func RawMessageFromContext(ctx context.Context) *RawMessage {

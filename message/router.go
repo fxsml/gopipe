@@ -228,7 +228,7 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 		return nil, err
 	}
 
-	outputs, err := entry.handler.Handle(ctx, msg)
+	outputs, err := entry.handler.Handle(msg.Context(ctx), msg)
 	if err != nil {
 		r.cfg.Logger.Error("Executing handler failed",
 			"component", "router",

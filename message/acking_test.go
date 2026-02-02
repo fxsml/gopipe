@@ -374,7 +374,7 @@ func TestAckingTableTests(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				msg, action := tt.setup()
-				ctx := msg.Context()
+				ctx := msg.Context(context.Background())
 
 				// Verify context not cancelled before action
 				if tt.wantErr == nil {
@@ -384,6 +384,16 @@ func TestAckingTableTests(t *testing.T) {
 				}
 
 				action()
+
+				// Wait for context cancellation if expected
+				if tt.wantErr != nil {
+					select {
+					case <-ctx.Done():
+						// OK - context cancelled
+					case <-time.After(time.Second):
+						t.Errorf("Context not cancelled, want %v", tt.wantErr)
+					}
+				}
 
 				// Verify context state after action
 				if got := ctx.Err(); got != tt.wantErr {
@@ -576,7 +586,7 @@ func TestAckingConcurrency(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < 100; j++ {
-					ctx := msg.Context()
+					ctx := msg.Context(context.Background())
 					_ = ctx.Err()
 					_ = ctx.Done()
 				}
@@ -657,7 +667,7 @@ func TestAckingCallbackSafety(t *testing.T) {
 			func(err error) {
 				// Access message from nack callback
 				_ = msg.AckState()
-				_ = msg.Context()
+				_ = msg.Context(context.Background())
 				close(done)
 			},
 		)
@@ -737,7 +747,7 @@ func TestAckingEdgeCases(t *testing.T) {
 
 	t.Run("message with nil acking - Context returns Background", func(t *testing.T) {
 		msg := New("data", nil, nil)
-		ctx := msg.Context()
+		ctx := msg.Context(context.Background())
 		if ctx != context.Background() {
 			t.Errorf("Context() on nil acking != context.Background()")
 		}
@@ -769,7 +779,7 @@ func TestMessageContextHelpers(t *testing.T) {
 	t.Run("MessageFromContext returns message", func(t *testing.T) {
 		acking := NewAcking(func() {}, func(error) {})
 		msg := New("test data", Attributes{"type": "test"}, acking)
-		ctx := msg.Context()
+		ctx := msg.Context(context.Background())
 
 		got := MessageFromContext(ctx)
 		if got != msg {
@@ -787,7 +797,7 @@ func TestMessageContextHelpers(t *testing.T) {
 
 	t.Run("MessageFromContext returns nil for nil acking message", func(t *testing.T) {
 		msg := New("data", nil, nil)
-		ctx := msg.Context() // Returns Background
+		ctx := msg.Context(context.Background()) // Returns Background
 		got := MessageFromContext(ctx)
 		if got != nil {
 			t.Errorf("MessageFromContext() = %v, want nil", got)
@@ -797,7 +807,7 @@ func TestMessageContextHelpers(t *testing.T) {
 	t.Run("RawMessageFromContext returns raw message", func(t *testing.T) {
 		acking := NewAcking(func() {}, func(error) {})
 		msg := NewRaw([]byte("raw data"), Attributes{"type": "raw.test"}, acking)
-		ctx := msg.Context()
+		ctx := msg.Context(context.Background())
 
 		got := RawMessageFromContext(ctx)
 		if got != msg {
@@ -808,7 +818,7 @@ func TestMessageContextHelpers(t *testing.T) {
 	t.Run("RawMessageFromContext returns nil for Message", func(t *testing.T) {
 		acking := NewAcking(func() {}, func(error) {})
 		msg := New("not raw", nil, acking)
-		ctx := msg.Context()
+		ctx := msg.Context(context.Background())
 
 		got := RawMessageFromContext(ctx)
 		if got != nil {
@@ -820,7 +830,7 @@ func TestMessageContextHelpers(t *testing.T) {
 		acking := NewAcking(func() {}, func(error) {})
 		attrs := Attributes{"type": "test", "source": "/test"}
 		msg := New("data", attrs, acking)
-		ctx := msg.Context()
+		ctx := msg.Context(context.Background())
 
 		got := AttributesFromContext(ctx)
 		if got["type"] != "test" {
@@ -834,7 +844,7 @@ func TestMessageContextHelpers(t *testing.T) {
 	t.Run("context values preserved after settlement", func(t *testing.T) {
 		acking := NewAcking(func() {}, func(error) {})
 		msg := New("data", Attributes{"key": "value"}, acking)
-		ctx := msg.Context()
+		ctx := msg.Context(context.Background())
 
 		// Settle the message
 		msg.Ack()
@@ -849,6 +859,150 @@ func TestMessageContextHelpers(t *testing.T) {
 		attrs := AttributesFromContext(ctx)
 		if attrs["key"] != "value" {
 			t.Errorf("AttributesFromContext() after ack = %v, want value", attrs["key"])
+		}
+	})
+}
+
+// TestMessageContextWithParent tests context derivation from parent.
+func TestMessageContextWithParent(t *testing.T) {
+	t.Run("inherits parent deadline", func(t *testing.T) {
+		acking := NewAcking(func() {}, func(error) {})
+		msg := New("data", nil, acking)
+
+		deadline := time.Now().Add(time.Hour)
+		parent, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+
+		ctx := msg.Context(parent)
+
+		gotDeadline, ok := ctx.Deadline()
+		if !ok {
+			t.Error("expected deadline from parent")
+		}
+		if !gotDeadline.Equal(deadline) {
+			t.Errorf("Deadline() = %v, want %v", gotDeadline, deadline)
+		}
+	})
+
+	t.Run("uses message expiry if earlier than parent", func(t *testing.T) {
+		acking := NewAcking(func() {}, func(error) {})
+		expiry := time.Now().Add(time.Minute)
+		msg := New("data", Attributes{AttrExpiryTime: expiry}, acking)
+
+		parentDeadline := time.Now().Add(time.Hour)
+		parent, cancel := context.WithDeadline(context.Background(), parentDeadline)
+		defer cancel()
+
+		ctx := msg.Context(parent)
+
+		gotDeadline, ok := ctx.Deadline()
+		if !ok {
+			t.Error("expected deadline")
+		}
+		// Should use expiry (1 min) not parent deadline (1 hour)
+		if !gotDeadline.Equal(expiry) {
+			t.Errorf("Deadline() = %v, want %v (expiry)", gotDeadline, expiry)
+		}
+	})
+
+	t.Run("uses parent deadline if earlier than expiry", func(t *testing.T) {
+		acking := NewAcking(func() {}, func(error) {})
+		expiry := time.Now().Add(time.Hour)
+		msg := New("data", Attributes{AttrExpiryTime: expiry}, acking)
+
+		parentDeadline := time.Now().Add(time.Minute)
+		parent, cancel := context.WithDeadline(context.Background(), parentDeadline)
+		defer cancel()
+
+		ctx := msg.Context(parent)
+
+		gotDeadline, ok := ctx.Deadline()
+		if !ok {
+			t.Error("expected deadline")
+		}
+		// Should use parent deadline (1 min) not expiry (1 hour)
+		if !gotDeadline.Equal(parentDeadline) {
+			t.Errorf("Deadline() = %v, want %v (parent)", gotDeadline, parentDeadline)
+		}
+	})
+
+	t.Run("uses expiry when no parent deadline", func(t *testing.T) {
+		acking := NewAcking(func() {}, func(error) {})
+		expiry := time.Now().Add(time.Minute)
+		msg := New("data", Attributes{AttrExpiryTime: expiry}, acking)
+
+		ctx := msg.Context(context.Background())
+
+		gotDeadline, ok := ctx.Deadline()
+		if !ok {
+			t.Error("expected deadline from expiry")
+		}
+		if !gotDeadline.Equal(expiry) {
+			t.Errorf("Deadline() = %v, want %v", gotDeadline, expiry)
+		}
+	})
+
+	t.Run("no deadline when neither parent nor expiry set", func(t *testing.T) {
+		acking := NewAcking(func() {}, func(error) {})
+		msg := New("data", nil, acking)
+
+		ctx := msg.Context(context.Background())
+
+		_, ok := ctx.Deadline()
+		if ok {
+			t.Error("expected no deadline")
+		}
+	})
+
+	t.Run("cancelled when parent cancelled", func(t *testing.T) {
+		acking := NewAcking(func() {}, func(error) {})
+		msg := New("data", nil, acking)
+
+		parent, cancel := context.WithCancel(context.Background())
+		ctx := msg.Context(parent)
+
+		// Not cancelled yet
+		if ctx.Err() != nil {
+			t.Error("context should not be cancelled yet")
+		}
+
+		// Cancel parent
+		cancel()
+
+		// Wait for context to be cancelled
+		select {
+		case <-ctx.Done():
+			// OK
+		case <-time.After(time.Second):
+			t.Error("context should be cancelled when parent cancelled")
+		}
+
+		if ctx.Err() != context.Canceled {
+			t.Errorf("Err() = %v, want context.Canceled", ctx.Err())
+		}
+	})
+
+	t.Run("inherits parent values", func(t *testing.T) {
+		acking := NewAcking(func() {}, func(error) {})
+		msg := New("data", nil, acking)
+
+		type ctxKey string
+		parent := context.WithValue(context.Background(), ctxKey("key"), "value")
+		ctx := msg.Context(parent)
+
+		if got := ctx.Value(ctxKey("key")); got != "value" {
+			t.Errorf("Value() = %v, want 'value'", got)
+		}
+	})
+
+	t.Run("FromContext alias works", func(t *testing.T) {
+		acking := NewAcking(func() {}, func(error) {})
+		msg := New("data", nil, acking)
+		ctx := msg.Context(context.Background())
+
+		got := FromContext(ctx)
+		if got != msg {
+			t.Errorf("FromContext() = %v, want %v", got, msg)
 		}
 	})
 }
@@ -1005,8 +1159,8 @@ func TestSharedAckingWithForwardPattern(t *testing.T) {
 		out1 := New("out1", nil, outputAcking)
 		out2 := New("out2", nil, outputAcking)
 
-		ctx1 := out1.Context()
-		ctx2 := out2.Context()
+		ctx1 := out1.Context(context.Background())
+		ctx2 := out2.Context(context.Background())
 
 		// Contexts should not be cancelled yet
 		if ctx1.Err() != nil || ctx2.Err() != nil {
@@ -1016,11 +1170,17 @@ func TestSharedAckingWithForwardPattern(t *testing.T) {
 		// Nack one output
 		out1.Nack(errors.New("fail"))
 
-		// Both contexts should now be cancelled (same acking)
-		if ctx1.Err() == nil {
+		// Wait for both contexts to be cancelled (same acking)
+		select {
+		case <-ctx1.Done():
+			// OK
+		case <-time.After(time.Second):
 			t.Error("ctx1 should be cancelled after nack")
 		}
-		if ctx2.Err() == nil {
+		select {
+		case <-ctx2.Done():
+			// OK
+		case <-time.After(time.Second):
 			t.Error("ctx2 should be cancelled after nack (shared acking)")
 		}
 	})

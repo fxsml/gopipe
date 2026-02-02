@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/fxsml/gopipe/message"
 )
@@ -170,14 +171,8 @@ func TestForwardAck(t *testing.T) {
 		outputs, _ := wrapped(context.Background(), msg)
 
 		// Get context before nack
-		ctx1 := outputs[0].Context()
-		ctx2 := outputs[1].Context()
-
-		// Contexts share the same done channel (shared acking)
-		// They will both be cancelled when acking settles
-		if ctx1.Done() != ctx2.Done() {
-			t.Error("outputs should share the same done channel")
-		}
+		ctx1 := outputs[0].Context(context.Background())
+		ctx2 := outputs[1].Context(context.Background())
 
 		// Context should not be cancelled yet
 		if ctx1.Err() != nil {
@@ -187,11 +182,17 @@ func TestForwardAck(t *testing.T) {
 		// Nack one output
 		outputs[0].Nack(errors.New("fail"))
 
-		// Now both contexts should be cancelled
-		if ctx1.Err() == nil {
+		// Wait for contexts to be cancelled (they share the same acking)
+		select {
+		case <-ctx1.Done():
+			// OK
+		case <-time.After(time.Second):
 			t.Error("context should be cancelled after nack")
 		}
-		if ctx2.Err() == nil {
+		select {
+		case <-ctx2.Done():
+			// OK
+		case <-time.After(time.Second):
 			t.Error("sibling context should also be cancelled after nack")
 		}
 	})

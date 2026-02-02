@@ -108,25 +108,65 @@ func (a *Acking) done() <-chan struct{} {
 	return a.doneCh
 }
 
-// messageContext wraps a done channel as a context.Context and stores a message reference.
+// messageContext wraps a parent context with message-specific behavior.
+// It combines the parent's deadline with the message's expiry time,
+// and cancels when either the parent cancels or the message is settled.
 type messageContext[T any] struct {
-	done <-chan struct{}
-	msg  *TypedMessage[T]
+	parent   context.Context
+	msg      *TypedMessage[T]
+	done     chan struct{}
+	deadline time.Time
+	hasDeadline bool
 }
 
-func (c *messageContext[T]) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (c *messageContext[T]) Done() <-chan struct{}       { return c.done }
+// newMessageContext creates a context that combines parent with message settlement.
+func newMessageContext[T any](parent context.Context, msg *TypedMessage[T]) *messageContext[T] {
+	ctx := &messageContext[T]{
+		parent: parent,
+		msg:    msg,
+		done:   make(chan struct{}),
+	}
+
+	// Compute deadline: minimum of parent deadline and message expiry time
+	if parentDeadline, ok := parent.Deadline(); ok {
+		ctx.deadline = parentDeadline
+		ctx.hasDeadline = true
+	}
+	if expiry := msg.ExpiryTime(); !expiry.IsZero() {
+		if !ctx.hasDeadline || expiry.Before(ctx.deadline) {
+			ctx.deadline = expiry
+			ctx.hasDeadline = true
+		}
+	}
+
+	// Start goroutine to close done when either parent or message settles
+	go func() {
+		select {
+		case <-parent.Done():
+		case <-msg.Acking.doneCh:
+		}
+		close(ctx.done)
+	}()
+
+	return ctx
+}
+
+func (c *messageContext[T]) Deadline() (time.Time, bool) {
+	return c.deadline, c.hasDeadline
+}
+
+func (c *messageContext[T]) Done() <-chan struct{} {
+	return c.done
+}
 
 func (c *messageContext[T]) Value(key any) any {
 	switch key {
 	case messageKey:
-		// Return as *Message if T is any
 		if msg, ok := any(c.msg).(*Message); ok {
 			return msg
 		}
 		return nil
 	case rawMessageKey:
-		// Return as *RawMessage if T is []byte
 		if msg, ok := any(c.msg).(*RawMessage); ok {
 			return msg
 		}
@@ -134,13 +174,17 @@ func (c *messageContext[T]) Value(key any) any {
 	case attributesKey:
 		return c.msg.Attributes
 	default:
-		return nil
+		return c.parent.Value(key)
 	}
 }
 
 func (c *messageContext[T]) Err() error {
 	select {
 	case <-c.done:
+		// Check which caused cancellation
+		if c.parent.Err() != nil {
+			return c.parent.Err()
+		}
 		return context.Canceled
 	default:
 		return nil
@@ -299,16 +343,21 @@ func (m *TypedMessage[T]) Done() <-chan struct{} {
 	return m.Acking.doneCh
 }
 
-// Context returns a context associated with this message's acking.
-// The context is cancelled when the message (or any sibling sharing the acking) is settled.
-// The context includes the message reference, accessible via MessageFromContext or RawMessageFromContext.
-// Useful for aborting long-running operations when processing completes or fails.
-// Returns context.Background() if no acking is set.
-func (m *TypedMessage[T]) Context() context.Context {
+// Context returns a context derived from parent that is cancelled when
+// the message (or any sibling sharing the acking) is settled (acked or nacked).
+//
+// The context provides:
+//   - Cancellation when parent cancels OR message settles (whichever first)
+//   - Deadline from minimum of parent deadline and message ExpiryTime
+//   - Message reference via MessageFromContext or RawMessageFromContext
+//   - Attributes via AttributesFromContext
+//
+// If no acking is set, returns the parent context unchanged.
+func (m *TypedMessage[T]) Context(parent context.Context) context.Context {
 	if m.Acking == nil {
-		return context.Background()
+		return parent
 	}
-	return &messageContext[T]{done: m.Acking.doneCh, msg: m}
+	return newMessageContext(parent, m)
 }
 
 // ID returns the event identifier. Returns empty string if not set.
