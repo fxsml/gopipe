@@ -1005,6 +1005,97 @@ func TestMessageContextWithParent(t *testing.T) {
 			t.Errorf("FromContext() = %v, want %v", got, msg)
 		}
 	})
+
+	t.Run("Done channel closes on settlement", func(t *testing.T) {
+		acking := NewAcking(func() {}, func(error) {})
+		msg := New("data", nil, acking)
+		ctx := msg.Context(context.Background())
+
+		// Done should return non-nil channel
+		done := ctx.Done()
+		if done == nil {
+			t.Fatal("Done() returned nil")
+		}
+
+		// Should not be closed yet
+		select {
+		case <-done:
+			t.Error("Done() closed before settlement")
+		default:
+			// OK
+		}
+
+		msg.Ack()
+
+		// Should close after settlement
+		select {
+		case <-done:
+			// OK
+		case <-time.After(time.Second):
+			t.Error("Done() not closed after settlement")
+		}
+	})
+
+	t.Run("propagates DeadlineExceeded from parent", func(t *testing.T) {
+		acking := NewAcking(func() {}, func(error) {})
+		msg := New("data", nil, acking)
+
+		// Create parent with very short deadline
+		parent, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+		defer cancel()
+
+		ctx := msg.Context(parent)
+
+		// Wait for deadline to pass
+		select {
+		case <-ctx.Done():
+			// OK
+		case <-time.After(time.Second):
+			t.Fatal("context should be cancelled after deadline")
+		}
+
+		// Should return DeadlineExceeded
+		if ctx.Err() != context.DeadlineExceeded {
+			t.Errorf("Err() = %v, want context.DeadlineExceeded", ctx.Err())
+		}
+	})
+
+	t.Run("multiple Context calls each work independently", func(t *testing.T) {
+		acking := NewAcking(func() {}, func(error) {})
+		msg := New("data", nil, acking)
+
+		ctx1 := msg.Context(context.Background())
+		ctx2 := msg.Context(context.Background())
+		ctx3 := msg.Context(context.Background())
+
+		// All should have the message
+		if MessageFromContext(ctx1) != msg {
+			t.Error("ctx1 missing message")
+		}
+		if MessageFromContext(ctx2) != msg {
+			t.Error("ctx2 missing message")
+		}
+		if MessageFromContext(ctx3) != msg {
+			t.Error("ctx3 missing message")
+		}
+
+		// None should be cancelled yet
+		if ctx1.Err() != nil || ctx2.Err() != nil || ctx3.Err() != nil {
+			t.Error("contexts should not be cancelled yet")
+		}
+
+		msg.Ack()
+
+		// All should be cancelled after settlement
+		for i, ctx := range []context.Context{ctx1, ctx2, ctx3} {
+			select {
+			case <-ctx.Done():
+				// OK
+			case <-time.After(time.Second):
+				t.Errorf("ctx%d not cancelled after settlement", i+1)
+			}
+		}
+	})
 }
 
 // TestAckingStateTransitions tests all valid state transitions.
