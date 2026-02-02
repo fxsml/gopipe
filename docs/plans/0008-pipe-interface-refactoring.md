@@ -202,19 +202,100 @@ Reduces duplication across ProcessorPipe, SinkPipe, GeneratorPipe, BatchProcesso
 ### 8. Merger/Distributor stay as infrastructure
 They are fan-in/fan-out primitives, not pipeline stages. No semantic interfaces needed.
 
-## Open Questions
+## Producer and Trigger Design
 
-### Naming for GeneratorPipe autonomous method
+### Conceptual Model
 
-Current proposal: `Produce(ctx) (<-chan Out, error)`
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Producer                              │
+│                                                              │
+│   ┌─────────────┐         ┌─────────────────────────────┐   │
+│   │   Trigger   │ ──────► │     Pipe[struct{}, Out]     │   │
+│   │ TriggerFunc │         │  (e.g., GeneratorPipe)      │   │
+│   └─────────────┘         └─────────────────────────────┘   │
+│                                                              │
+│   Produce(ctx) (<-chan Out, error)                          │
+└─────────────────────────────────────────────────────────────┘
+```
 
-Alternatives to consider:
-- `Subscribe(ctx) (<-chan Out, error)` - message/event semantics
-- `Start(ctx) (<-chan Out, error)` - lifecycle semantics
-- `Run(ctx) (<-chan Out, error)` - execution semantics
-- `Stream(ctx) (<-chan Out, error)` - streaming semantics
+**Separation of concerns:**
+- **Generator** = what to produce (the data)
+- **Trigger** = when to produce (the timing)
+- **Producer** = autonomous streaming (combines trigger + pipe)
 
-Need to check message package `Subscribe` pattern for consistency.
+### Core Types (in `pipe` package)
+
+```go
+// TriggerFunc produces trigger signals until context is cancelled.
+// Context is passed at runtime by Producer - lifecycle is external concern.
+type TriggerFunc func(ctx context.Context) <-chan struct{}
+
+// Producer provides autonomous streaming capability.
+type Producer[Out any] interface {
+    Produce(ctx context.Context) (<-chan Out, error)
+}
+
+// NewProducer combines a trigger with any Pipe[struct{}, Out].
+func NewProducer[Out any](trigger TriggerFunc, p Pipe[struct{}, Out]) Producer[Out]
+```
+
+### Trigger Subpackage (`pipe/trigger`)
+
+Factory functions return `pipe.TriggerFunc`:
+
+```go
+// pipe/trigger/trigger.go
+package trigger
+
+import "github.com/fxsml/gopipe/pipe"
+
+// Infinite triggers as fast as possible.
+func Infinite() pipe.TriggerFunc
+
+// Ticker triggers at regular intervals.
+func Ticker(d time.Duration) pipe.TriggerFunc
+
+// Count triggers exactly n times.
+func Count(n int) pipe.TriggerFunc
+
+// Once triggers exactly once.
+func Once() pipe.TriggerFunc
+```
+
+### Usage Examples
+
+```go
+import (
+    "github.com/fxsml/gopipe/pipe"
+    "github.com/fxsml/gopipe/pipe/trigger"
+)
+
+// Create generator (no autonomous streaming capability)
+gen := pipe.NewGenerator(fn, cfg)
+
+// Use with explicit trigger via Pipe()
+gen.Pipe(ctx, triggerChan)
+
+// Or wrap as Producer for autonomous operation
+producer := pipe.NewProducer(trigger.Infinite(), gen)
+out, _ := producer.Produce(ctx)
+
+// With ticker
+producer := pipe.NewProducer(trigger.Ticker(time.Second), gen)
+
+// Producer works with any Pipe[struct{}, Out], including pipelines
+pipeline := pipe.Apply(gen, transform, filter)
+producer := pipe.NewProducer(trigger.Ticker(time.Second), pipeline)
+```
+
+### Design Decisions
+
+1. **GeneratorPipe has no Produce() method** - Keep it simple. Producer is a separate composition.
+2. **TriggerFunc defined in `pipe` package** - Core type alongside other func types.
+3. **Trigger implementations in `trigger` subpackage** - Mirrors `middleware` pattern.
+4. **Factory functions for triggers** - `trigger.Infinite()`, `trigger.Ticker(d)` - consistent, allows params.
+5. **Context passed at runtime** - TriggerFunc receives ctx from Producer, not at construction.
 
 ## Tasks
 
@@ -295,7 +376,45 @@ func (p *pipe[In, Out]) start() error
 - `message/cloudevents/publisher.go`
 - `message/cloudevents/subscriber.go`
 
-### Task 11: Update Documentation
+### Task 11: Add TriggerFunc and Producer
+
+**Files to Modify:**
+- `pipe/pipe.go` - Add `TriggerFunc` type and `Producer` interface
+- `pipe/producer.go` - Add `NewProducer` and internal producer struct
+
+```go
+// pipe/pipe.go
+type TriggerFunc func(ctx context.Context) <-chan struct{}
+
+type Producer[Out any] interface {
+    Produce(ctx context.Context) (<-chan Out, error)
+}
+
+// pipe/producer.go
+func NewProducer[Out any](trigger TriggerFunc, p Pipe[struct{}, Out]) Producer[Out]
+```
+
+### Task 12: Create trigger Subpackage
+
+**Files to Create:**
+- `pipe/trigger/trigger.go` - Factory functions
+- `pipe/trigger/trigger_test.go` - Tests
+
+```go
+func Infinite() pipe.TriggerFunc
+func Ticker(d time.Duration) pipe.TriggerFunc
+func Count(n int) pipe.TriggerFunc
+func Once() pipe.TriggerFunc
+```
+
+### Task 13: Update message Package
+
+- `message/pipes.go`
+- `message/router.go`
+- `message/cloudevents/publisher.go`
+- `message/cloudevents/subscriber.go`
+
+### Task 14: Update Documentation
 
 - `pipe/doc.go`
 - `README.md`
@@ -327,20 +446,29 @@ func (p *pipe[In, Out]) start() error
 | `ProcessorPipe.Process()` | Direct single-item invocation |
 | `BatchProcessorPipe.ProcessBatch()` | Direct batch invocation |
 | `GeneratorPipe.Generate()` | Single batch generation |
-| `GeneratorPipe.Produce()` | Autonomous streaming (TBD naming) |
-| `GeneratorPipe.Pipe()` | Triggered streaming |
+| `GeneratorPipe.Pipe()` | Triggered streaming (input as trigger) |
 | `SinkPipe.Sink()` | Direct single-item consumption |
+| `TriggerFunc` | Type for trigger functions |
+| `Producer[Out]` interface | Autonomous streaming with `Produce()` |
+| `NewProducer()` | Combines trigger + Pipe[struct{}, Out] |
+| `trigger.Infinite()` | Trigger as fast as possible |
+| `trigger.Ticker(d)` | Trigger at intervals |
+| `trigger.Count(n)` | Trigger exactly n times |
+| `trigger.Once()` | Trigger exactly once |
 
 ## Acceptance Criteria
 
 - [ ] Internal base type created
-- [ ] All semantic interfaces defined
+- [ ] All semantic interfaces defined (Processor, BatchProcessor, Sink, Generator)
 - [ ] All structs renamed with `*Pipe` suffix
 - [ ] All structs implement their semantic interface
 - [ ] GeneratorPipe.Pipe() uses input as trigger
-- [ ] GeneratorPipe.Produce() is autonomous
+- [ ] GeneratorPipe.Generate() returns single batch (not channel)
 - [ ] All constructors renamed
 - [ ] Direct methods don't apply middleware
+- [ ] TriggerFunc type defined in pipe package
+- [ ] Producer interface and NewProducer implemented
+- [ ] trigger subpackage created with factory functions
 - [ ] All pipe package tests pass
 - [ ] All message package tests pass
 - [ ] Build passes (`make build && make vet`)
