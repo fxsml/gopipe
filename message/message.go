@@ -124,7 +124,6 @@ func newMessageContext[T any](parent context.Context, msg *TypedMessage[T]) *mes
 	ctx := &messageContext[T]{
 		parent: parent,
 		msg:    msg,
-		done:   make(chan struct{}),
 	}
 
 	// Compute deadline: minimum of parent deadline and message expiry time
@@ -139,7 +138,14 @@ func newMessageContext[T any](parent context.Context, msg *TypedMessage[T]) *mes
 		}
 	}
 
-	// Start goroutine to close done when either parent or message settles
+	// Optimization: if parent never cancels, reuse acking's done channel directly
+	if parent.Done() == nil {
+		ctx.done = msg.Acking.doneCh
+		return ctx
+	}
+
+	// Otherwise, spawn goroutine to merge both cancellation sources
+	ctx.done = make(chan struct{})
 	go func() {
 		select {
 		case <-parent.Done():
