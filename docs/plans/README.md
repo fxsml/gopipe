@@ -5,6 +5,7 @@
 | Plan | Title | Status |
 |------|-------|--------|
 | [0007](0007-cesql-pattern-matching.md) | CESQL Pattern Matching | Proposed |
+| [0013](0013-channel-package-refactoring.md) | Channel Package Refactoring | Proposed |
 | [0014](0014-pipe-interface-refactoring.md) | Pipe Interface Refactoring | Proposed |
 | [0015](0015-message-module-refactoring.md) | Message Module Refactoring | Proposed (blocked by 0014) |
 
