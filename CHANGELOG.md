@@ -5,7 +5,7 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.17.0] - 2026-02-03
 
 ### Added
 
@@ -20,13 +20,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Complements `message/cloudevents` (SDK protocol wrapper) with HTTP-specific optimization
   - See `examples/06-http-cloudevents` for complete usage example
 
-## [0.16.1] - 2026-01-29
+- **pipe:** `ProcessTimeout` configuration field for per-message processing timeouts
+  - Works correctly with `ShutdownTimeout` via shutdown context pattern
+  - Handler contexts derive from shutdown context, not parent context
+  - Handlers continue during grace period with their `ProcessTimeout`
+  - On forced shutdown (grace period expired), handlers are cancelled immediately
+  - Default: `0` (no timeout)
+
+- **message:** `AckStrategy` for flexible acknowledgment patterns
+  - `AckOnSuccess`: automatic ack on success, nack on error (default)
+  - `AckManual`: handler controls ack/nack explicitly
+  - `AckForward`: ack forwarded to output messages (event sourcing)
+  - Uses idiomatic `Done() + Err()` pattern (like `context.Context`)
+  - Shared acking enables fan-out patterns
+  - Panic protection prevents resource leaks
+
+- **message:** `Context()` method for message-specific context derivation
+  - Integrates message `ExpiryTime` with context deadlines
+  - Optimized to avoid goroutines when parent context never cancels
+  - Separates lifecycle (context) from domain logic (settlement)
 
 ### Fixed
 
 - **message:** Signal shutdown to marshal/unmarshal pipes immediately
   - Previously `ShutdownTimeout` was ineffective for marshal/unmarshal pipes
   - Now all engine components see shutdown signal simultaneously
+
+### Removed
+
+- **pipe/middleware:** `Context` middleware (replaced by `ProcessTimeout`)
+  - Used anti-pattern: `Background() + Timeout` breaks `ShutdownTimeout`
+  - See issue #111 for details
+
+- **message/middleware:** `AutoAck` middleware (replaced by `AckStrategy`)
+  - Consolidated into `AckStrategy` configuration
 
 ## [0.16.0] - 2026-01-28
 
