@@ -688,3 +688,188 @@ func TestRouter_AckStrategy_Forward(t *testing.T) {
 		}
 	})
 }
+
+func TestRouter_ProcessTimeout(t *testing.T) {
+	t.Run("handler timeout enforced", func(t *testing.T) {
+		var handlerErr error
+		router := NewRouter(PipeConfig{
+			ProcessTimeout: 50 * time.Millisecond,
+			ErrorHandler: func(msg *Message, err error) {
+				handlerErr = err
+			},
+		})
+
+		// Handler that takes longer than ProcessTimeout
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			select {
+			case <-time.After(200 * time.Millisecond):
+				return []*Message{{Data: msg.Data, Attributes: msg.Attributes}}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}, KebabNaming)
+
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "123"},
+			Attributes: Attributes{"type": "test.command"},
+		}
+		close(in)
+
+		out, err := router.Pipe(ctx, in)
+		if err != nil {
+			t.Fatalf("Pipe failed: %v", err)
+		}
+
+		// Drain output
+		for range out {
+		}
+
+		// Give error handler time to execute
+		time.Sleep(10 * time.Millisecond)
+
+		// Verify handler was cancelled due to ProcessTimeout
+		if !errors.Is(handlerErr, context.DeadlineExceeded) {
+			t.Errorf("expected context.DeadlineExceeded, got %v", handlerErr)
+		}
+	})
+
+	t.Run("handler completes within timeout", func(t *testing.T) {
+		router := NewRouter(PipeConfig{
+			ProcessTimeout: 100 * time.Millisecond,
+		})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			time.Sleep(10 * time.Millisecond) // Completes quickly
+			return []*Message{{
+				Data:       TestEvent{ID: msg.Data.(*TestCommand).ID, Status: "done"},
+				Attributes: msg.Attributes,
+			}}, nil
+		}, KebabNaming)
+
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "123"},
+			Attributes: Attributes{"type": "test.command"},
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+
+		// Should receive output
+		msg := <-out
+		if msg == nil {
+			t.Fatal("expected message, got nil")
+		}
+
+		event, ok := msg.Data.(TestEvent)
+		if !ok {
+			t.Fatalf("expected TestEvent, got %T", msg.Data)
+		}
+		if event.Status != "done" {
+			t.Errorf("expected status 'done', got %q", event.Status)
+		}
+	})
+
+	t.Run("zero timeout means no timeout", func(t *testing.T) {
+		router := NewRouter(PipeConfig{
+			ProcessTimeout: 0, // No timeout
+		})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			time.Sleep(50 * time.Millisecond) // Takes some time
+			return []*Message{{
+				Data:       TestEvent{ID: msg.Data.(*TestCommand).ID, Status: "done"},
+				Attributes: msg.Attributes,
+			}}, nil
+		}, KebabNaming)
+
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "123"},
+			Attributes: Attributes{"type": "test.command"},
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+
+		// Should complete successfully
+		msg := <-out
+		if msg == nil {
+			t.Fatal("expected message, got nil")
+		}
+
+		event := msg.Data.(TestEvent)
+		if event.Status != "done" {
+			t.Errorf("expected status 'done', got %q", event.Status)
+		}
+	})
+
+	t.Run("shutdown timeout takes precedence over process timeout", func(t *testing.T) {
+		var handlerErr error
+		router := NewRouter(PipeConfig{
+			ProcessTimeout:  500 * time.Millisecond, // Long process timeout
+			ShutdownTimeout: 50 * time.Millisecond,  // Short shutdown timeout
+			ErrorHandler: func(msg *Message, err error) {
+				handlerErr = err
+			},
+		})
+
+		handlerStarted := make(chan struct{})
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			close(handlerStarted)
+			select {
+			case <-time.After(200 * time.Millisecond):
+				return []*Message{{Data: msg.Data, Attributes: msg.Attributes}}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}, KebabNaming)
+
+		_ = router.AddHandler("", nil, handler)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "123"},
+			Attributes: Attributes{"type": "test.command"},
+		}
+
+		out, _ := router.Pipe(ctx, in)
+
+		// Wait for handler to start
+		<-handlerStarted
+
+		// Cancel context - triggers shutdown with grace period
+		cancel()
+
+		// Close input after grace period expires
+		time.Sleep(60 * time.Millisecond)
+		close(in)
+
+		// Drain output
+		for range out {
+		}
+
+		// Give error handler time
+		time.Sleep(10 * time.Millisecond)
+
+		// Handler should be cancelled due to shutdown, not ProcessTimeout
+		if handlerErr == nil {
+			t.Error("expected handler to be cancelled")
+		}
+		// Should be Canceled (from shutdown), not DeadlineExceeded (from ProcessTimeout)
+		if errors.Is(handlerErr, context.DeadlineExceeded) {
+			t.Error("expected cancellation from shutdown, got deadline exceeded from ProcessTimeout")
+		}
+	})
+}
