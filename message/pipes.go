@@ -37,6 +37,7 @@ func NewUnmarshalPipe(registry InputRegistry, marshaler Marshaler, cfg PipeConfi
 	}, pipe.Config{
 		BufferSize:      cfg.Pool.BufferSize,
 		Concurrency:     cfg.Pool.Workers,
+		ProcessTimeout:  cfg.ProcessTimeout,
 		ShutdownTimeout: cfg.ShutdownTimeout,
 		ErrorHandler: func(in any, err error) {
 			raw := in.(*RawMessage)
@@ -96,6 +97,7 @@ func NewMarshalPipe(marshaler Marshaler, cfg PipeConfig) *MarshalPipe {
 	}, pipe.Config{
 		BufferSize:      cfg.Pool.BufferSize,
 		Concurrency:     cfg.Pool.Workers,
+		ProcessTimeout:  cfg.ProcessTimeout,
 		ShutdownTimeout: cfg.ShutdownTimeout,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)

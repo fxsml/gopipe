@@ -476,3 +476,400 @@ func TestRouter_PoolConfig_Defaults(t *testing.T) {
 		}
 	})
 }
+
+// AckStrategy tests
+
+func TestRouter_AckStrategy_Default(t *testing.T) {
+	t.Run("default is AckOnSuccess", func(t *testing.T) {
+		var acked, nacked bool
+		acking := NewAcking(func() { acked = true }, func(error) { nacked = true })
+
+		router := NewRouter(PipeConfig{}) // No AckStrategy specified
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			return nil, nil // Success
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     acking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		for range out {
+		}
+
+		if !acked {
+			t.Error("expected message to be auto-acked on success")
+		}
+		if nacked {
+			t.Error("message should not be nacked on success")
+		}
+	})
+
+	t.Run("auto-nacks on error", func(t *testing.T) {
+		var acked, nacked bool
+		acking := NewAcking(func() { acked = true }, func(error) { nacked = true })
+
+		router := NewRouter(PipeConfig{})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			return nil, errors.New("handler error")
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     acking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		for range out {
+		}
+
+		if acked {
+			t.Error("message should not be acked on error")
+		}
+		if !nacked {
+			t.Error("expected message to be auto-nacked on error")
+		}
+	})
+}
+
+func TestRouter_AckStrategy_Manual(t *testing.T) {
+	t.Run("handler must ack manually", func(t *testing.T) {
+		var acked bool
+		acking := NewAcking(func() { acked = true }, func(error) {})
+
+		router := NewRouter(PipeConfig{AckStrategy: AckManual})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			msg.Ack() // Manual ack
+			return nil, nil
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     acking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		for range out {
+		}
+
+		if !acked {
+			t.Error("expected message to be acked by handler")
+		}
+	})
+
+	t.Run("auto-nacks on error even in manual mode", func(t *testing.T) {
+		var nacked bool
+		acking := NewAcking(func() {}, func(error) { nacked = true })
+
+		router := NewRouter(PipeConfig{AckStrategy: AckManual})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			return nil, errors.New("handler error")
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     acking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		for range out {
+		}
+
+		if !nacked {
+			t.Error("expected message to be nacked on error")
+		}
+	})
+}
+
+func TestRouter_AckStrategy_Forward(t *testing.T) {
+	t.Run("acks input when all outputs acked", func(t *testing.T) {
+		var inputAcked bool
+		inputAcking := NewAcking(func() { inputAcked = true }, func(error) {})
+
+		router := NewRouter(PipeConfig{AckStrategy: AckForward})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			return []*Message{
+				{Data: "out1", Attributes: Attributes{"type": "output"}},
+				{Data: "out2", Attributes: Attributes{"type": "output"}},
+			}, nil
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     inputAcking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		var outputs []*Message
+		for msg := range out {
+			outputs = append(outputs, msg)
+		}
+
+		// Input should not be acked yet
+		if inputAcked {
+			t.Error("input should not be acked before outputs")
+		}
+
+		// Ack all outputs
+		for _, msg := range outputs {
+			msg.Ack()
+		}
+
+		if !inputAcked {
+			t.Error("input should be acked after all outputs acked")
+		}
+	})
+
+	t.Run("nacks input when any output nacked", func(t *testing.T) {
+		var inputNacked bool
+		inputAcking := NewAcking(func() {}, func(error) { inputNacked = true })
+
+		router := NewRouter(PipeConfig{AckStrategy: AckForward})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			return []*Message{
+				{Data: "out1", Attributes: Attributes{"type": "output"}},
+				{Data: "out2", Attributes: Attributes{"type": "output"}},
+			}, nil
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     inputAcking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		var outputs []*Message
+		for msg := range out {
+			outputs = append(outputs, msg)
+		}
+
+		// Nack one output
+		outputs[0].Nack(errors.New("downstream error"))
+
+		if !inputNacked {
+			t.Error("input should be nacked when any output nacks")
+		}
+	})
+}
+
+func TestRouter_ProcessTimeout(t *testing.T) {
+	t.Run("handler timeout enforced", func(t *testing.T) {
+		var handlerErr error
+		router := NewRouter(PipeConfig{
+			ProcessTimeout: 50 * time.Millisecond,
+			ErrorHandler: func(msg *Message, err error) {
+				handlerErr = err
+			},
+		})
+
+		// Handler that takes longer than ProcessTimeout
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			select {
+			case <-time.After(200 * time.Millisecond):
+				return []*Message{{Data: msg.Data, Attributes: msg.Attributes}}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}, KebabNaming)
+
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "123"},
+			Attributes: Attributes{"type": "test.command"},
+		}
+		close(in)
+
+		out, err := router.Pipe(ctx, in)
+		if err != nil {
+			t.Fatalf("Pipe failed: %v", err)
+		}
+
+		// Drain output
+		for range out {
+		}
+
+		// Give error handler time to execute
+		time.Sleep(10 * time.Millisecond)
+
+		// Verify handler was cancelled due to ProcessTimeout
+		if !errors.Is(handlerErr, context.DeadlineExceeded) {
+			t.Errorf("expected context.DeadlineExceeded, got %v", handlerErr)
+		}
+	})
+
+	t.Run("handler completes within timeout", func(t *testing.T) {
+		router := NewRouter(PipeConfig{
+			ProcessTimeout: 100 * time.Millisecond,
+		})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			time.Sleep(10 * time.Millisecond) // Completes quickly
+			return []*Message{{
+				Data:       TestEvent{ID: msg.Data.(*TestCommand).ID, Status: "done"},
+				Attributes: msg.Attributes,
+			}}, nil
+		}, KebabNaming)
+
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "123"},
+			Attributes: Attributes{"type": "test.command"},
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+
+		// Should receive output
+		msg := <-out
+		if msg == nil {
+			t.Fatal("expected message, got nil")
+		}
+
+		event, ok := msg.Data.(TestEvent)
+		if !ok {
+			t.Fatalf("expected TestEvent, got %T", msg.Data)
+		}
+		if event.Status != "done" {
+			t.Errorf("expected status 'done', got %q", event.Status)
+		}
+	})
+
+	t.Run("zero timeout means no timeout", func(t *testing.T) {
+		router := NewRouter(PipeConfig{
+			ProcessTimeout: 0, // No timeout
+		})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			time.Sleep(50 * time.Millisecond) // Takes some time
+			return []*Message{{
+				Data:       TestEvent{ID: msg.Data.(*TestCommand).ID, Status: "done"},
+				Attributes: msg.Attributes,
+			}}, nil
+		}, KebabNaming)
+
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "123"},
+			Attributes: Attributes{"type": "test.command"},
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+
+		// Should complete successfully
+		msg := <-out
+		if msg == nil {
+			t.Fatal("expected message, got nil")
+		}
+
+		event := msg.Data.(TestEvent)
+		if event.Status != "done" {
+			t.Errorf("expected status 'done', got %q", event.Status)
+		}
+	})
+
+	t.Run("shutdown timeout takes precedence over process timeout", func(t *testing.T) {
+		var handlerErr error
+		router := NewRouter(PipeConfig{
+			ProcessTimeout:  500 * time.Millisecond, // Long process timeout
+			ShutdownTimeout: 50 * time.Millisecond,  // Short shutdown timeout
+			ErrorHandler: func(msg *Message, err error) {
+				handlerErr = err
+			},
+		})
+
+		handlerStarted := make(chan struct{})
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			close(handlerStarted)
+			select {
+			case <-time.After(200 * time.Millisecond):
+				return []*Message{{Data: msg.Data, Attributes: msg.Attributes}}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}, KebabNaming)
+
+		_ = router.AddHandler("", nil, handler)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "123"},
+			Attributes: Attributes{"type": "test.command"},
+		}
+
+		out, _ := router.Pipe(ctx, in)
+
+		// Wait for handler to start
+		<-handlerStarted
+
+		// Cancel context - triggers shutdown with grace period
+		cancel()
+
+		// Close input after grace period expires
+		time.Sleep(60 * time.Millisecond)
+		close(in)
+
+		// Drain output
+		for range out {
+		}
+
+		// Give error handler time
+		time.Sleep(10 * time.Millisecond)
+
+		// Handler should be cancelled due to shutdown, not ProcessTimeout
+		if handlerErr == nil {
+			t.Error("expected handler to be cancelled")
+		}
+		// Should be Canceled (from shutdown), not DeadlineExceeded (from ProcessTimeout)
+		if errors.Is(handlerErr, context.DeadlineExceeded) {
+			t.Error("expected cancellation from shutdown, got deadline exceeded from ProcessTimeout")
+		}
+	})
+}

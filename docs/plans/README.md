@@ -5,6 +5,7 @@
 | Plan | Title | Status |
 |------|-------|--------|
 | [0007](0007-cesql-pattern-matching.md) | CESQL Pattern Matching | Proposed |
+| [autoscale-worker-pool](autoscale-worker-pool.md) | Autoscale Worker Pool | Proposed |
 
 ## Agent Guidance
 
@@ -27,6 +28,7 @@ Historical plans from the message package development are in [archive/](archive/
 | [0010](archive/0010-graceful-loopback-shutdown.md) | Graceful Loopback Shutdown | Complete |
 | [0011](archive/0011-named-pools.md) | Named Pools | Complete |
 | [0012](archive/0012-engine-simplification.md) | Engine Simplification | Complete |
+| [0013](archive/0013-http-cloudevents-adapter.md) | HTTP CloudEvents Adapter | Complete |
 
 ## Creating New Plans
 
