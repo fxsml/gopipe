@@ -54,7 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **message/middleware:** `AutoAck` middleware (replaced by `AckStrategy`)
   - Consolidated into `AckStrategy` configuration
-
 ## [0.16.0] - 2026-01-28
 
 ### Changed
