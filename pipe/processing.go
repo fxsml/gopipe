@@ -24,8 +24,10 @@ type Config struct {
 	// ProcessTimeout sets a per-message processing deadline (default: 0, no timeout).
 	// If > 0, each handler invocation is wrapped with a timeout context.
 	// During normal operation, handlers are cancelled if they exceed ProcessTimeout.
-	// During shutdown grace period, handlers continue with their ProcessTimeout.
-	// On forced shutdown (grace period expired), handlers are cancelled immediately.
+	// During shutdown grace period, handlers continue executing and ProcessTimeout
+	// remains enforced independently (handlers can still timeout during grace period).
+	// On forced shutdown (grace period expired), all handlers are cancelled immediately
+	// regardless of their remaining ProcessTimeout.
 	// This ensures ShutdownTimeout remains a hard deadline while allowing
 	// per-message timeouts during normal operation and grace periods.
 	ProcessTimeout time.Duration
@@ -167,7 +169,8 @@ func startProcessing[In, Out any](
 		}
 		<-wgDone
 
-		// Cancel shutdown context after all workers exit
+		// Cancel shutdown context after all workers exit (idempotent - may already
+		// be cancelled from forced shutdown path above, but safe to call again)
 		shutdownCancel()
 
 		if cfg.CleanupHandler != nil {
