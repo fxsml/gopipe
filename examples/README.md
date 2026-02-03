@@ -11,7 +11,7 @@ Learn gopipe step-by-step.
 | 3 | [merger](03-merger/) | Dynamic inputs, shutdown timeout |
 | 4 | [message](04-message/) | CloudEvents engine, handlers, routing |
 | 5 | [generator](05-generator/) | Producing values, context cancellation |
-| 6 | [cloudevents-nats](06-cloudevents-nats/) | CloudEvents protocol bindings, NATS JetStream, acking |
+| 6 | [http-cloudevents](06-http-cloudevents/) | HTTP pub/sub, binary/structured modes, batching |
 
 ## Quick Start
 
@@ -51,3 +51,6 @@ CloudEvents message processing with typed handlers. Shows how to create an engin
 
 ### 05-generator
 Produces values on demand using a generator function. Shows context cancellation for controlled shutdown.
+
+### 06-http-cloudevents
+HTTP pub/sub using message/http adapter. Demonstrates receiving CloudEvents via HTTP (binary or structured mode), processing with typed handlers, and publishing results with automatic batching.

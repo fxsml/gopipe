@@ -5,6 +5,29 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **message/http:** HTTP CloudEvents pub/sub adapter
+  - Specialized HTTP adapter using standard library (`http.Handler`, `http.ServeMux`)
+  - Binary mode (default): metadata in Ce-* headers, efficient
+  - Structured mode: full CloudEvents JSON in body
+  - Batch mode: automatic batching with configurable size/duration
+  - Graceful shutdown with in-flight request tracking
+  - Proper acking semantics (HTTP 2xx = Ack, errors = Nack)
+  - Uses CloudEvents SDK for protocol compliance (binary/structured/batch modes)
+  - Complements `message/cloudevents` (SDK protocol wrapper) with HTTP-specific optimization
+  - See `examples/06-http-cloudevents` for complete usage example
+
+## [0.16.1] - 2026-01-29
+
+### Fixed
+
+- **message:** Signal shutdown to marshal/unmarshal pipes immediately
+  - Previously `ShutdownTimeout` was ineffective for marshal/unmarshal pipes
+  - Now all engine components see shutdown signal simultaneously
+
 ## [0.16.0] - 2026-01-28
 
 ### Changed
