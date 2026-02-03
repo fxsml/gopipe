@@ -1,66 +1,17 @@
 package message
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
-	"sync"
 	"time"
 )
 
-type ackType byte
-
-const (
-	ackTypeNone ackType = iota
-	ackTypeAck
-	ackTypeNack
-)
-
-// Acking coordinates acknowledgment across one or more messages.
-// When expectedAckCount messages call Ack(), the ack callback is invoked.
-// If any message calls Nack(), the nack callback is invoked immediately.
-// Acking is thread-safe and can be shared between multiple messages.
-type Acking struct {
-	mu               sync.Mutex
-	ack              func()
-	nack             func(error)
-	ackType          ackType
-	ackCount         int
-	expectedAckCount int
-}
-
-// NewAcking creates an Acking for a single message.
-// Returns nil if either callback is nil.
-func NewAcking(ack func(), nack func(error)) *Acking {
-	if ack == nil || nack == nil {
-		return nil
-	}
-	return &Acking{
-		ack:              ack,
-		nack:             nack,
-		expectedAckCount: 1,
-	}
-}
-
-// NewSharedAcking creates an Acking shared across multiple messages.
-// The ack callback is invoked after expectedCount Ack() calls.
-// Returns nil if expectedCount <= 0 or if either callback is nil.
-func NewSharedAcking(ack func(), nack func(error), expectedCount int) *Acking {
-	if expectedCount <= 0 || ack == nil || nack == nil {
-		return nil
-	}
-	return &Acking{
-		ack:              ack,
-		nack:             nack,
-		expectedAckCount: expectedCount,
-	}
-}
-
 // TypedMessage wraps a typed data payload with attributes and acknowledgment callbacks.
 // This is the base generic type for all message variants.
-// Data and Attributes are public for direct access.
 // Ack/Nack operations are mutually exclusive and idempotent.
 type TypedMessage[T any] struct {
 	// Data is the event payload per CloudEvents spec.
@@ -69,6 +20,7 @@ type TypedMessage[T any] struct {
 	// Attributes contains the context attributes per CloudEvents spec.
 	Attributes Attributes
 
+	// acking coordinates acknowledgment. Can be shared across messages.
 	acking *Acking
 }
 
@@ -121,56 +73,77 @@ func NewRaw(data []byte, attrs Attributes, acking *Acking) *RawMessage {
 
 // Ack acknowledges successful processing of the message.
 // Returns true if acknowledgment succeeded or was already performed.
-// Returns false if no ack callback was provided, if the message was already nacked, or if expectedAckCount <= 0.
+// Returns false if no ack callback was provided or if the message was already nacked.
 // The ack callback is invoked at most once when all stages have acked. Thread-safe.
+// Callbacks are invoked outside the mutex to prevent deadlocks.
 func (m *TypedMessage[T]) Ack() bool {
-	if m.acking == nil {
-		return false
-	}
-	m.acking.mu.Lock()
-	defer m.acking.mu.Unlock()
-
-	switch m.acking.ackType {
-	case ackTypeAck:
-		return true
-	case ackTypeNack:
-		return false
-	default:
-	}
-
-	m.acking.ackCount++
-	if m.acking.ackCount < m.acking.expectedAckCount {
-		return true
-	}
-
-	m.acking.ack()
-	m.acking.ackType = ackTypeAck
-	return true
+	return m.acking.ack()
 }
 
 // Nack negatively acknowledges the message due to a processing error.
 // Returns true if negative acknowledgment succeeded or was already performed.
 // Returns false if no nack callback was provided or if the message was already acked.
 // The nack callback is invoked immediately with the first error, permanently blocking all further acks.
-// Thread-safe.
+// Also closes the done channel, allowing sibling messages to detect the settlement.
+// Thread-safe. Callbacks are invoked outside the mutex to prevent deadlocks.
 func (m *TypedMessage[T]) Nack(err error) bool {
-	if m.acking == nil {
-		return false
-	}
-	m.acking.mu.Lock()
-	defer m.acking.mu.Unlock()
+	return m.acking.nack(err)
+}
 
-	switch m.acking.ackType {
-	case ackTypeAck:
-		return false
-	case ackTypeNack:
-		return true
-	default:
+// Err returns the error from Nack, or nil if pending or acked.
+// Use with Done() to check settlement status, similar to context.Context:
+//
+//	select {
+//	case <-msg.Done():
+//	    if err := msg.Err(); err != nil {
+//	        // nacked with error
+//	    } else {
+//	        // acked successfully
+//	    }
+//	default:
+//	    // still pending
+//	}
+func (m *TypedMessage[T]) Err() error {
+	return m.acking.err()
+}
+
+// Done returns a channel that is closed when the message is settled (acked or nacked).
+// Returns nil if no acking is set.
+func (m *TypedMessage[T]) Done() <-chan struct{} {
+	return m.acking.done()
+}
+
+// Context returns a context derived from parent with message-specific behavior.
+//
+// The context provides:
+//   - Deadline from minimum of parent deadline and message ExpiryTime
+//   - Message reference via MessageFromContext or RawMessageFromContext
+//   - Attributes via AttributesFromContext
+//   - Parent cancellation propagation
+//
+// Note: This method reports the deadline via ctx.Deadline() but does not
+// create timers or enforce the deadline. Use middleware.Deadline() for
+// enforcement with proper timer cleanup.
+//
+// For settlement detection (ack/nack), use msg.Done() directly.
+// This keeps context cancellation (lifecycle) separate from message
+// settlement (domain logic).
+func (m *TypedMessage[T]) Context(parent context.Context) context.Context {
+	// Determine what to store as the message reference
+	var msg any
+	switch v := any(m).(type) {
+	case *Message:
+		msg = v
+	case *RawMessage:
+		msg = v
 	}
 
-	m.acking.nack(err)
-	m.acking.ackType = ackTypeNack
-	return true
+	return &messageContext{
+		Context: parent,
+		msg:     msg,
+		attrs:   m.Attributes,
+		expiry:  m.ExpiryTime(),
+	}
 }
 
 // ID returns the event identifier. Returns empty string if not set.

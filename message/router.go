@@ -51,6 +51,11 @@ type PipeConfig struct {
 	// If <= 0, forces immediate shutdown (no grace period).
 	// If > 0, waits up to this duration for natural completion, then forces shutdown.
 	ShutdownTimeout time.Duration
+	// AckStrategy determines how messages are acknowledged (default: AckOnSuccess).
+	// AckOnSuccess: auto-ack on success, auto-nack on error.
+	// AckManual: handler responsible for acking/nacking.
+	// AckForward: ack when all outputs ack.
+	AckStrategy AckStrategy
 	// Logger for pipe events (default: slog.Default()).
 	Logger Logger
 	// ErrorHandler is called on processing errors (default: no-op, errors logged via Logger).
@@ -90,7 +95,8 @@ func NewRouter(cfg PipeConfig) *Router {
 	r.cfg.Logger.Info("Adding pool",
 		"component", "router",
 		"pool", "default",
-		"workers", cfg.Pool.Workers)
+		"workers", cfg.Pool.Workers,
+		"ack_strategy", cfg.AckStrategy)
 	return r
 }
 
@@ -135,6 +141,11 @@ func (r *Router) Use(m ...Middleware) error {
 
 // Pipe routes messages to handlers and returns outputs.
 // Signature matches pipe.Pipe[*Message, *Message] for composability.
+//
+// Built-in middleware applied automatically (innermost, closest to handler):
+//   - Acking: handles ack/nack based on AckStrategy (default: AckOnSuccess)
+//
+// User middleware via Use() wraps outside the acking middleware.
 func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message, error) {
 	r.mu.Lock()
 	if r.started {
@@ -143,8 +154,11 @@ func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message,
 	}
 	r.started = true
 
-	// Apply middleware: first registered wraps outermost
+	// Apply acking strategy as innermost middleware (closest to handler)
 	fn := r.process
+	fn = r.ackingMiddleware()(fn)
+
+	// Apply user middleware: first registered wraps outermost
 	for i := len(r.middleware) - 1; i >= 0; i-- {
 		fn = r.middleware[i](fn)
 	}
@@ -207,7 +221,7 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 		return nil, err
 	}
 
-	outputs, err := entry.handler.Handle(ctx, msg)
+	outputs, err := entry.handler.Handle(msg.Context(ctx), msg)
 	if err != nil {
 		r.cfg.Logger.Error("Executing handler failed",
 			"component", "router",
@@ -222,6 +236,11 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 		"handler", entry.name,
 		"attributes", msg.Attributes)
 	return outputs, nil
+}
+
+// ackingMiddleware returns the middleware for the configured ack strategy.
+func (r *Router) ackingMiddleware() Middleware {
+	return r.cfg.AckStrategy.middleware()
 }
 
 // Verify Router implements InputRegistry.
