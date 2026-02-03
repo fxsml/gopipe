@@ -47,6 +47,12 @@ func (c PoolConfig) parse() PoolConfig {
 type PipeConfig struct {
 	// Pool configures concurrency and buffering (default: 1 worker, 100 buffer).
 	Pool PoolConfig
+	// ProcessTimeout sets a per-message processing deadline (default: 0, no timeout).
+	// If > 0, each handler invocation is wrapped with a timeout context.
+	// During normal operation, handlers are cancelled if they exceed ProcessTimeout.
+	// During shutdown grace period, handlers continue with their ProcessTimeout.
+	// On forced shutdown (grace period expired), handlers are cancelled immediately.
+	ProcessTimeout time.Duration
 	// ShutdownTimeout controls shutdown behavior on context cancellation.
 	// If <= 0, forces immediate shutdown (no grace period).
 	// If > 0, waits up to this duration for natural completion, then forces shutdown.
@@ -167,6 +173,7 @@ func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message,
 	cfg := pipe.Config{
 		BufferSize:      r.cfg.Pool.BufferSize,
 		Concurrency:     r.cfg.Pool.Workers,
+		ProcessTimeout:  r.cfg.ProcessTimeout,
 		ShutdownTimeout: r.cfg.ShutdownTimeout,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)

@@ -21,6 +21,17 @@ type Config struct {
 	// Default is 0 (unbuffered).
 	BufferSize int
 
+	// ProcessTimeout sets a per-message processing deadline (default: 0, no timeout).
+	// If > 0, each handler invocation is wrapped with a timeout context.
+	// During normal operation, handlers are cancelled if they exceed ProcessTimeout.
+	// During shutdown grace period, handlers continue executing and ProcessTimeout
+	// remains enforced independently (handlers can still timeout during grace period).
+	// On forced shutdown (grace period expired), all handlers are cancelled immediately
+	// regardless of their remaining ProcessTimeout.
+	// This ensures ShutdownTimeout remains a hard deadline while allowing
+	// per-message timeouts during normal operation and grace periods.
+	ProcessTimeout time.Duration
+
 	// ErrorHandler is called when processing fails.
 	// Default logs via slog.Error.
 	ErrorHandler func(in any, err error)
@@ -75,6 +86,10 @@ func startProcessing[In, Out any](
 	out := make(chan Out, cfg.BufferSize)
 	done := make(chan struct{})
 
+	// Create shutdown context that's only cancelled on forced shutdown
+	// This ensures handlers continue running during grace period
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+
 	var wg sync.WaitGroup
 	wg.Add(cfg.Concurrency)
 	for range cfg.Concurrency {
@@ -90,19 +105,35 @@ func startProcessing[In, Out any](
 					if !ok {
 						return
 					}
-					if res, err := fn(ctx, val); err != nil {
-						cfg.ErrorHandler(val, err)
-					} else {
-						for _, r := range res {
-							select {
-							case out <- r:
-							case <-done:
-								// Forced shutdown - report current input and exit
-								cfg.ErrorHandler(val, ErrShutdownDropped)
-								return
+
+					// Process message in anonymous function to ensure defer executes per-message
+					func() {
+						// Create handler context with timeout if configured
+						// Derive from shutdownCtx (not parent ctx) to ensure handlers
+						// continue during grace period and are only cancelled on forced shutdown
+						handlerCtx := shutdownCtx
+						var cancel context.CancelFunc
+						if cfg.ProcessTimeout > 0 {
+							handlerCtx, cancel = context.WithTimeout(shutdownCtx, cfg.ProcessTimeout)
+							defer cancel()
+						}
+
+						res, err := fn(handlerCtx, val)
+
+						if err != nil {
+							cfg.ErrorHandler(val, err)
+						} else {
+							for _, r := range res {
+								select {
+								case out <- r:
+								case <-done:
+									// Forced shutdown - report current input and exit
+									cfg.ErrorHandler(val, ErrShutdownDropped)
+									return
+								}
 							}
 						}
-					}
+					}()
 				}
 			}
 		}()
@@ -126,15 +157,21 @@ func startProcessing[In, Out any](
 				case <-time.After(cfg.ShutdownTimeout):
 					// Force shutdown after grace period
 					close(done)
+					shutdownCancel() // Cancel handler contexts
 				}
 			} else {
 				// No grace period - force shutdown immediately
 				close(done)
+				shutdownCancel() // Cancel handler contexts immediately
 			}
 		case <-wgDone:
 			// Workers finished naturally (input closed)
 		}
 		<-wgDone
+
+		// Cancel shutdown context after all workers exit (idempotent - may already
+		// be cancelled from forced shutdown path above, but safe to call again)
+		shutdownCancel()
 
 		if cfg.CleanupHandler != nil {
 			cleanupCtx := context.Background()

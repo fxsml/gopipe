@@ -23,6 +23,10 @@ type EngineConfig struct {
 	BufferSize int
 	// RouterPool configures the router's worker pool (default: 1 worker, 100 buffer).
 	RouterPool PoolConfig
+	// ProcessTimeout sets a per-message processing deadline (default: 0, no timeout).
+	// Applied to all handlers in the router and marshal/unmarshal pipes.
+	// If > 0, each handler invocation is wrapped with a timeout context.
+	ProcessTimeout time.Duration
 	// AckStrategy determines how messages are acknowledged (default: AckOnSuccess).
 	// AckOnSuccess: auto-ack on success, auto-nack on error.
 	// AckManual: handler responsible for acking/nacking.
@@ -81,6 +85,7 @@ func NewEngine(cfg EngineConfig) *Engine {
 		shutdown: make(chan struct{}),
 		router: NewRouter(PipeConfig{
 			Pool:            cfg.RouterPool,
+			ProcessTimeout:  cfg.ProcessTimeout,
 			ShutdownTimeout: cfg.ShutdownTimeout,
 			AckStrategy:     cfg.AckStrategy,
 			Logger:          cfg.Logger,
@@ -299,6 +304,7 @@ func (e *Engine) handleRawError(raw *RawMessage, err error) {
 // unmarshal processes raw messages into typed messages.
 func (e *Engine) unmarshal(in <-chan *RawMessage) <-chan *Message {
 	p := NewUnmarshalPipe(e.router, e.cfg.Marshaler, PipeConfig{
+		ProcessTimeout:  e.cfg.ProcessTimeout,
 		ShutdownTimeout: e.cfg.ShutdownTimeout,
 		Logger:          e.cfg.Logger,
 		ErrorHandler:    e.cfg.ErrorHandler,
@@ -310,6 +316,7 @@ func (e *Engine) unmarshal(in <-chan *RawMessage) <-chan *Message {
 // marshal processes typed messages into raw messages.
 func (e *Engine) marshal(in <-chan *Message) <-chan *RawMessage {
 	p := NewMarshalPipe(e.cfg.Marshaler, PipeConfig{
+		ProcessTimeout:  e.cfg.ProcessTimeout,
 		ShutdownTimeout: e.cfg.ShutdownTimeout,
 		Logger:          e.cfg.Logger,
 		ErrorHandler:    e.cfg.ErrorHandler,
