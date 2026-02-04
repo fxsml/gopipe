@@ -5,6 +5,15 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.1] - 2026-02-04
+
+### Added
+
+- **message:** Expose `Use()` method on `UnmarshalPipe` and `MarshalPipe`
+  - Allows middleware to be added to unmarshal and marshal pipelines
+  - Provides same middleware capabilities as underlying `ProcessPipe`
+  - Returns `ErrAlreadyStarted` if called after pipe has been started
+
 ## [0.17.0] - 2026-02-03
 
 ### Added

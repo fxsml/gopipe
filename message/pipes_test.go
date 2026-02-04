@@ -4,6 +4,9 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/fxsml/gopipe/pipe"
+	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 type PipeTestData struct {
@@ -360,4 +363,135 @@ func (m *failingMarshaler) Unmarshal(data []byte, v any) error {
 
 func (m *failingMarshaler) DataContentType() string {
 	return "application/json"
+}
+
+func TestUnmarshalPipe_Use(t *testing.T) {
+	t.Run("adds middleware before start", func(t *testing.T) {
+		registry := FactoryMap{
+			"test.data": func() any { return &PipeTestData{} },
+		}
+		marshaler := NewJSONMarshaler()
+		p := NewUnmarshalPipe(registry, marshaler, PipeConfig{})
+
+		// Add middleware that modifies value
+		mw := func(next middleware.ProcessFunc[*RawMessage, *Message]) middleware.ProcessFunc[*RawMessage, *Message] {
+			return func(ctx context.Context, in *RawMessage) ([]*Message, error) {
+				msgs, err := next(ctx, in)
+				if err == nil && len(msgs) > 0 {
+					data := msgs[0].Data.(*PipeTestData)
+					data.Value = data.Value * 2
+				}
+				return msgs, err
+			}
+		}
+
+		err := p.Use(mw)
+		if err != nil {
+			t.Fatalf("Use() error = %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		in := make(chan *RawMessage, 1)
+		in <- &RawMessage{
+			Data:       []byte(`{"name":"test","value":21}`),
+			Attributes: Attributes{"type": "test.data"},
+		}
+		close(in)
+
+		out, _ := p.Pipe(ctx, in)
+		msg := <-out
+
+		data := msg.Data.(*PipeTestData)
+		if data.Value != 42 {
+			t.Errorf("middleware not applied: Value = %d, want 42", data.Value)
+		}
+	})
+
+	t.Run("returns error after pipe started", func(t *testing.T) {
+		registry := FactoryMap{
+			"test.data": func() any { return &PipeTestData{} },
+		}
+		marshaler := NewJSONMarshaler()
+		p := NewUnmarshalPipe(registry, marshaler, PipeConfig{})
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		in := make(chan *RawMessage)
+		close(in)
+
+		_, _ = p.Pipe(ctx, in)
+
+		// Try to add middleware after start
+		err := p.Use(func(next middleware.ProcessFunc[*RawMessage, *Message]) middleware.ProcessFunc[*RawMessage, *Message] {
+			return next
+		})
+
+		if err != pipe.ErrAlreadyStarted {
+			t.Errorf("Use() after start error = %v, want %v", err, pipe.ErrAlreadyStarted)
+		}
+	})
+}
+
+func TestMarshalPipe_Use(t *testing.T) {
+	t.Run("adds middleware before start", func(t *testing.T) {
+		marshaler := NewJSONMarshaler()
+		p := NewMarshalPipe(marshaler, PipeConfig{})
+
+		// Add middleware that modifies value
+		mw := func(next middleware.ProcessFunc[*Message, *RawMessage]) middleware.ProcessFunc[*Message, *RawMessage] {
+			return func(ctx context.Context, in *Message) ([]*RawMessage, error) {
+				data := in.Data.(*PipeTestData)
+				data.Value = data.Value * 2
+				return next(ctx, in)
+			}
+		}
+
+		err := p.Use(mw)
+		if err != nil {
+			t.Fatalf("Use() error = %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &PipeTestData{Name: "test", Value: 21},
+			Attributes: Attributes{"type": "test.data"},
+		}
+		close(in)
+
+		out, _ := p.Pipe(ctx, in)
+		raw := <-out
+
+		expected := `{"name":"test","value":42}`
+		if string(raw.Data) != expected {
+			t.Errorf("middleware not applied: Data = %s, want %s", raw.Data, expected)
+		}
+	})
+
+	t.Run("returns error after pipe started", func(t *testing.T) {
+		marshaler := NewJSONMarshaler()
+		p := NewMarshalPipe(marshaler, PipeConfig{})
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		in := make(chan *Message)
+		close(in)
+
+		_, _ = p.Pipe(ctx, in)
+
+		// Try to add middleware after start
+		err := p.Use(func(next middleware.ProcessFunc[*Message, *RawMessage]) middleware.ProcessFunc[*Message, *RawMessage] {
+			return next
+		})
+
+		if err != pipe.ErrAlreadyStarted {
+			t.Errorf("Use() after start error = %v, want %v", err, pipe.ErrAlreadyStarted)
+		}
+	})
 }
