@@ -54,25 +54,75 @@ The existing ack strategy controls TX scope with no additional configuration:
 
 ## Tasks
 
-### Task 1: Message Pipeline Values
+### Task 1: Message Context Field
 
-**Goal:** Allow messages to carry in-process values that are not serialized and automatically propagate into the handler's context via `msg.Context(parent)`.
+**Goal:** Add a `context.Context` field to the message for in-process, request-scoped values. Values auto-propagate into the handler's context via `msg.Context(parent)`.
 
 See [transaction-handling.decisions.md](transaction-handling.decisions.md) for full design evaluation.
 
-**Summary:** Add a `context.Context` field to the message that stores pipeline-scoped values. The `messageContext.Value()` method checks this field before delegating to parent, making values automatically available to handlers and adapters without bridging middleware.
+**Summary:** Following the Watermill pattern (`SetContext` / `Context`), add an unexported `ctx context.Context` field to `TypedMessage`. The `messageContext.Value()` method checks this field before delegating to parent, making values automatically available to handlers and adapters. No bridging middleware needed.
+
+This is general purpose — not just for TX. The same field carries trace spans, auth principals, saga state, or any in-process value that should flow with the message but die at broker boundaries.
+
+**Implementation:**
+```go
+// message/message.go
+type TypedMessage[T any] struct {
+    Data       T
+    Attributes Attributes
+    acking     *Acking
+    ctx        context.Context  // in-process only, never serialized
+}
+
+func (m *TypedMessage[T]) SetContext(ctx context.Context) {
+    m.ctx = ctx
+}
+
+// Copy propagates ctx
+func Copy[In, Out any](msg *TypedMessage[In], data Out) *TypedMessage[Out] {
+    return &TypedMessage[Out]{
+        Data:       data,
+        Attributes: maps.Clone(msg.Attributes),
+        acking:     msg.acking,
+        ctx:        msg.ctx,
+    }
+}
+```
+
+```go
+// message/context.go — modified messageContext.Value()
+func (c *messageContext) Value(key any) any {
+    switch key {
+    case messageKey:
+        if msg, ok := c.msg.(*Message); ok { return msg }
+        return nil
+    case rawMessageKey:
+        if msg, ok := c.msg.(*RawMessage); ok { return msg }
+        return nil
+    case attributesKey:
+        return c.attrs
+    default:
+        if c.ctx != nil {
+            if v := c.ctx.Value(key); v != nil {
+                return v
+            }
+        }
+        return c.Context.Value(key)
+    }
+}
+```
 
 **Files to Modify:**
-- `message/message.go` — add `pipeCtx` field, `WithValue` method
-- `message/context.go` — modify `messageContext.Value()` to check `pipeCtx`
+- `message/message.go` — add `ctx` field, `SetContext` method, update `Copy`
+- `message/context.go` — add `ctx` to `messageContext`, modify `Value()`, update `Context()`
 - `message/message_test.go` — test value propagation through Context()
 
 **Acceptance Criteria:**
-- [ ] `msg.WithValue(key, val)` stores in-process values on message
+- [ ] `msg.SetContext(ctx)` stores in-process context on message
 - [ ] `msg.Context(parent).Value(key)` returns stored values
 - [ ] Values not included in MarshalJSON / cloudEvent()
-- [ ] Copy() propagates pipeCtx to output messages
-- [ ] Zero-cost when unused (nil pipeCtx = no allocation)
+- [ ] Copy() propagates ctx to output messages
+- [ ] Zero-cost when unused (nil ctx = no allocation, no lookup)
 
 ### Task 2: SQL Transaction Package
 
@@ -152,7 +202,7 @@ func (s *TxStarter) Process(ctx context.Context, msg *message.Message) ([]*messa
 
     // New message with TX acking. Original msg keeps broker acking.
     out := message.New(msg.Data, maps.Clone(msg.Attributes), txAcking)
-    out.WithValue(ctxKey{}, tx)
+    out.SetContext(context.WithValue(context.Background(), ctxKey{}, tx))
 
     return []*message.Message{out}, nil
 }
@@ -171,33 +221,11 @@ func (s *TxStarter) Process(ctx context.Context, msg *message.Message) ([]*messa
 - [ ] TX reference available on output message via WithValue
 - [ ] Original input message's acking unchanged
 
-### Task 4: InjectTx Middleware (if needed)
+### Task 4: ~~InjectTx Middleware~~ (eliminated)
 
-**Goal:** Bridge TX from message pipeline values into handler context.
+With `SetContext` and auto-propagation via `messageContext.Value()`, the TX is already in the handler's context. No bridging middleware needed. The TxStarter sets `context.WithValue(ctx, txKey, tx)` on the message, and `msg.Context(parent)` includes it automatically.
 
-**Note:** If Task 1 implements auto-propagation via `messageContext.Value()`, this middleware is unnecessary — the TX is already in the handler's context. This task becomes a thin convenience wrapper only if explicit opt-in per router is desired.
-
-**Implementation (fallback if no auto-propagation):**
-```go
-func InjectTx() message.Middleware {
-    return func(next message.ProcessFunc) message.ProcessFunc {
-        return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-            if tx, ok := msg.Value(ctxKey{}); ok {
-                ctx = ContextWithTx(ctx, tx.(*sql.Tx))
-            }
-            return next(ctx, msg)
-        }
-    }
-}
-```
-
-**Files to Create:**
-- `message/sql/middleware.go` (only if needed)
-- `message/sql/middleware_test.go`
-
-**Acceptance Criteria:**
-- [ ] TX from message available in handler's context
-- [ ] Passthrough when no TX on message
+This task is eliminated by the design choice in Task 1.
 
 ### Task 5: Pipeline Value Propagation in AckForward
 
@@ -209,8 +237,8 @@ func InjectTx() message.Middleware {
 ```go
 for _, out := range outputs {
     out.acking = shared
-    if msg.pipeCtx != nil {
-        out.pipeCtx = msg.pipeCtx  // propagate pipeline values
+    if msg.ctx != nil {
+        out.ctx = msg.ctx  // propagate pipeline values
     }
 }
 ```
@@ -226,18 +254,16 @@ for _, out := range outputs {
 ## Implementation Order
 
 ```
-Task 1: Message Pipeline Values
-  ↓
-Task 2: SQL Package (context helpers, Executor)
-  ↓
-Task 3: TxStarter Pipe
-  ↓
-Task 4: InjectTx Middleware (likely unnecessary if Task 1 auto-propagates)
-  ↓
-Task 5: AckForward Value Propagation
+Task 1: Message Context Field    Task 2: SQL Package
+            ↓                         ↓
+            └──────────┬──────────────┘
+                       ↓
+              Task 3: TxStarter Pipe
+                       ↓
+         Task 5: AckForward Context Propagation
 ```
 
-Tasks 1 and 2 are independent and can be implemented in parallel.
+Tasks 1 and 2 are independent and can be implemented in parallel. Task 4 (middleware) is eliminated by auto-propagation.
 
 ## End-to-End Trace
 
@@ -267,7 +293,7 @@ raw := message.NewRaw(payload, attrs, brokerAcking)
 //   ack  → tx.Commit()  → consumer.Ack(offset)
 //   nack → tx.Rollback() → consumer.Nack(offset)
 //
-// Router processes with TX in context (via auto-propagation)
+// Router processes with TX in context (auto-propagated via SetContext)
 // Handler calls repo.Save(ctx, order) — adapter uses TxFromContext
 // Output publisher acks → cascades → tx.Commit() → consumer.Ack()
 ```
