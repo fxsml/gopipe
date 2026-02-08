@@ -1,6 +1,6 @@
 # Transaction Handling - Design Evolution: Message Pipeline Context
 
-**Status:** Open
+**Status:** Decided
 **Related Plan:** [transaction-handling.md](transaction-handling.md)
 
 ## Context
@@ -127,11 +127,13 @@ func (m *TypedMessage[T]) WithValue(key, val any) {
 **Pros:**
 - Auto-propagation via `messageContext.Value()` — no bridging middleware
 - Uses Go's standard value mechanism
+- Additive: multiple independent callers (TxStarter, OTel pipe, auth pipe) can each call `WithValue` without losing each other's values
+- Zero ceremony: one method call per value — no need to read the existing context, compose, and set back
+- Safe default: impossible to accidentally overwrite previously set values
 
 **Cons:**
-- `WithValue` is a non-standard method name — `context.WithValue` is a package-level function, not a method. Naming a method `WithValue` creates false familiarity
-- Hides the `context.Context` behind a custom API — callers can't use standard context composition (`context.WithValue`, `context.WithCancel`, etc.)
-- Cannot read the stored context to build on it from a separate pipeline component
+- `WithValue` is a non-standard method name — `context.WithValue` is a package-level function, not a method
+- Cannot read the stored context directly (but values auto-propagate into `msg.Context(parent)`, so callers rarely need to)
 
 ### Option C: context.Context Field with `SetContext` (Watermill Pattern)
 
@@ -217,11 +219,36 @@ Add a single `any` field for user-defined structs.
 
 ## Analysis
 
-### Why Option C over Option B
+### Why Option B over Option C
 
-Option B invents a `WithValue` method that looks like `context.WithValue` but behaves differently (mutates in place, manages the `context.Background()` root). This is a trap: it creates false familiarity with a non-standard API.
+The key difference is the **API contract for multiple callers**.
 
-Option C uses `SetContext` — a clear setter — and leaves context construction to standard library functions. The caller writes `context.WithValue(...)` themselves. No custom API to learn. This matches Watermill exactly.
+`SetContext` replaces the entire stored context. When multiple independent pipeline components each need to add a value, the second caller must read the existing context, compose on top of it, and set it back:
+
+```go
+// TxStarter sets TX
+out.SetContext(context.WithValue(context.Background(), txKey, tx))
+
+// OTel pipe adds span — must read existing, compose, set back
+existing := out.Context(context.Background()) // round-trip through messageContext
+out.SetContext(context.WithValue(existing, spanKey, span))
+```
+
+This is error-prone. If the OTel pipe forgets to read the existing context and calls `SetContext(context.WithValue(context.Background(), ...))`, it silently discards the TX. The API makes the destructive path easy and the safe path ceremonious.
+
+`WithValue` chains additively. Each caller adds without knowledge of what's already stored:
+
+```go
+// TxStarter sets TX
+out.WithValue(txKey, tx)
+
+// OTel pipe adds span — no need to know about TX
+out.WithValue(spanKey, span)
+```
+
+The safe path is the only path. Multiple callers compose naturally. This is the same reason `context.WithValue` is a function that returns a new context rather than mutating — but since the message is mutable (like `http.Request`), the method mutates in place while preserving the additive semantics.
+
+The non-standard method name is a minor concern. `WithValue` on a message struct is analogous to `Header.Set` on an `http.Header` — it uses familiar vocabulary in a struct-specific way. The method's godoc makes the semantics clear.
 
 ### The Two-Layer Model for gopipe
 
@@ -286,22 +313,22 @@ No special mechanism needed — the two-layer model handles it.
 
 ---
 
-## Recommendation
+## Decision
 
-**Option C: `context.Context` field with `SetContext`, auto-propagated via `messageContext.Value()`.**
+**Option B: `context.Context` field with `WithValue`, auto-propagated via `messageContext.Value()`.**
 
 Rationale:
-1. Proven pattern — Watermill uses identical API on its `Message` type
-2. Idiomatic Go — standard `context.WithValue` for construction, standard `ctx.Value()` for retrieval
-3. Consistent with existing `messageContext` — extends `Value()` with one more layer
+1. Additive API — multiple pipeline components compose safely without coordination
+2. Idiomatic storage — `context.Context` is Go's standard mechanism for in-process request-scoped values
+3. Auto-propagation — `messageContext.Value()` checks message ctx before parent, no bridging middleware
 4. General purpose — TX, traces, saga state, auth all use the same mechanism
-5. No bridging middleware — eliminates ceremony and the silent failure mode
-6. The naming matches Go convention: `context.Context` on a request struct, exposed via `SetContext`
+5. Zero ceremony — one method call per value, no read-compose-set pattern
+6. Consistent with existing `messageContext` — extends `Value()` with one more layer
 
 API surface:
 ```go
 // One new method on TypedMessage
-func (m *TypedMessage[T]) SetContext(ctx context.Context)
+func (m *TypedMessage[T]) WithValue(key, val any)
 
 // One modified internal method
 func (c *messageContext) Value(key any) any  // adds ctx lookup
@@ -313,7 +340,7 @@ func (c *messageContext) Value(key any) any  // adds ctx lookup
 ## Open Concerns
 
 1. **Value shadowing**: If both `ctx` and the parent context contain the same key, `ctx` wins. This is intentional (pipeline values override infrastructure defaults) but should be documented.
-2. **Thread safety**: `SetContext` replaces `m.ctx` (pointer swap). Safe under single-writer assumption (one worker processes one message). Same assumption as Attributes mutation.
+2. **Thread safety**: `WithValue` mutates `m.ctx` (pointer swap via `context.WithValue`). Safe under single-writer assumption (one worker processes one message). Same assumption as Attributes mutation.
 3. **Value cleanup**: Cannot remove values from a context chain. For TX and traces, this is fine — they are valid for the message's entire in-process lifetime. If future use cases need removal, revisit.
 
 ## Sources

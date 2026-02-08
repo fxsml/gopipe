@@ -6,7 +6,7 @@
 
 ## Overview
 
-Add transaction support to the message package using a pipeline-based approach: a TxStarter pipe begins the transaction and binds commit/rollback to the message's acking, middleware injects the TX into handler context for adapters, and AckForward cascades the TX lifecycle across processing steps.
+Add transaction support to the message package using a pipeline-based approach: a TxStarter pipe begins the transaction and binds commit/rollback to the message's acking, the message's context auto-propagates the TX into handler context for adapters, and AckForward cascades the TX lifecycle across processing steps.
 
 Handlers remain completely TX-unaware (hexagonal architecture). Adapters extract the TX from context.
 
@@ -23,10 +23,10 @@ Handlers remain completely TX-unaware (hexagonal architecture). Adapters extract
 ```
 Broker ──▶ Unmarshal ──▶ TxStarter ──▶ Router ──▶ Output/Publisher
   │                        │             │              │
-  │                     begin TX     middleware       ack output
-  │                     wrap acking  injects TX       cascades back
-  │                                  into context     to TxStarter's
-  │                                  for adapters     acking → commit
+  │                     begin TX      TX auto-       ack output
+  │                     wrap acking   propagated     cascades back
+  │                                   via context    to TxStarter's
+  │                                                  acking → commit
   │
   acking = broker ack/nack
 ```
@@ -35,8 +35,7 @@ Broker ──▶ Unmarshal ──▶ TxStarter ──▶ Router ──▶ Output
 
 | Component | Layer | Knows TX? | Responsibility |
 |---|---|---|---|
-| **TxStarter pipe** | Infrastructure | Yes — creates | Begin TX, wrap acking, attach TX to message |
-| **InjectTx middleware** | Infrastructure | Yes — bridges | Read TX from message, put in context |
+| **TxStarter pipe** | Infrastructure | Yes — creates | Begin TX, wrap acking, attach TX to message context |
 | **Handler** | Application | **No** | Call ports (interfaces), pass ctx through |
 | **Adapter** | Infrastructure | Yes — uses | Extract TX from context, execute queries |
 | **AckForward** | Framework | No | Cascade ack to downstream outputs |
@@ -54,13 +53,44 @@ The existing ack strategy controls TX scope with no additional configuration:
 
 ## Tasks
 
+### Task 0: Rename Done() → Settled()
+
+**Goal:** Remove accidental `context.Context` interface resemblance from `TypedMessage`.
+
+**Problem:** `TypedMessage` exposes `Done() <-chan struct{}` and `Err() error` — identical signatures to `context.Context.Done()` and `context.Context.Err()`. But the semantics differ: the message's `Done()` closes on settlement (ack or nack), not on cancellation. The message's `Err()` returns nil after ack, violating the context contract that `Err()` must be non-nil when `Done()` is closed.
+
+If a type looks like a context, it should fulfill the contract. Since the message is NOT a context (it carries one, creates one, but is not one), the method should be renamed to avoid confusion.
+
+**Implementation:**
+```go
+// Before
+func (m *TypedMessage[T]) Done() <-chan struct{}
+
+// After
+func (m *TypedMessage[T]) Settled() <-chan struct{}
+```
+
+`Err()` stays — it's a common Go method name (`sql.Rows.Err()`, `bufio.Scanner.Err()`). It's `Done() <-chan struct{}` that creates the distinctive `context.Context` resemblance.
+
+**Files to Modify:**
+- `message/message.go` — rename method, update doc comments
+- `message/acking_test.go` — update all `msg.Done()` → `msg.Settled()`
+
+**Impact:** No production code outside the message package calls `msg.Done()`. All call sites are in tests and doc comments within the package.
+
+**Acceptance Criteria:**
+- [ ] `Done()` renamed to `Settled()` on `TypedMessage`
+- [ ] All tests updated and passing
+- [ ] Doc comments updated
+- [ ] `TypedMessage` does not accidentally satisfy `context.Context`
+
 ### Task 1: Message Context Field
 
 **Goal:** Add a `context.Context` field to the message for in-process, request-scoped values. Values auto-propagate into the handler's context via `msg.Context(parent)`.
 
 See [transaction-handling.decisions.md](transaction-handling.decisions.md) for full design evaluation.
 
-**Summary:** Following the Watermill pattern (`SetContext` / `Context`), add an unexported `ctx context.Context` field to `TypedMessage`. The `messageContext.Value()` method checks this field before delegating to parent, making values automatically available to handlers and adapters. No bridging middleware needed.
+**Summary:** Add an unexported `ctx context.Context` field to `TypedMessage` with a `WithValue` method for adding values. The `messageContext.Value()` method checks this field before delegating to parent, making values automatically available to handlers and adapters. No bridging middleware needed.
 
 This is general purpose — not just for TX. The same field carries trace spans, auth principals, saga state, or any in-process value that should flow with the message but die at broker boundaries.
 
@@ -74,8 +104,16 @@ type TypedMessage[T any] struct {
     ctx        context.Context  // in-process only, never serialized
 }
 
-func (m *TypedMessage[T]) SetContext(ctx context.Context) {
-    m.ctx = ctx
+// WithValue adds an in-process value to the message's context.
+// Values auto-propagate into contexts created by Context(parent).
+// They are NOT serialized and do NOT cross broker boundaries.
+// Multiple calls chain: each value is added to the existing context.
+func (m *TypedMessage[T]) WithValue(key, val any) {
+    if m.ctx == nil {
+        m.ctx = context.WithValue(context.Background(), key, val)
+    } else {
+        m.ctx = context.WithValue(m.ctx, key, val)
+    }
 }
 
 // Copy propagates ctx
@@ -90,7 +128,15 @@ func Copy[In, Out any](msg *TypedMessage[In], data Out) *TypedMessage[Out] {
 ```
 
 ```go
-// message/context.go — modified messageContext.Value()
+// message/context.go — modified messageContext
+type messageContext struct {
+    context.Context
+    msg    any
+    attrs  Attributes
+    expiry time.Time
+    ctx    context.Context  // message's in-process values
+}
+
 func (c *messageContext) Value(key any) any {
     switch key {
     case messageKey:
@@ -113,12 +159,13 @@ func (c *messageContext) Value(key any) any {
 ```
 
 **Files to Modify:**
-- `message/message.go` — add `ctx` field, `SetContext` method, update `Copy`
+- `message/message.go` — add `ctx` field, `WithValue` method, update `Copy`
 - `message/context.go` — add `ctx` to `messageContext`, modify `Value()`, update `Context()`
 - `message/message_test.go` — test value propagation through Context()
 
 **Acceptance Criteria:**
-- [ ] `msg.SetContext(ctx)` stores in-process context on message
+- [ ] `msg.WithValue(key, val)` stores in-process values on message
+- [ ] Multiple `WithValue` calls chain (additive, not replacement)
 - [ ] `msg.Context(parent).Value(key)` returns stored values
 - [ ] Values not included in MarshalJSON / cloudEvent()
 - [ ] Copy() propagates ctx to output messages
@@ -202,7 +249,7 @@ func (s *TxStarter) Process(ctx context.Context, msg *message.Message) ([]*messa
 
     // New message with TX acking. Original msg keeps broker acking.
     out := message.New(msg.Data, maps.Clone(msg.Attributes), txAcking)
-    out.SetContext(context.WithValue(context.Background(), ctxKey{}, tx))
+    out.WithValue(ctxKey{}, tx)
 
     return []*message.Message{out}, nil
 }
@@ -221,49 +268,47 @@ func (s *TxStarter) Process(ctx context.Context, msg *message.Message) ([]*messa
 - [ ] TX reference available on output message via WithValue
 - [ ] Original input message's acking unchanged
 
-### Task 4: ~~InjectTx Middleware~~ (eliminated)
+### Task 4: Pipeline Value Propagation in AckForward
 
-With `SetContext` and auto-propagation via `messageContext.Value()`, the TX is already in the handler's context. No bridging middleware needed. The TxStarter sets `context.WithValue(ctx, txKey, tx)` on the message, and `msg.Context(parent)` includes it automatically.
+**Goal:** When `AckForward` replaces output ackings with SharedAcking, also propagate the message context from input to output messages.
 
-This task is eliminated by the design choice in Task 1.
-
-### Task 5: Pipeline Value Propagation in AckForward
-
-**Goal:** When `AckForward` replaces output ackings with SharedAcking, also propagate pipeline values from input to output messages.
-
-**Why:** The `commandHandler` creates output messages via `New(event, attrs, nil)` (handler.go:135). These outputs have no pipeline values. With AckForward, the TX lifecycle already spans the outputs (via SharedAcking). The TX reference should also be available to downstream handlers.
+**Why:** The `commandHandler` creates output messages via `New(event, attrs, nil)` (handler.go:135). These outputs have no context values. With AckForward, the TX lifecycle already spans the outputs (via SharedAcking). The TX reference should also be available to downstream handlers.
 
 **Implementation (in forwardAckMiddleware):**
 ```go
 for _, out := range outputs {
     out.acking = shared
-    if msg.ctx != nil {
-        out.ctx = msg.ctx  // propagate pipeline values
+    if msg.ctx != nil && out.ctx == nil {
+        out.ctx = msg.ctx
     }
 }
 ```
+
+The guard `out.ctx == nil` ensures we don't overwrite values that a handler explicitly set on its output.
 
 **Files to Modify:**
 - `message/acking.go` — `forwardAckMiddleware`
 
 **Acceptance Criteria:**
-- [ ] Output messages inherit input's pipeline values when AckForward is used
+- [ ] Output messages inherit input's context values when AckForward is used
 - [ ] AckOnSuccess and AckManual are unaffected
 - [ ] Downstream handlers can access TX from context
 
 ## Implementation Order
 
 ```
+Task 0: Rename Done() → Settled()
+  ↓
 Task 1: Message Context Field    Task 2: SQL Package
             ↓                         ↓
             └──────────┬──────────────┘
                        ↓
               Task 3: TxStarter Pipe
                        ↓
-         Task 5: AckForward Context Propagation
+         Task 4: AckForward Context Propagation
 ```
 
-Tasks 1 and 2 are independent and can be implemented in parallel. Task 4 (middleware) is eliminated by auto-propagation.
+Task 0 is a prerequisite (clean API before adding to it). Tasks 1 and 2 are independent and can be implemented in parallel.
 
 ## End-to-End Trace
 
@@ -293,7 +338,7 @@ raw := message.NewRaw(payload, attrs, brokerAcking)
 //   ack  → tx.Commit()  → consumer.Ack(offset)
 //   nack → tx.Rollback() → consumer.Nack(offset)
 //
-// Router processes with TX in context (auto-propagated via SetContext)
+// Router processes with TX in context (auto-propagated via WithValue)
 // Handler calls repo.Save(ctx, order) — adapter uses TxFromContext
 // Output publisher acks → cascades → tx.Commit() → consumer.Ack()
 ```
@@ -344,3 +389,4 @@ func (r *PostgresOrderRepo) Save(ctx context.Context, order Order) error {
 - [ ] TX commits on ack, rolls back on nack
 - [ ] TX reference not serialized (MarshalJSON)
 - [ ] AckForward cascades TX lifecycle to downstream outputs
+- [ ] `TypedMessage` does not accidentally satisfy `context.Context`
