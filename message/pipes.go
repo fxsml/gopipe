@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/fxsml/gopipe/pipe"
+	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 // UnmarshalPipe converts RawMessage to Message using a registry and marshaler.
@@ -64,6 +65,13 @@ func (p *UnmarshalPipe) Pipe(ctx context.Context, in <-chan *RawMessage) (<-chan
 	return p.inner.Pipe(ctx, in)
 }
 
+// Use adds middleware to the unmarshal processing chain.
+// Middleware is applied in the order it is added.
+// Returns ErrAlreadyStarted if the pipe has already been started.
+func (p *UnmarshalPipe) Use(mw ...middleware.Middleware[*RawMessage, *Message]) error {
+	return p.inner.Use(mw...)
+}
+
 // MarshalPipe converts Message to RawMessage using a marshaler.
 // Automatically nacks messages on errors and provides consistent logging.
 type MarshalPipe struct {
@@ -117,4 +125,11 @@ func NewMarshalPipe(marshaler Marshaler, cfg PipeConfig) *MarshalPipe {
 // Pipe starts the marshal pipeline.
 func (p *MarshalPipe) Pipe(ctx context.Context, in <-chan *Message) (<-chan *RawMessage, error) {
 	return p.inner.Pipe(ctx, in)
+}
+
+// Use adds middleware to the marshal processing chain.
+// Middleware is applied in the order it is added.
+// Returns ErrAlreadyStarted if the pipe has already been started.
+func (p *MarshalPipe) Use(mw ...middleware.Middleware[*Message, *RawMessage]) error {
+	return p.inner.Use(mw...)
 }
