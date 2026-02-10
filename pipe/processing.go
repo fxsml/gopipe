@@ -21,17 +21,6 @@ type Config struct {
 	// Default is 0 (unbuffered).
 	BufferSize int
 
-	// ProcessTimeout sets a per-message processing deadline (default: 0, no timeout).
-	// If > 0, each handler invocation is wrapped with a timeout context.
-	// During normal operation, handlers are cancelled if they exceed ProcessTimeout.
-	// During shutdown grace period, handlers continue executing and ProcessTimeout
-	// remains enforced independently (handlers can still timeout during grace period).
-	// On forced shutdown (grace period expired), all handlers are cancelled immediately
-	// regardless of their remaining ProcessTimeout.
-	// This ensures ShutdownTimeout remains a hard deadline while allowing
-	// per-message timeouts during normal operation and grace periods.
-	ProcessTimeout time.Duration
-
 	// ErrorHandler is called when processing fails.
 	// Default logs via slog.Error.
 	ErrorHandler func(in any, err error)
@@ -108,17 +97,7 @@ func startProcessing[In, Out any](
 
 					// Process message in anonymous function to ensure defer executes per-message
 					func() {
-						// Create handler context with timeout if configured
-						// Derive from shutdownCtx (not parent ctx) to ensure handlers
-						// continue during grace period and are only cancelled on forced shutdown
-						handlerCtx := shutdownCtx
-						var cancel context.CancelFunc
-						if cfg.ProcessTimeout > 0 {
-							handlerCtx, cancel = context.WithTimeout(shutdownCtx, cfg.ProcessTimeout)
-							defer cancel()
-						}
-
-						res, err := fn(handlerCtx, val)
+						res, err := fn(shutdownCtx, val)
 
 						if err != nil {
 							cfg.ErrorHandler(val, err)
