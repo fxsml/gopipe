@@ -1,4 +1,4 @@
-# Plan: Redis Transactions
+# Plan: Redis Integration
 
 **Status:** Proposed
 **Depends On:** [transaction-handling](transaction-handling.md) (Tasks 0, 1, 2 — shared foundation)
@@ -6,18 +6,19 @@
 
 ## Overview
 
-Redis transaction handling using TxPipeline middleware, inbox deduplication via SetNX, and outbox publishing via Redis Streams. Handlers remain TX-unaware. Adapters extract the pipeline from context and queue commands that execute atomically in MULTI/EXEC.
+Complete Redis integration for gopipe: standalone Redis Streams pub/sub (subscriber + publisher) and transaction middleware (TxPipeline, inbox, outbox). The standalone broker provides a persistent buffer channel — a lighter alternative to Azure Service Bus or similar managed brokers. The middleware layer adds transactional guarantees on top.
 
-This plan covers the same patterns as the SQL inbox/outbox plan but adapted to Redis's command-oriented transaction model. It depends on the shared foundation from transaction-handling.md (message context field, middleware ordering, Done→Settled rename).
+All components live in `message/redis/` and use `go-redis/v9` with `UniversalClient` (standalone, sentinel, or cluster).
 
 ## Goals
 
-1. Handler-scoped Redis TX via TxPipeline middleware (MULTI/EXEC, always short-lived)
-2. Idempotent processing via inbox (SetNX with TTL, automatic expiry)
-3. Reliable event publishing via outbox stream (XADD within same pipeline)
-4. Redis 6.0+ compatible (no XAUTOCLAIM, no Redis Functions)
-5. Handlers fully TX-unaware (hex architecture: adapters use pipeline, handlers use ports)
-6. Clean adapter API via `Cmdable` interface (unified with or without TX)
+1. **Standalone Redis Streams pub/sub**: subscriber (XREADGROUP) and publisher (XADD) as drop-in replacements for any broker
+2. Handler-scoped Redis TX via TxPipeline middleware (MULTI/EXEC, always short-lived)
+3. Idempotent processing via inbox (SetNX with TTL, automatic expiry)
+4. Reliable event publishing via outbox stream (XADD within same pipeline)
+5. Redis 6.0+ compatible (no XAUTOCLAIM, no Redis Functions)
+6. Handlers fully TX-unaware (hex architecture: adapters use pipeline, handlers use ports)
+7. Clean adapter API via `Cmdable` interface (unified with or without TX)
 
 ## Redis vs SQL Transaction Model
 
@@ -419,105 +420,296 @@ func OutboxMiddleware(cfg OutboxConfig) message.Middleware {
 - [ ] Events written to configured stream
 - [ ] Configurable marshaling
 
-### Task 5: Redis Outbox Publisher
+---
 
-**Goal:** Background publisher that reads events from the outbox stream and forwards them to the destination broker. Uses Redis Streams consumer groups for reliable at-least-once delivery.
+## Standalone Broker
+
+The standalone Redis Streams pub/sub provides a persistent buffer channel with at-least-once delivery. Uses consumer groups for competing consumers, XPENDING + XCLAIM for dead consumer recovery. Independent of the middleware — usable as a drop-in broker for any gopipe pipeline.
+
+### Task 5: Redis Streams Subscriber
+
+**Goal:** Subscribe to a Redis Stream via consumer groups. Follows the same pattern as the CloudEvents subscriber — backed by `GeneratePipe`, returns `<-chan *RawMessage`.
 
 **Implementation:**
 ```go
-// message/redis/outbox_publisher.go
+// message/redis/subscriber.go
 
-// OutboxPublisherConfig configures the outbox publisher.
-type OutboxPublisherConfig struct {
-    // Client is the Redis client.
-    Client goredis.UniversalClient
-    // Stream is the outbox stream name (must match OutboxConfig.Stream).
+type SubscriberConfig struct {
+    // Stream is the Redis Stream to consume from.
     Stream string
-    // Group is the consumer group name (default: "outbox-publisher").
+    // Group is the consumer group name.
     Group string
-    // Consumer is this instance's consumer name (default: hostname).
+    // Consumer is this instance's name within the group (default: hostname).
     Consumer string
-    // BatchSize is the max messages to read per XREADGROUP (default: 10).
+    // OldestID is the starting ID for a new consumer group (default: "0" = all messages).
+    // Set to "$" to only receive new messages.
+    OldestID string
+    // BatchSize is the XREADGROUP COUNT parameter (default: 10).
     BatchSize int64
-    // BlockTimeout is the XREADGROUP block duration (default: 1s).
+    // BlockTimeout is the XREADGROUP BLOCK duration (default: 1s).
     BlockTimeout time.Duration
-    // ClaimInterval is how often to check for idle messages (default: 30s).
+    // ClaimInterval is how often to check for idle pending messages (default: 30s).
     ClaimInterval time.Duration
-    // MaxIdleTime is the idle threshold for claiming messages (default: 60s).
+    // MaxIdleTime is the idle threshold before claiming a message (default: 60s).
     MaxIdleTime time.Duration
-    // UnmarshalFunc deserializes outbox stream entries into a message and destination.
-    UnmarshalFunc func(values map[string]any) (*message.RawMessage, string, error)
+    // Unmarshal converts a stream entry to a RawMessage.
+    // Default: JSON unmarshal with CloudEvents attribute mapping.
+    Unmarshal func(id string, values map[string]any) (*message.RawMessage, error)
+    // Pipe config for the underlying GeneratePipe (concurrency, etc.).
+    PipeConfig pipe.Config
 }
 
-// OutboxPublisher reads from the outbox Redis Stream and emits messages
-// for forwarding to the destination broker.
-type OutboxPublisher struct {
-    cfg OutboxPublisherConfig
+type Subscriber struct {
+    client goredis.UniversalClient
+    cfg    SubscriberConfig
+    gen    *pipe.GeneratePipe[*message.RawMessage]
 }
 
-// Source returns a channel of messages read from the outbox stream.
-// Each message's acking maps to XACK on the outbox stream.
-// Runs until ctx is cancelled.
-func (p *OutboxPublisher) Source(ctx context.Context) (<-chan *message.RawMessage, error) {
-    // 1. Create consumer group (XGROUP CREATE ... MKSTREAM)
-    // 2. Start read loop (XREADGROUP with ">")
-    // 3. Start claim loop (XPENDING + XCLAIM for idle messages)
-    // 4. Unmarshal entries, emit as *RawMessage
-    // 5. On msg.Ack() → XACK on outbox stream
-    // 6. On msg.Nack() → no XACK, message stays in PEL for reclaim
+func NewSubscriber(client goredis.UniversalClient, cfg SubscriberConfig) *Subscriber
+
+func (s *Subscriber) Subscribe(ctx context.Context) (<-chan *message.RawMessage, error) {
+    // 1. Create consumer group (XGROUP CREATE stream group oldestID MKSTREAM)
+    //    Ignore BUSYGROUP error (group already exists)
+    // 2. Return s.gen.Generate(ctx) — backed by receive()
+    // 3. Start background goroutine for claimIdle loop
+}
+```
+
+**Core read loop (inside GeneratePipe):**
+```go
+func (s *Subscriber) receive(ctx context.Context) ([]*message.RawMessage, error) {
+    streams, err := s.client.XReadGroup(ctx, &goredis.XReadGroupArgs{
+        Group:    s.cfg.Group,
+        Consumer: s.cfg.Consumer,
+        Streams:  []string{s.cfg.Stream, ">"},
+        Count:    s.cfg.BatchSize,
+        Block:    s.cfg.BlockTimeout,
+    }).Result()
+    if errors.Is(err, goredis.Nil) {
+        return nil, nil // no messages, GeneratePipe loops
+    }
+    if err != nil {
+        return nil, err
+    }
+
+    var msgs []*message.RawMessage
+    for _, xMsg := range streams[0].Messages {
+        // Bridge acking: msg.Ack() → XACK, msg.Nack() → stays in PEL
+        acking := message.NewAcking(
+            func() { s.client.XAck(ctx, s.cfg.Stream, s.cfg.Group, xMsg.ID) },
+            func(err error) { /* no XACK — message stays in PEL for reclaim */ },
+        )
+
+        raw, err := s.cfg.Unmarshal(xMsg.ID, xMsg.Values)
+        if err != nil {
+            return nil, fmt.Errorf("unmarshal stream entry %s: %w", xMsg.ID, err)
+        }
+        raw.SetAcking(acking)
+        msgs = append(msgs, raw)
+    }
+    return msgs, nil
 }
 ```
 
 **Idle message claiming (Redis 6.0 compatible):**
 ```go
 // XAUTOCLAIM requires Redis 6.2+. For 6.0 compatibility, use XPENDING + XCLAIM.
-func (p *OutboxPublisher) claimIdle(ctx context.Context) ([]goredis.XMessage, error) {
-    pending, err := p.cfg.Client.XPendingExt(ctx, &goredis.XPendingExtArgs{
-        Stream: p.cfg.Stream,
-        Group:  p.cfg.Group,
-        Idle:   p.cfg.MaxIdleTime,
-        Start:  "-",
-        End:    "+",
-        Count:  p.cfg.BatchSize,
+func (s *Subscriber) claimIdle(ctx context.Context) {
+    pending, _ := s.client.XPendingExt(ctx, &goredis.XPendingExtArgs{
+        Stream: s.cfg.Stream,
+        Group:  s.cfg.Group,
+        Idle:   s.cfg.MaxIdleTime,
+        Start:  "-", End: "+",
+        Count:  s.cfg.BatchSize,
     }).Result()
-    if err != nil {
-        return nil, err
-    }
 
     var ids []string
     for _, pe := range pending {
         ids = append(ids, pe.ID)
     }
     if len(ids) == 0 {
-        return nil, nil
+        return
     }
 
-    return p.cfg.Client.XClaim(ctx, &goredis.XClaimArgs{
-        Stream:   p.cfg.Stream,
-        Group:    p.cfg.Group,
-        Consumer: p.cfg.Consumer,
-        MinIdle:  p.cfg.MaxIdleTime,
+    // XClaim with MinIdle prevents double-claiming by concurrent subscribers
+    s.client.XClaim(ctx, &goredis.XClaimArgs{
+        Stream:   s.cfg.Stream,
+        Group:    s.cfg.Group,
+        Consumer: s.cfg.Consumer,
+        MinIdle:  s.cfg.MaxIdleTime,
         Messages: ids,
-    }).Result()
+    })
+    // Claimed messages appear in next XREADGROUP with ID "0" (pending re-read)
 }
 ```
 
 **Key design:**
-- **Consumer groups for reliability**: XREADGROUP tracks which messages have been delivered. Unacked messages remain in the Pending Entries List (PEL) for reclaim.
-- **XPENDING + XCLAIM for Redis 6.0**: XAUTOCLAIM (6.2+) is not available on Azure Redis 6.0. The two-step approach achieves the same result.
-- **Ack maps to XACK**: when the downstream broker confirms delivery, the outbox entry is acknowledged and removed from the PEL.
-- **Nack leaves in PEL**: failed deliveries are retried via the claim loop when they exceed MaxIdleTime.
+- **GeneratePipe**: `receive()` returns a batch per call; GeneratePipe handles concurrency, lifecycle, and channel emission — same pattern as CloudEvents subscriber
+- **Consumer groups**: XREADGROUP with `">"` gets new messages. Pending messages (claimed or unacked) are re-read with ID `"0"` on restart.
+- **XPENDING + XCLAIM**: background loop reclaims messages from dead consumers. `MinIdle` prevents race between concurrent subscribers.
+- **Ack = XACK**: removes from PEL. **Nack = no-op**: message stays in PEL for reclaim by another consumer.
+- **Configurable unmarshal**: default assumes JSON CloudEvents fields. Custom unmarshal for outbox entries, protobuf, etc.
 
 **Files to Create:**
-- `message/redis/outbox_publisher.go`
-- `message/redis/outbox_publisher_test.go`
+- `message/redis/subscriber.go`
+- `message/redis/subscriber_test.go`
 
 **Acceptance Criteria:**
-- [ ] Reads from outbox stream via XREADGROUP consumer group
-- [ ] Emits RawMessage with acking bound to XACK
-- [ ] Idle messages reclaimed via XPENDING + XCLAIM (Redis 6.0 compatible)
-- [ ] Consumer group auto-created on start
-- [ ] Configurable batch size, block timeout, claim intervals
+- [ ] Returns `<-chan *RawMessage` from `Subscribe()`
+- [ ] Uses `GeneratePipe` for lifecycle and concurrency
+- [ ] Consumer group auto-created on first subscribe
+- [ ] msg.Ack() → XACK, msg.Nack() → stays in PEL
+- [ ] Idle messages reclaimed via XPENDING + XCLAIM (Redis 6.0)
+- [ ] Configurable batch size, block timeout, claim intervals, unmarshal
+
+### Task 6: Redis Streams Publisher
+
+**Goal:** Publish messages to a Redis Stream via XADD. Follows the same pattern as the CloudEvents publisher — backed by `SinkPipe`, consumes `<-chan *RawMessage`.
+
+**Implementation:**
+```go
+// message/redis/publisher.go
+
+type PublisherConfig struct {
+    // Stream is the destination Redis Stream.
+    Stream string
+    // MaxLen caps the stream length (0 = no limit).
+    MaxLen int64
+    // Approx uses MAXLEN ~ for O(1) trimming instead of exact (default: true).
+    Approx bool
+    // Marshal converts a RawMessage to stream entry field-value pairs.
+    // Default: JSON marshal with CloudEvents attribute mapping.
+    Marshal func(msg *message.RawMessage) (map[string]any, error)
+    // Pipe config for the underlying SinkPipe (concurrency, etc.).
+    PipeConfig pipe.Config
+}
+
+type Publisher struct {
+    client goredis.UniversalClient
+    cfg    PublisherConfig
+    sink   *pipe.ProcessPipe[*message.RawMessage, struct{}]
+}
+
+func NewPublisher(client goredis.UniversalClient, cfg PublisherConfig) *Publisher
+
+func (p *Publisher) Publish(ctx context.Context, ch <-chan *message.RawMessage) (<-chan struct{}, error) {
+    // Returns p.sink.Pipe(ctx, ch)
+}
+
+func (p *Publisher) send(ctx context.Context, raw *message.RawMessage) error {
+    values, err := p.cfg.Marshal(raw)
+    if err != nil {
+        raw.Nack(err)
+        return fmt.Errorf("marshal: %w", err)
+    }
+
+    _, err = p.client.XAdd(ctx, &goredis.XAddArgs{
+        Stream: p.cfg.Stream,
+        Values: values,
+        MaxLen: p.cfg.MaxLen,
+        Approx: p.cfg.Approx,
+    }).Result()
+    if err != nil {
+        raw.Nack(err)
+        return err
+    }
+
+    raw.Ack()
+    return nil
+}
+```
+
+**Key design:**
+- **SinkPipe**: `send()` processes one message at a time; SinkPipe handles concurrency and lifecycle — same pattern as CloudEvents publisher
+- **MAXLEN with Approx**: `XADD stream MAXLEN ~ N` trims the stream approximately, preventing unbounded growth with O(1) cost
+- **Ack on XADD success**: signals to upstream that the message was durably written
+- **Configurable marshal**: default assumes JSON CloudEvents fields. Custom marshal for outbox forwarding, protobuf, etc.
+
+**Files to Create:**
+- `message/redis/publisher.go`
+- `message/redis/publisher_test.go`
+
+**Acceptance Criteria:**
+- [ ] Consumes `<-chan *RawMessage` from `Publish()`
+- [ ] Uses `SinkPipe` for lifecycle and concurrency
+- [ ] XADD with configurable MAXLEN trimming
+- [ ] msg.Ack() on success, msg.Nack(err) on failure
+- [ ] Configurable marshaling
+
+### Task 7: Outbox Forwarding
+
+**Goal:** Forward events from the outbox stream to the destination broker. Composes the Subscriber (Task 5) on the outbox stream with a Publisher (Task 6 or any broker publisher) to the destination.
+
+**Implementation:**
+
+The outbox forwarder is not a new component — it's a composition of Subscriber + Engine + Publisher. A helper creates a pre-configured Subscriber with outbox-specific unmarshal:
+
+```go
+// message/redis/outbox_forward.go
+
+// OutboxForwarderConfig configures the outbox forwarder.
+type OutboxForwarderConfig struct {
+    // Client is the Redis client.
+    Client goredis.UniversalClient
+    // Stream is the outbox stream (must match OutboxConfig.Stream).
+    Stream string
+    // Group is the consumer group name (default: "outbox-forwarder").
+    Group string
+    // Consumer is this instance's name (default: hostname).
+    Consumer string
+    // SubscriberConfig overrides for the underlying subscriber.
+    SubscriberConfig
+}
+
+// NewOutboxSubscriber creates a Subscriber pre-configured for the outbox stream.
+// The unmarshal function decodes outbox entries written by OutboxMiddleware.
+func NewOutboxSubscriber(cfg OutboxForwarderConfig) *Subscriber {
+    return NewSubscriber(cfg.Client, SubscriberConfig{
+        Stream:    cfg.Stream,
+        Group:     cfg.Group,
+        Consumer:  cfg.Consumer,
+        Unmarshal: outboxUnmarshal, // decodes outbox entry format
+        // ... inherit other settings from cfg.SubscriberConfig
+    })
+}
+```
+
+**Usage — wire through Engine:**
+```go
+// Outbox subscriber (reads from outbox stream)
+outboxSub := msgredis.NewOutboxSubscriber(msgredis.OutboxForwarderConfig{
+    Client: client,
+    Stream: "outbox:events",
+})
+outboxCh, _ := outboxSub.Subscribe(ctx)
+
+// Connect to engine as input
+engine.AddRawInput("outbox", nil, outboxCh)
+
+// Output goes to destination publisher (Redis Streams, HTTP, anything)
+destCh, _ := engine.AddRawOutput("destination", nil)
+destPub := msgredis.NewPublisher(client, msgredis.PublisherConfig{
+    Stream: "order-events",
+    MaxLen: 10000,
+})
+destPub.Publish(ctx, destCh)
+```
+
+**Key design:**
+- **No custom component**: outbox forwarding composes existing primitives (Subscriber + Engine + Publisher)
+- **Outbox-specific unmarshal**: `outboxUnmarshal` decodes the entry format produced by OutboxMiddleware
+- **Destination-agnostic**: the outbox subscriber outputs `RawMessage` — wire it to any publisher (Redis, HTTP, CloudEvents, etc.)
+- **Ack = XACK on outbox stream**: when the destination publisher confirms delivery
+
+**Files to Create:**
+- `message/redis/outbox_forward.go`
+- `message/redis/outbox_forward_test.go`
+
+**Acceptance Criteria:**
+- [ ] `NewOutboxSubscriber` returns a pre-configured Subscriber
+- [ ] Outbox unmarshal decodes entries from OutboxMiddleware
+- [ ] Composes with any publisher via Engine wiring
+- [ ] Ack on destination publish → XACK on outbox stream
 
 ## Implementation Order
 
@@ -525,34 +717,56 @@ func (p *OutboxPublisher) claimIdle(ctx context.Context) ([]goredis.XMessage, er
 transaction-handling.md Tasks 0, 1, 2 (shared foundation)
   ↓
 Task 1: Redis Context Helpers
-  ↓
-Task 2: TxPipeline Middleware     Task 3: Inbox Middleware
-            ↓                               ↓
-            └───────────────────────────────┘
-                          ↓
-              Task 4: Outbox Middleware
-                          ↓
-              Task 5: Outbox Publisher
+  ↓                                              (independent track)
+Task 2: TxMiddleware    Task 3: Inbox     Task 5: Subscriber    Task 6: Publisher
+  ↓                       ↓                  ↓                     ↓
+  └───────────────────────┘                  └─────────────────────┘
+            ↓                                          ↓
+  Task 4: Outbox Middleware              Task 7: Outbox Forwarding
+            ↓                                          ↑
+            └──────────────────────────────────────────┘
 ```
 
-Tasks 2 and 3 are independent (inbox doesn't use the pipeline). Task 4 depends on both (outbox uses pipeline, often paired with inbox). Task 5 depends on Task 4 (reads what outbox writes).
+Two independent tracks: **middleware** (Tasks 1-4) and **broker** (Tasks 5-6). Task 7 ties them together. Within each track, tasks can be done in parallel where shown.
 
 ## End-to-End Trace
 
-### Setup
+### Setup — Redis Streams as Broker
 
 ```go
 client := goredis.NewClient(&goredis.Options{Addr: "localhost:6379"})
 
-router := message.NewRouter(message.PipeConfig{
-    AckStrategy: message.AckOnSuccess,
+// --- Subscriber (input) ---
+sub := msgredis.NewSubscriber(client, msgredis.SubscriberConfig{
+    Stream: "commands",
+    Group:  "order-service",
 })
-router.Use(
+
+// --- Engine with middleware ---
+engine := message.NewEngine(message.EngineConfig{})
+engine.Router().Use(
     msgredis.InboxMiddleware(client, msgredis.InboxConfig{Retention: 24 * time.Hour}),
     msgredis.TxMiddleware(client),
     msgredis.OutboxMiddleware(msgredis.OutboxConfig{Stream: "outbox:events"}),
 )
-router.AddHandler("place-order", nil, NewPlaceOrderHandler(orderRepo))
+engine.AddHandler("place-order", nil, NewPlaceOrderHandler(orderRepo))
+
+// Wire subscriber → engine
+inputCh, _ := sub.Subscribe(ctx)
+engine.AddRawInput("commands", nil, inputCh)
+engineDone, _ := engine.Start(ctx)
+
+// --- Outbox forwarding (separate pipeline) ---
+outboxSub := msgredis.NewOutboxSubscriber(msgredis.OutboxForwarderConfig{
+    Client: client,
+    Stream: "outbox:events",
+})
+outboxCh, _ := outboxSub.Subscribe(ctx)
+destPub := msgredis.NewPublisher(client, msgredis.PublisherConfig{
+    Stream: "order-events",
+    MaxLen: 10000,
+})
+destPub.Publish(ctx, outboxCh)
 ```
 
 ### Execution Flow
@@ -638,19 +852,22 @@ Key insight: Watermill keeps Redis transactions **outside** the Redis driver ent
 
 1. **go-redis dependency**: The `message/redis` package adds `github.com/redis/go-redis/v9` as a dependency. Should this be a separate Go module to keep the core dependency-free?
 2. **Redis Cluster**: TxPipeline (MULTI/EXEC) requires all keys to be on the same slot. Should the plan address hash tags (`{tag}`) for cluster compatibility, or defer to documentation?
-3. **Outbox stream trimming**: The outbox stream grows with processed entries. Should OutboxPublisher trim after XACK (XDEL)? Or use MAXLEN on XADD for approximate trimming?
-4. **Redis Streams broker**: This plan covers Redis as a transaction/outbox store. A separate plan could cover Redis Streams as a general-purpose message broker (subscriber + publisher) for gopipe.
-5. **Outbox entry format**: Should the default marshal include the destination topic in the stream entry, or should there be one outbox stream per destination?
+3. **Outbox stream trimming**: The outbox stream grows with processed entries. Outbox XADD could use MAXLEN for approximate trimming, or the forwarder could XDEL after XACK.
+4. **Outbox entry format**: Should the default marshal include the destination topic in the stream entry, or should there be one outbox stream per destination?
+5. **Default marshal format**: JSON is simple but verbose. msgpack (like Watermill) is more compact. Should the default be JSON with msgpack as an option, or vice versa?
 
 ## Acceptance Criteria
 
 - [ ] All tasks completed
 - [ ] Tests pass (`make test`)
 - [ ] Build passes (`make build && make vet`)
-- [ ] Handler code has zero Redis imports
-- [ ] Pipeline executes atomically (business + outbox in same MULTI/EXEC)
-- [ ] Inbox dedup prevents duplicate processing
-- [ ] Inbox entries auto-expire (TTL)
-- [ ] Inbox entries deleted on handler error (retry allowed)
-- [ ] Outbox publisher reclaims idle messages (Redis 6.0 compatible)
-- [ ] Commit-before-ack ordering maintained
+- [ ] **Broker**: Subscriber returns `<-chan *RawMessage` via GeneratePipe
+- [ ] **Broker**: Publisher consumes `<-chan *RawMessage` via SinkPipe
+- [ ] **Broker**: Consumer group created, XACK on ack, PEL reclaim on idle
+- [ ] **Middleware**: Handler code has zero Redis imports
+- [ ] **Middleware**: Pipeline executes atomically (business + outbox in same MULTI/EXEC)
+- [ ] **Middleware**: Inbox dedup prevents duplicate processing, entries auto-expire
+- [ ] **Middleware**: Inbox entries deleted on handler error (retry allowed)
+- [ ] **Forwarding**: Outbox subscriber composes with any publisher
+- [ ] **All**: Redis 6.0 compatible (no XAUTOCLAIM, no Redis Functions)
+- [ ] **All**: Commit-before-ack ordering maintained

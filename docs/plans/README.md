@@ -8,7 +8,7 @@
 | [autoscale-worker-pool](autoscale-worker-pool.md) | Autoscale Worker Pool | Proposed |
 | [transaction-handling](transaction-handling.md) | Transaction Handling | Proposed |
 | [inbox-outbox](inbox-outbox.md) | Inbox/Outbox Pattern | Proposed |
-| [redis-transactions](redis-transactions.md) | Redis Transactions | Proposed |
+| [redis-transactions](redis-transactions.md) | Redis Integration | Proposed |
 
 ## Agent Guidance
 
