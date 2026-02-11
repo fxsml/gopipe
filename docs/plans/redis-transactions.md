@@ -6,7 +6,7 @@
 
 ## Overview
 
-Complete Redis integration for gopipe: standalone Redis Streams pub/sub (subscriber + publisher) and transaction middleware (TxPipeline, inbox, outbox). The standalone broker provides a persistent buffer channel — a lighter alternative to Azure Service Bus or similar managed brokers. The middleware layer adds transactional guarantees on top.
+Complete Redis integration for gopipe: standalone Redis Streams pub/sub (subscriber + publisher) and transaction middleware (TxPipeline, outbox). The standalone broker provides a persistent buffer channel — a lighter alternative to Azure Service Bus or similar managed brokers. The middleware layer adds transactional guarantees on top.
 
 All components live in `message/redis/` and use `go-redis/v9` with `UniversalClient` (standalone, sentinel, or cluster).
 
@@ -14,11 +14,10 @@ All components live in `message/redis/` and use `go-redis/v9` with `UniversalCli
 
 1. **Standalone Redis Streams pub/sub**: subscriber (XREADGROUP) and publisher (XADD) as drop-in replacements for any broker
 2. Handler-scoped Redis TX via TxPipeline middleware (MULTI/EXEC, always short-lived)
-3. Idempotent processing via inbox (SetNX with TTL, automatic expiry)
-4. Reliable event publishing via outbox stream (XADD within same pipeline)
-5. Redis 6.0+ compatible (no XAUTOCLAIM, no Redis Functions)
-6. Handlers fully TX-unaware (hex architecture: adapters use pipeline, handlers use ports)
-7. Clean adapter API via `Cmdable` interface (unified with or without TX)
+3. Reliable event publishing via outbox stream (XADD within same pipeline)
+4. Redis 6.0+ compatible (no XAUTOCLAIM, no Redis Functions)
+5. Handlers fully TX-unaware (hex architecture: adapters use pipeline, handlers use ports)
+6. Clean adapter API via `Cmdable` interface (unified with or without TX)
 
 ## Redis vs SQL Transaction Model
 
@@ -33,7 +32,6 @@ Redis transactions (MULTI/EXEC) are **command-oriented** — commands are queued
 | Error handling | Per-query errors available | Only after `Exec()` |
 | Adapter interface | `Executor` (shared by DB and TX) | `redis.Cmdable` (shared by client and pipeline) |
 | Atomicity | Full rollback on error | Commands execute as unit; individual failures don't roll back others |
-| Inbox approach | INSERT with unique constraint (same TX) | SetNX with TTL (separate, outside TX) |
 
 ## Architecture
 
@@ -45,16 +43,13 @@ Broker ──▶ Unmarshal ──▶ Router ──▶ Output/Publisher
               ┌───────────┴────────────────────────┐
               │  Acking middleware                   │  ← outermost
               │  ┌──────────────────────────────┐   │
-              │  │  InboxMiddleware              │   │  ← SetNX check (outside TX)
-              │  │  ┌────────────────────────┐   │   │
-              │  │  │  TxMiddleware          │   │   │  ← TxPipeline / Exec
-              │  │  │  ┌──────────────────┐  │   │   │
-              │  │  │  │  OutboxMiddleware │  │   │   │  ← XADD to pipeline
-              │  │  │  │  ┌────────────┐  │  │   │   │
-              │  │  │  │  │  Handler   │  │  │   │   │  ← adapter queues commands
-              │  │  │  │  └────────────┘  │  │   │   │
-              │  │  │  └──────────────────┘  │   │   │
-              │  │  └────────────────────────┘   │   │
+              │  │  TxMiddleware                │   │  ← TxPipeline / Exec
+              │  │  ┌────────────────────────┐  │   │
+              │  │  │  OutboxMiddleware      │  │   │  ← XADD to pipeline
+              │  │  │  ┌──────────────────┐  │  │   │
+              │  │  │  │  Handler         │  │  │   │  ← adapter queues commands
+              │  │  │  └──────────────────┘  │  │   │
+              │  │  └────────────────────────┘  │   │
               │  └──────────────────────────────┘   │
               └────────────────────────────────────┘
 ```
@@ -63,7 +58,6 @@ Broker ──▶ Unmarshal ──▶ Router ──▶ Output/Publisher
 
 ```go
 router.Use(
-    msgredis.InboxMiddleware(client, msgredis.InboxConfig{Retention: 24 * time.Hour}),
     msgredis.TxMiddleware(client),
     msgredis.OutboxMiddleware(msgredis.OutboxConfig{Stream: "outbox:events"}),
 )
@@ -71,109 +65,29 @@ router.Use(
 
 First registered wraps outermost. Execution order:
 1. **Acking** (framework): wraps everything, acks/nacks based on chain result
-2. **InboxMiddleware**: SetNX check — duplicate → return nil, nil → acked
-3. **TxMiddleware**: creates TxPipeline, puts in context, Exec on success
-4. **OutboxMiddleware**: after handler returns, adds XADD to pipeline
-5. **Handler**: adapter queues business commands on pipeline
+2. **TxMiddleware**: creates TxPipeline, puts in context, Exec on success
+3. **OutboxMiddleware**: after handler returns, adds XADD to pipeline
+4. **Handler**: adapter queues business commands on pipeline
 
 ### Component Responsibilities
 
 | Component | Knows TX? | Responsibility |
 |---|---|---|
 | **TxMiddleware** | Yes — creates | Create TxPipeline, put in context, Exec/Discard |
-| **InboxMiddleware** | No | SetNX check, delete on error |
 | **OutboxMiddleware** | Yes — uses | Extract pipeline, XADD output events |
 | **Handler** | **No** | Call ports (interfaces), pass ctx through |
 | **Adapter** | Yes — uses | Extract pipeline via `CmdableFromContext`, queue commands |
 | **Acking** | No | Ack/nack based on chain result |
 
-### Why Inbox Is Outside the TX
+### Idempotency
 
-In SQL, the inbox INSERT runs inside the same TX as business logic — the unique constraint violation is detected atomically. In Redis, MULTI doesn't support branching: all commands are queued, results are only available after EXEC. You cannot check "does inbox key exist?" and conditionally skip the handler inside MULTI.
+This plan does **not** include an inbox middleware for Redis. Unlike SQL (where INSERT with unique constraint runs atomically in the same TX), Redis MULTI/EXEC cannot branch on results — you cannot check "does key exist?" and conditionally skip the handler inside MULTI.
 
-SetNX is atomic by itself (single command, no race conditions). Placing it outside the TxPipeline keeps the design simple. The tradeoff is a small consistency gap (see below).
+A SetNX-based inbox outside the TX would have a consistency gap: if the process crashes between SetNX and EXEC, the message appears "processed" but business logic didn't run. Recovery requires waiting for TTL expiry.
 
-## The Inbox Gap
+**Recommendation:** Design handlers to be idempotent. Redis operations are naturally idempotent (HSET, SET, ZADD with same values). The broker provides at-least-once delivery with retry. Idempotent handlers + broker retry = safe duplicate handling without framework complexity.
 
-### Normal Flow (no crash)
-
-```
-1. InboxMiddleware: SetNX("inbox:{msgID}", "1", 24h) → OK (first time)
-2. TxMiddleware: creates pipeline
-3. Handler: adapter queues commands on pipeline
-4. OutboxMiddleware: adds XADD to pipeline
-5. TxMiddleware: pipeline.Exec() → MULTI, HSET, XADD, EXEC → success
-6. Acking: msg.Ack() → broker acknowledges
-```
-
-All good. Business commands and outbox write execute atomically in EXEC. Broker acks after EXEC.
-
-### Crash Between Inbox and EXEC
-
-```
-1. InboxMiddleware: SetNX("inbox:{msgID}", "1", 24h) → OK
-2. TxMiddleware: creates pipeline
-3. ─── PROCESS CRASHES ───
-```
-
-State after crash:
-- **Inbox key exists** (SetNX succeeded)
-- **Business commands did NOT execute** (EXEC never happened)
-- **Outbox entry does NOT exist** (XADD was queued but not executed)
-- **Broker message is NOT acked** (acking middleware never ran)
-
-On redelivery (broker redelivers unacked message):
-- InboxMiddleware: SetNX("inbox:{msgID}") → **key exists** → duplicate → acked without processing
-
-**The gap:** The message is treated as "already processed" even though business logic didn't run. The message is lost until the inbox key expires.
-
-### TTL-Based Recovery
-
-The inbox key has a TTL (e.g., 24h). After expiry:
-- Broker redelivers the message (still unacked, reclaimed via XPENDING + XCLAIM)
-- InboxMiddleware: SetNX("inbox:{msgID}") → **key doesn't exist** → processes normally
-
-**Recovery time is bounded by the inbox TTL.** With 24h TTL, the maximum gap is 24h. This is acceptable because:
-1. Process crashes between SetNX and EXEC are rare (millisecond window)
-2. The broker retains the message in its pending list until acked
-3. After TTL expiry, the message is automatically reprocessed
-
-### Why Not Atomic Inbox?
-
-WATCH-based optimistic locking could make inbox + business atomic:
-
-```
-WATCH inbox:{msgID}
-GET inbox:{msgID}          → if exists, UNWATCH, return duplicate
-MULTI
-  SET inbox:{msgID} "1" EX ttl
-  ...business commands...
-  XADD outbox stream ...
-EXEC                       → nil if WATCH key changed (retry)
-```
-
-This eliminates the gap but adds complexity:
-- Two round trips before EXEC (WATCH + GET)
-- Retry loop on WATCH conflicts (concurrent consumers claim same message)
-- TxPipeline middleware must use `client.Watch()` callback instead of simple `client.TxPipeline()`
-- Inbox key must be on same slot as business keys (Redis Cluster constraint)
-
-The simpler SetNX approach is preferred. The gap is bounded by TTL and only affects crash scenarios (not application errors — see below).
-
-### Handler Error Recovery
-
-When the handler returns an error:
-
-```
-1. InboxMiddleware: SetNX → OK
-2. TxMiddleware: creates pipeline
-3. Handler: returns error
-4. TxMiddleware: pipeline.Discard() (no EXEC)
-5. InboxMiddleware: DEL("inbox:{msgID}") ← removes inbox entry
-6. Acking: msg.Nack(err) → broker will redeliver
-```
-
-The inbox entry is **deleted on handler error**, ensuring the message is retried. Only successful EXEC (commit) keeps the inbox entry. Application errors do NOT cause the gap — only process crashes do.
+See [Future Considerations](#future-considerations) for inbox design options if needed.
 
 ## Tasks
 
@@ -274,82 +188,7 @@ func TxMiddleware(client goredis.UniversalClient) message.Middleware {
 - [ ] Pipeline available to adapters via `CmdableFromContext(ctx, client)` inside handler
 - [ ] Handler code has zero Redis imports
 
-### Task 3: Redis Inbox Middleware
-
-**Goal:** Idempotent message processing via SetNX with TTL. Prevents duplicate processing when messages are redelivered.
-
-**Implementation:**
-```go
-// message/redis/inbox_middleware.go
-
-// InboxConfig configures the inbox middleware.
-type InboxConfig struct {
-    // Retention is the TTL for inbox keys (default: 24h).
-    // After expiry, redelivered messages are processed again.
-    Retention time.Duration
-    // KeyFunc derives the inbox key from the message.
-    // Default: "inbox:{msg.ID()}"
-    KeyFunc func(msg *message.Message) string
-}
-
-func InboxMiddleware(client goredis.UniversalClient, cfg InboxConfig) message.Middleware {
-    if cfg.Retention <= 0 {
-        cfg.Retention = 24 * time.Hour
-    }
-    if cfg.KeyFunc == nil {
-        cfg.KeyFunc = func(msg *message.Message) string {
-            return "inbox:" + msg.ID()
-        }
-    }
-
-    return func(next message.ProcessFunc) message.ProcessFunc {
-        return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
-            key := cfg.KeyFunc(msg)
-
-            // SetNX: atomic check-and-set. Returns true if key was set (first time).
-            set, err := client.SetNX(ctx, key, "1", cfg.Retention).Result()
-            if err != nil {
-                return nil, fmt.Errorf("inbox setnx: %w", err)
-            }
-            if !set {
-                // Duplicate: key already exists → skip processing
-                return nil, nil
-            }
-
-            // Process message
-            outputs, err := next(ctx, msg)
-            if err != nil {
-                // Handler failed: delete inbox entry to allow retry
-                client.Del(ctx, key) // best-effort, ignore error
-                return nil, err
-            }
-
-            return outputs, nil
-        }
-    }
-}
-```
-
-**Key design:**
-- **SetNX is atomic**: single command, no race conditions between check and set
-- **TTL provides auto-cleanup**: no explicit cleanup job needed, inbox entries self-expire
-- **Delete on error**: handler failure removes inbox entry, allowing broker redelivery
-- **nil, nil for duplicates**: acking middleware acks the message (consistent with SQL inbox)
-- **Configurable key function**: allows custom dedup keys (e.g., based on idempotency header)
-- **Outside TX**: SetNX executes independently, not part of TxPipeline (see "The Inbox Gap")
-
-**Files to Create:**
-- `message/redis/inbox_middleware.go`
-- `message/redis/inbox_middleware_test.go`
-
-**Acceptance Criteria:**
-- [ ] First-time messages: SetNX succeeds, handler runs
-- [ ] Duplicate messages: SetNX fails, returns nil, nil (acked by acking middleware)
-- [ ] Handler errors: inbox entry deleted, message redeliverable
-- [ ] Inbox keys expire after configured retention
-- [ ] Configurable key derivation
-
-### Task 4: Redis Outbox Middleware
+### Task 3: Redis Outbox Middleware
 
 **Goal:** Reliable event publishing by writing output events to a Redis Stream within the same TxPipeline as business commands.
 
@@ -426,7 +265,7 @@ func OutboxMiddleware(cfg OutboxConfig) message.Middleware {
 
 The standalone Redis Streams pub/sub provides a persistent buffer channel with at-least-once delivery. Uses consumer groups for competing consumers, XPENDING + XCLAIM for dead consumer recovery. Independent of the middleware — usable as a drop-in broker for any gopipe pipeline.
 
-### Task 5: Redis Streams Subscriber
+### Task 4: Redis Streams Subscriber
 
 **Goal:** Subscribe to a Redis Stream via consumer groups. Follows the same pattern as the CloudEvents subscriber — backed by `GeneratePipe`, returns `<-chan *RawMessage`.
 
@@ -562,7 +401,7 @@ func (s *Subscriber) claimIdle(ctx context.Context) {
 - [ ] Idle messages reclaimed via XPENDING + XCLAIM (Redis 6.0)
 - [ ] Configurable batch size, block timeout, claim intervals, unmarshal
 
-### Task 6: Redis Streams Publisher
+### Task 5: Redis Streams Publisher
 
 **Goal:** Publish messages to a Redis Stream via XADD. Follows the same pattern as the CloudEvents publisher — backed by `SinkPipe`, consumes `<-chan *RawMessage`.
 
@@ -636,7 +475,7 @@ func (p *Publisher) send(ctx context.Context, raw *message.RawMessage) error {
 - [ ] msg.Ack() on success, msg.Nack(err) on failure
 - [ ] Configurable marshaling
 
-### Task 7: Outbox Forwarding
+### Task 6: Outbox Forwarding
 
 **Goal:** Forward events from the outbox stream to the destination broker. Composes the Subscriber (Task 5) on the outbox stream with a Publisher (Task 6 or any broker publisher) to the destination.
 
@@ -718,16 +557,14 @@ transaction-handling.md Tasks 0, 1, 2 (shared foundation)
   ↓
 Task 1: Redis Context Helpers
   ↓                                              (independent track)
-Task 2: TxMiddleware    Task 3: Inbox     Task 5: Subscriber    Task 6: Publisher
-  ↓                       ↓                  ↓                     ↓
-  └───────────────────────┘                  └─────────────────────┘
-            ↓                                          ↓
-  Task 4: Outbox Middleware              Task 7: Outbox Forwarding
-            ↓                                          ↑
-            └──────────────────────────────────────────┘
+Task 2: TxMiddleware              Task 4: Subscriber    Task 5: Publisher
+  ↓                                  ↓                     ↓
+Task 3: Outbox Middleware            └─────────────────────┘
+  ↓                                          ↓
+  └──────────────────────────────Task 6: Outbox Forwarding
 ```
 
-Two independent tracks: **middleware** (Tasks 1-4) and **broker** (Tasks 5-6). Task 7 ties them together. Within each track, tasks can be done in parallel where shown.
+Two independent tracks: **middleware** (Tasks 1-3) and **broker** (Tasks 4-5). Task 6 ties them together.
 
 ## End-to-End Trace
 
@@ -745,7 +582,6 @@ sub := msgredis.NewSubscriber(client, msgredis.SubscriberConfig{
 // --- Engine with middleware ---
 engine := message.NewEngine(message.EngineConfig{})
 engine.Router().Use(
-    msgredis.InboxMiddleware(client, msgredis.InboxConfig{Retention: 24 * time.Hour}),
     msgredis.TxMiddleware(client),
     msgredis.OutboxMiddleware(msgredis.OutboxConfig{Stream: "outbox:events"}),
 )
@@ -775,28 +611,30 @@ destPub.Publish(ctx, outboxCh)
 1.  Broker delivers message (msg.ID = "abc-123")
 2.  Router receives message
 3.  Acking middleware (outermost) calls next:
-4.    InboxMiddleware: SetNX("inbox:abc-123", "1", 24h) → true (first time)
-5.      TxMiddleware: pipe = client.TxPipeline(), msg.WithValue(pipelineKey, pipe)
-6.        OutboxMiddleware calls next:
-7.          Handler: repo.Save(ctx, order) → adapter queues HSET on pipeline
-8.          Handler returns: []OrderPlaced{{OrderID: "xyz"}}
-9.        OutboxMiddleware: pipe.XAdd("outbox:events", {type: "order.placed", ...})
-10.       OutboxMiddleware returns: nil, nil (outputs swallowed)
-11.     TxMiddleware: pipe.Exec(ctx) → MULTI, HSET, XADD, EXEC → success
-12.   InboxMiddleware returns: nil, nil
-13. Acking middleware: msg.Ack() → broker ack (AFTER Exec)
+4.    TxMiddleware: pipe = client.TxPipeline(), msg.WithValue(pipelineKey, pipe)
+5.      OutboxMiddleware calls next:
+6.        Handler: repo.Save(ctx, order) → adapter queues HSET on pipeline
+7.        Handler returns: []OrderPlaced{{OrderID: "xyz"}}
+8.      OutboxMiddleware: pipe.XAdd("outbox:events", {type: "order.placed", ...})
+9.      OutboxMiddleware returns: nil, nil (outputs swallowed)
+10.   TxMiddleware: pipe.Exec(ctx) → MULTI, HSET, XADD, EXEC → success
+11. Acking middleware: msg.Ack() → broker ack (AFTER Exec)
 ```
 
 ### Duplicate Handling
 
+Handled at the application level via idempotent operations. If the broker redelivers a message:
+
+```go
+// Idempotent: HSET overwrites with same values — no side effects
+cmd.HSet(ctx, "order:"+order.ID, map[string]any{
+    "product_id": order.ProductID,
+    "quantity":   order.Quantity,
+    "status":     "placed",
+})
 ```
-1.  Broker redelivers message (msg.ID = "abc-123", same as before)
-2.  Router receives message
-3.  Acking middleware calls next:
-4.    InboxMiddleware: SetNX("inbox:abc-123") → false (key exists)
-5.    InboxMiddleware returns: nil, nil (duplicate)
-6.  Acking middleware: msg.Ack() → broker ack (skipped processing)
-```
+
+The handler runs again, produces the same result, outbox may get a duplicate entry (forwarder handles dedup or downstream is idempotent).
 
 ### Handler (application layer — TX-unaware)
 
@@ -839,9 +677,10 @@ Watermill's Redis driver (`watermill-redisstream`) uses Redis Streams for pub/su
 | Concern | Watermill | gopipe (this plan) |
 |---|---|---|
 | Redis primitive | Streams (XADD/XREADGROUP) | Streams + TxPipeline |
-| Delivery guarantee | At-least-once | At-least-once + inbox dedup |
+| Delivery guarantee | At-least-once | At-least-once |
 | Transaction support | None (uses SQL Forwarder) | Native via TxPipeline |
 | Outbox pattern | SQL-based Forwarder component | Redis Stream within same TxPipeline |
+| Idempotency | Application-level | Application-level (idempotent handlers) |
 | Nack handling | In-memory re-send loop | Broker redelivery |
 | Idle message recovery | XPENDING + XCLAIM | XPENDING + XCLAIM |
 | Marshaling | msgpack metadata + raw payload | Configurable (default: JSON) |
@@ -866,8 +705,45 @@ Key insight: Watermill keeps Redis transactions **outside** the Redis driver ent
 - [ ] **Broker**: Consumer group created, XACK on ack, PEL reclaim on idle
 - [ ] **Middleware**: Handler code has zero Redis imports
 - [ ] **Middleware**: Pipeline executes atomically (business + outbox in same MULTI/EXEC)
-- [ ] **Middleware**: Inbox dedup prevents duplicate processing, entries auto-expire
-- [ ] **Middleware**: Inbox entries deleted on handler error (retry allowed)
 - [ ] **Forwarding**: Outbox subscriber composes with any publisher
 - [ ] **All**: Redis 6.0 compatible (no XAUTOCLAIM, no Redis Functions)
 - [ ] **All**: Commit-before-ack ordering maintained
+
+## Future Considerations
+
+### Redis Inbox Middleware
+
+An inbox middleware for Redis was considered but deferred. The analysis:
+
+**The Problem:** Redis MULTI/EXEC cannot branch on results. You cannot check "does key exist?" and conditionally skip the handler inside MULTI. An inbox must run outside the transaction.
+
+**SetNX Approach:** Use `SetNX(inbox:{msgID}, "1", TTL)` before the TxPipeline. If key exists, skip processing.
+
+**The Gap:** If the process crashes between SetNX and EXEC:
+- Inbox key exists (SetNX succeeded)
+- Business logic did NOT run (EXEC never happened)
+- On redelivery, SetNX fails → message skipped → **lost until TTL expires**
+
+**WATCH-based Atomic Approach:** Use WATCH + MULTI/EXEC to make inbox atomic with business:
+```
+WATCH inbox:{msgID}
+GET inbox:{msgID}
+if exists: UNWATCH, return duplicate
+MULTI
+  SET inbox:{msgID} "1" EX ttl
+  ...business commands...
+EXEC
+```
+
+This eliminates the gap but adds:
+- Retry loop on WATCH conflicts
+- Redis Cluster constraint: inbox key must be on same slot as business keys (requires hash tag coordination)
+- TxMiddleware must use `client.Watch()` callback instead of simple `TxPipeline()`
+
+**Decision:** Neither approach provides sufficient value:
+- SetNX has a consistency gap (bounded by TTL, but still a gap)
+- WATCH adds complexity and cluster constraints
+- Redis operations are naturally idempotent — handlers can be designed to handle duplicates
+- The broker provides at-least-once delivery with retry
+
+**Recommendation:** Use idempotent handlers. If framework-enforced idempotency is required, use SQL (where inbox INSERT runs atomically in the same TX).
