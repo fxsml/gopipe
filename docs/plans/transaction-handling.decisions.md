@@ -5,7 +5,7 @@
 
 ## Context
 
-The TxStarter pipe creates a TX and binds commit/rollback to the message's acking. Downstream components (adapters) need to access this TX reference. The TX must travel with the message through the in-process pipeline but must NOT cross broker boundaries (serialization).
+TxMiddleware wraps a handler in BEGIN/COMMIT/ROLLBACK. Adapters inside the handler need to access the TX reference. The TX must travel with the message through the handler's context but must NOT cross broker boundaries (serialization).
 
 The core question: **how should a message carry in-process values that downstream components can read?**
 
@@ -48,11 +48,11 @@ This is not just for transactions. The same mechanism carries:
 
 | Value | Set by | Used by |
 |---|---|---|
-| `*sql.Tx` | TxStarter pipe | SQL adapters via `TxFromContext(ctx)` |
-| Trace span | OTel middleware/pipe | Instrumented adapters via `trace.SpanFromContext(ctx)` |
-| Logger | Logging pipe | Adapters via `slog.FromContext(ctx)` (hypothetical) |
-| Auth principal | Auth middleware/pipe | Authorization adapters |
-| Saga state | Saga coordinator pipe | Saga step adapters |
+| `*sql.Tx` | TxMiddleware | SQL adapters via `TxFromContext(ctx)` |
+| Trace span | OTel middleware | Instrumented adapters via `trace.SpanFromContext(ctx)` |
+| Logger | Logging middleware | Adapters via `slog.FromContext(ctx)` (hypothetical) |
+| Auth principal | Auth middleware | Authorization adapters |
+| Saga state | Saga coordinator | Saga step adapters |
 
 All of these are in-process, request-scoped values that should flow with the message but die at broker boundaries. `context.Context` is Go's standard mechanism for exactly this.
 
@@ -70,7 +70,7 @@ The Go community recognizes explicit exceptions:
 
 The principle is: **context must flow, not be stored.** If the struct itself flows (message through a pipeline), context-on-struct is appropriate. If the struct persists (service, repository), context should not be on it. `TypedMessage` flows — it is gopipe's request type, equivalent to `http.Request`.
 
-**Watermill validates this directly.** Its `message.Message` has both `Metadata map[string]string` and `ctx context.Context`, with `Context()` / `SetContext()` methods. This is the exact same pattern proposed here.
+**Watermill validates this directly.** Its `message.Message` has both `Metadata map[string]string` and `ctx context.Context`, with `Context()` / `SetContext()` methods. gopipe uses `WithValue` instead of `SetContext` (see Analysis below), but the storage pattern is identical.
 
 ---
 
