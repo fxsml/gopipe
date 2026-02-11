@@ -689,6 +689,114 @@ func TestRouter_AckStrategy_Forward(t *testing.T) {
 	})
 }
 
+func TestRouter_MiddlewareRunsBeforeAcking(t *testing.T) {
+	t.Run("AckOnSuccess: middleware completes before ack fires", func(t *testing.T) {
+		var sequence []string
+
+		acking := NewAcking(
+			func()      { sequence = append(sequence, "ack") },
+			func(error) { sequence = append(sequence, "nack") },
+		)
+
+		router := NewRouter(PipeConfig{AckStrategy: AckOnSuccess})
+
+		// Middleware that tracks pre/post execution
+		router.Use(func(next ProcessFunc) ProcessFunc {
+			return func(ctx context.Context, msg *Message) ([]*Message, error) {
+				sequence = append(sequence, "middleware:before")
+				outputs, err := next(ctx, msg)
+				sequence = append(sequence, "middleware:after")
+				return outputs, err
+			}
+		})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			sequence = append(sequence, "handler")
+			return nil, nil
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     acking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		for range out {
+		}
+
+		// middleware:before → handler → middleware:after → ack
+		// The critical assertion: ack must come AFTER middleware:after
+		expected := []string{"middleware:before", "handler", "middleware:after", "ack"}
+		if len(sequence) != len(expected) {
+			t.Fatalf("expected %v, got %v", expected, sequence)
+		}
+		for i, s := range expected {
+			if sequence[i] != s {
+				t.Errorf("step %d: expected %q, got %q (full: %v)", i, s, sequence[i], sequence)
+			}
+		}
+	})
+
+	t.Run("AckOnSuccess: middleware completes before nack fires", func(t *testing.T) {
+		var sequence []string
+
+		acking := NewAcking(
+			func()      { sequence = append(sequence, "ack") },
+			func(error) { sequence = append(sequence, "nack") },
+		)
+
+		router := NewRouter(PipeConfig{
+			AckStrategy: AckOnSuccess,
+			ErrorHandler: func(msg *Message, err error) {},
+		})
+
+		// Middleware that tracks execution and catches error
+		router.Use(func(next ProcessFunc) ProcessFunc {
+			return func(ctx context.Context, msg *Message) ([]*Message, error) {
+				sequence = append(sequence, "middleware:before")
+				outputs, err := next(ctx, msg)
+				sequence = append(sequence, "middleware:after")
+				return outputs, err
+			}
+		})
+
+		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
+			sequence = append(sequence, "handler")
+			return nil, errors.New("handler failed")
+		}, KebabNaming)
+		_ = router.AddHandler("", nil, handler)
+
+		ctx := context.Background()
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &TestCommand{ID: "1"},
+			Attributes: Attributes{"type": "test.command"},
+			acking:     acking,
+		}
+		close(in)
+
+		out, _ := router.Pipe(ctx, in)
+		for range out {
+		}
+
+		// middleware:before → handler → middleware:after → nack
+		expected := []string{"middleware:before", "handler", "middleware:after", "nack"}
+		if len(sequence) != len(expected) {
+			t.Fatalf("expected %v, got %v", expected, sequence)
+		}
+		for i, s := range expected {
+			if sequence[i] != s {
+				t.Errorf("step %d: expected %q, got %q (full: %v)", i, s, sequence[i], sequence)
+			}
+		}
+	})
+}
+
 func TestRouter_ProcessTimeout(t *testing.T) {
 	t.Run("handler timeout enforced", func(t *testing.T) {
 		var handlerErr error
