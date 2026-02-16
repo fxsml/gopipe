@@ -8,8 +8,9 @@
 // JSON Schema defines the payload data contract (what's inside "data").
 // Together they provide a full event-driven API spec.
 //
-//   - POST /events   — CloudEvents endpoint (binary or structured mode)
-//   - GET  /schemas  — JSON Schema catalog for all registered types
+//   - POST /events         — CloudEvents endpoint (binary or structured mode)
+//   - GET  /schemas        — JSON Schema catalog for all registered types
+//   - GET  /schema/{type}  — Individual JSON Schema by type name
 //
 // Run:
 //
@@ -38,6 +39,10 @@
 // View schema catalog:
 //
 //	curl http://localhost:8080/schemas
+//
+// View individual schema:
+//
+//	curl http://localhost:8080/schema/CreateOrderCommand
 package main
 
 import (
@@ -118,7 +123,7 @@ func main() {
 		message.CommandHandlerConfig{Source: "/orders", Naming: message.KebabNaming},
 	))
 
-	// Input: CloudEvents via HTTP.
+	// Input: CloudEvents via HTTP (handles binary, structured, and batch modes).
 	subscriber := cehttp.NewSubscriber(cehttp.SubscriberConfig{})
 	events, _ := subscriber.Subscribe(ctx)
 	engine.AddRawInput("orders", nil, events)
@@ -135,12 +140,34 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// HTTP routes: CE endpoint + schema catalog.
+	// HTTP routes: CE endpoint + schema catalog + individual schemas.
 	mux := http.NewServeMux()
 	mux.Handle("POST /events", subscriber)
 	mux.HandleFunc("GET /schemas", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/schema+json")
 		w.Write(marshaler.Schemas())
+	})
+	mux.HandleFunc("GET /schema/{type}", func(w http.ResponseWriter, r *http.Request) {
+		typeName := r.PathValue("type")
+		var schema json.RawMessage
+
+		switch typeName {
+		case "CreateOrderCommand":
+			schema = marshaler.Schema(CreateOrderCommand{})
+		case "OrderCreatedEvent":
+			schema = marshaler.Schema(OrderCreatedEvent{})
+		default:
+			http.Error(w, "unknown type", http.StatusNotFound)
+			return
+		}
+
+		if schema == nil {
+			http.Error(w, "schema not found", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/schema+json")
+		w.Write(schema)
 	})
 
 	server := &http.Server{Addr: ":8080", Handler: mux}
@@ -150,8 +177,9 @@ func main() {
 	}()
 
 	fmt.Println("Listening on :8080")
-	fmt.Println("  POST /events   — CloudEvents endpoint")
-	fmt.Println("  GET  /schemas  — JSON Schema catalog")
+	fmt.Println("  POST /events         — CloudEvents endpoint")
+	fmt.Println("  GET  /schemas        — JSON Schema catalog")
+	fmt.Println("  GET  /schema/{type}  — Individual schema")
 	fmt.Println()
 
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
