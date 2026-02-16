@@ -1,8 +1,10 @@
-// Example: HTTP service with JSON Schema data contracts.
+// Example: HTTP service with JSON Schema validation using pipes.
 //
-// Demonstrates a CloudEvents HTTP service that validates payloads
-// against explicit JSON Schema definitions. This solves the Go zero-value
-// dilemma: "Is amount really 0, or was the field missing?"
+// Demonstrates manual pipeline composition with jsonschema validation pipes.
+// This example shows the low-level pipe primitives instead of using the Engine.
+//
+// Pipeline:
+//   HTTP → UnmarshalPipe (validate) → Router (handle) → MarshalPipe → stdout
 //
 // CloudEvents defines the envelope contract (type, source, id).
 // JSON Schema defines the payload data contract (what's inside "data").
@@ -26,7 +28,7 @@
 //	  -H "Ce-Id: 1" \
 //	  -d '{"order_id":"ORD-1","amount":49.99}'
 //
-// Invalid (missing required field — returns 500):
+// Invalid (missing required field — returns 400):
 //
 //	curl -X POST http://localhost:8080/events \
 //	  -H "Content-Type: application/json" \
@@ -54,10 +56,10 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
 	cehttp "github.com/fxsml/gopipe/message/http"
 	"github.com/fxsml/gopipe/message/jsonschema"
+	"github.com/fxsml/gopipe/pipe"
 )
 
 // Command schema — inbound data contract.
@@ -100,21 +102,24 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	// Marshaler with schemas for both command and event.
-	marshaler := jsonschema.NewMarshaler()
+	// 1. Setup JSON Schema marshaler with validation for both types.
+	marshaler := jsonschema.NewMarshaler(jsonschema.Config{})
 	marshaler.MustRegister(CreateOrderCommand{}, createOrderCommandSchema)
 	marshaler.MustRegister(OrderCreatedEvent{}, orderCreatedEventSchema)
 
-	engine := message.NewEngine(message.EngineConfig{
-		Marshaler: marshaler,
-		ErrorHandler: func(msg *message.Message, err error) {
-			fmt.Fprintf(os.Stderr, "rejected: %v\n", err)
-		},
-	})
+	// 2. Setup HTTP CloudEvents subscriber.
+	subscriber := cehttp.NewSubscriber(cehttp.SubscriberConfig{})
+	rawInput, _ := subscriber.Subscribe(ctx)
 
-	// Handler: CreateOrderCommand → OrderCreatedEvent.
-	engine.AddHandler("process-order", nil, message.NewCommandHandler(
+	// 3. Unmarshal pipe: RawMessage → Message (with validation).
+	unmarshalPipe := jsonschema.NewUnmarshalPipe(marshaler, message.PipeConfig{})
+	typed, _ := unmarshalPipe.Pipe(ctx, rawInput)
+
+	// 4. Router: handle messages and produce new messages.
+	router := message.NewRouter(message.PipeConfig{})
+	router.AddHandler("process-order", nil, message.NewCommandHandler(
 		func(ctx context.Context, cmd CreateOrderCommand) ([]OrderCreatedEvent, error) {
+			log.Printf("Processing order: %s ($%.2f)", cmd.OrderID, cmd.Amount)
 			return []OrderCreatedEvent{{
 				OrderID: cmd.OrderID,
 				Status:  "created",
@@ -122,25 +127,23 @@ func main() {
 		},
 		message.CommandHandlerConfig{Source: "/orders", Naming: message.KebabNaming},
 	))
+	processed, _ := router.Pipe(ctx, typed)
 
-	// Input: CloudEvents via HTTP (handles binary, structured, and batch modes).
-	subscriber := cehttp.NewSubscriber(cehttp.SubscriberConfig{})
-	events, _ := subscriber.Subscribe(ctx)
-	engine.AddRawInput("orders", nil, events)
+	// 5. Marshal pipe: Message → RawMessage (with validation).
+	marshalPipe := jsonschema.NewMarshalPipe(marshaler, message.PipeConfig{})
+	rawOutput, _ := marshalPipe.Pipe(ctx, processed)
 
-	// Output: print events to stdout via channel.Sink.
-	output, _ := engine.AddOutput("stdout", nil)
-	printed := channel.Sink(output, func(msg *message.Message) {
-		data, _ := json.Marshal(msg.Data)
-		fmt.Printf("[%s] %s\n", msg.Type(), data)
-	})
+	// 6. Sink to stdout using pipe primitive.
+	printer := pipe.NewSinkPipe(func(ctx context.Context, raw *message.RawMessage) error {
+		var data any
+		json.Unmarshal(raw.Data, &data)
+		formatted, _ := json.MarshalIndent(data, "", "  ")
+		fmt.Printf("\n[%s]\n%s\n", raw.Type(), formatted)
+		return nil
+	}, pipe.Config{})
+	done, _ := printer.Pipe(ctx, rawOutput)
 
-	engineDone, err := engine.Start(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// HTTP routes: CE endpoint + schema catalog + individual schemas.
+	// 7. HTTP routes: CloudEvents endpoint + schema discovery.
 	mux := http.NewServeMux()
 	mux.Handle("POST /events", subscriber)
 	mux.HandleFunc("GET /schemas", func(w http.ResponseWriter, r *http.Request) {
@@ -181,11 +184,17 @@ func main() {
 	fmt.Println("  GET  /schemas        — JSON Schema catalog")
 	fmt.Println("  GET  /schema/{type}  — Individual schema")
 	fmt.Println()
+	fmt.Println("Pipeline: HTTP → Unmarshal → Router → Marshal → stdout")
+	fmt.Println()
+	fmt.Println("Try: curl -X POST http://localhost:8080/events \\")
+	fmt.Println(`       -H "Ce-Specversion: 1.0" -H "Ce-Id: 1" \`)
+	fmt.Println(`       -H "Ce-Type: create.order.command" -H "Ce-Source: /test" \`)
+	fmt.Println(`       -d '{"order_id":"ORD-1","amount":49.99}'`)
+	fmt.Println()
 
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 
-	<-engineDone
-	<-printed
+	<-done
 }

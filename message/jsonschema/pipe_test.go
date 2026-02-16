@@ -9,7 +9,7 @@ import (
 
 func TestUnmarshalPipe(t *testing.T) {
 	t.Run("unmarshals and validates", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		pipe := NewUnmarshalPipe(m, message.PipeConfig{})
@@ -50,7 +50,7 @@ func TestUnmarshalPipe(t *testing.T) {
 	})
 
 	t.Run("rejects invalid data", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		pipe := NewUnmarshalPipe(m, message.PipeConfig{})
@@ -87,7 +87,7 @@ func TestUnmarshalPipe(t *testing.T) {
 	})
 
 	t.Run("returns error for unknown type", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		pipe := NewUnmarshalPipe(m, message.PipeConfig{})
@@ -126,7 +126,7 @@ func TestUnmarshalPipe(t *testing.T) {
 
 func TestMarshalPipe(t *testing.T) {
 	t.Run("marshals and validates", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		pipe := NewMarshalPipe(m, message.PipeConfig{})
@@ -163,7 +163,7 @@ func TestMarshalPipe(t *testing.T) {
 	})
 
 	t.Run("rejects invalid data", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		pipe := NewMarshalPipe(m, message.PipeConfig{})
@@ -199,7 +199,7 @@ func TestMarshalPipe(t *testing.T) {
 	})
 
 	t.Run("passes through unregistered types", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		// Don't register testOther
 
 		pipe := NewMarshalPipe(m, message.PipeConfig{})

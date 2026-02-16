@@ -59,20 +59,16 @@ type entry struct {
 }
 
 // NewMarshaler creates a JSON marshaler with schema validation.
-// If no config is provided, uses KebabNaming by default.
-func NewMarshaler(cfg ...Config) *Marshaler {
-	c := Config{Naming: message.KebabNaming}
-	if len(cfg) > 0 {
-		c = cfg[0]
-		if c.Naming == nil {
-			c.Naming = message.KebabNaming
-		}
+// If cfg.Naming is nil, uses KebabNaming by default.
+func NewMarshaler(cfg Config) *Marshaler {
+	if cfg.Naming == nil {
+		cfg.Naming = message.KebabNaming
 	}
 	return &Marshaler{
 		compiler: jschema.NewCompiler(),
 		schemas:  make(map[reflect.Type]*entry),
 		types:    make(map[string]reflect.Type),
-		naming:   c.Naming,
+		naming:   cfg.Naming,
 	}
 }
 

@@ -37,7 +37,7 @@ type testOther struct {
 
 func TestMarshaler_Unmarshal(t *testing.T) {
 	t.Run("no schema registered", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 
 		var out testData
 		if err := m.Unmarshal([]byte(`{"name":"ok","value":1}`), &out); err != nil {
@@ -49,7 +49,7 @@ func TestMarshaler_Unmarshal(t *testing.T) {
 	})
 
 	t.Run("valid data", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		var out testData
@@ -62,7 +62,7 @@ func TestMarshaler_Unmarshal(t *testing.T) {
 	})
 
 	t.Run("missing required field", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		var out testData
@@ -73,7 +73,7 @@ func TestMarshaler_Unmarshal(t *testing.T) {
 	})
 
 	t.Run("wrong type", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		var out testData
@@ -84,7 +84,7 @@ func TestMarshaler_Unmarshal(t *testing.T) {
 	})
 
 	t.Run("empty required string", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		var out testData
@@ -95,7 +95,7 @@ func TestMarshaler_Unmarshal(t *testing.T) {
 	})
 
 	t.Run("additional properties rejected", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		var out testData
@@ -106,7 +106,7 @@ func TestMarshaler_Unmarshal(t *testing.T) {
 	})
 
 	t.Run("does not decode when validation fails", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		out := testData{Name: "original"}
@@ -118,7 +118,7 @@ func TestMarshaler_Unmarshal(t *testing.T) {
 	})
 
 	t.Run("pointer and value registration equivalent", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(&testData{}, testSchema) // register with pointer
 
 		var out testData
@@ -130,7 +130,7 @@ func TestMarshaler_Unmarshal(t *testing.T) {
 
 func TestMarshaler_Marshal(t *testing.T) {
 	t.Run("no schema registered", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 
 		data, err := m.Marshal(&testData{Name: "ok", Value: 1})
 		if err != nil {
@@ -142,7 +142,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 	})
 
 	t.Run("valid data", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		data, err := m.Marshal(&testData{Name: "ok", Value: 7})
@@ -155,7 +155,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 	})
 
 	t.Run("zero value fails required check", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		// Name is "" (zero value) — minLength:1 catches it.
@@ -167,7 +167,7 @@ func TestMarshaler_Marshal(t *testing.T) {
 }
 
 func TestMarshaler_DataContentType(t *testing.T) {
-	m := NewMarshaler()
+	m := NewMarshaler(Config{})
 	if ct := m.DataContentType(); ct != "application/json" {
 		t.Errorf("DataContentType() = %q, want %q", ct, "application/json")
 	}
@@ -175,7 +175,7 @@ func TestMarshaler_DataContentType(t *testing.T) {
 
 func TestMarshaler_Schema(t *testing.T) {
 	t.Run("returns raw schema", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		raw := m.Schema(testData{})
@@ -188,7 +188,7 @@ func TestMarshaler_Schema(t *testing.T) {
 	})
 
 	t.Run("returns nil for unregistered type", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		if raw := m.Schema(testData{}); raw != nil {
 			t.Errorf("expected nil, got %s", raw)
 		}
@@ -197,7 +197,7 @@ func TestMarshaler_Schema(t *testing.T) {
 
 func TestMarshaler_Schemas(t *testing.T) {
 	t.Run("composes all registered types", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 		m.MustRegister(testOther{}, testOtherSchema)
 
@@ -231,7 +231,7 @@ func TestMarshaler_Schemas(t *testing.T) {
 	})
 
 	t.Run("empty defs when no schemas", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		raw := m.Schemas()
 
 		var doc struct {
@@ -246,7 +246,7 @@ func TestMarshaler_Schemas(t *testing.T) {
 	})
 
 	t.Run("each def is valid JSON Schema", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 
 		raw := m.Schemas()
@@ -272,7 +272,7 @@ func TestMarshaler_Schemas(t *testing.T) {
 
 func TestMarshaler_Register(t *testing.T) {
 	t.Run("invalid schema JSON", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		err := m.Register(testData{}, `{not valid json}`)
 		if err == nil {
 			t.Fatal("expected error for invalid JSON")
@@ -282,7 +282,7 @@ func TestMarshaler_Register(t *testing.T) {
 
 func TestMarshaler_NewInput(t *testing.T) {
 	t.Run("creates instance for registered type with KebabNaming", func(t *testing.T) {
-		m := NewMarshaler() // Default: KebabNaming
+		m := NewMarshaler(Config{}) // Default: KebabNaming
 		m.MustRegister(testData{}, testSchema)
 
 		// KebabNaming: testData → "test.data"
@@ -336,7 +336,7 @@ func TestMarshaler_NewInput(t *testing.T) {
 	})
 
 	t.Run("returns nil for unregistered type", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		instance := m.NewInput("unknown.type")
 		if instance != nil {
 			t.Errorf("expected nil, got %v", instance)
@@ -344,7 +344,7 @@ func TestMarshaler_NewInput(t *testing.T) {
 	})
 
 	t.Run("handles multiple registered types", func(t *testing.T) {
-		m := NewMarshaler()
+		m := NewMarshaler(Config{})
 		m.MustRegister(testData{}, testSchema)
 		m.MustRegister(testOther{}, testOtherSchema)
 
