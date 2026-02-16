@@ -1,8 +1,12 @@
-// Example: ValidatingMarshaler with JSON Schema validation.
+// Example: JSON Schema validated messaging.
 //
-// Demonstrates using ValidatingMarshaler to enforce a JSON Schema
-// derived from Go struct tags via github.com/google/jsonschema-go.
-// Invalid messages are rejected before they reach any handler.
+// Demonstrates a custom Marshaler that validates CloudEvents payloads
+// against explicit JSON Schema definitions. This solves the Go zero-value
+// dilemma: "Is amount really 0, or was the field missing?"
+//
+// CloudEvents defines the message envelope contract (type, source, id).
+// JSON Schema defines the payload data contract (what's inside "data").
+// Together they provide a full event-driven API spec.
 //
 // Run: go run ./examples/07-validating-marshaler
 package main
@@ -12,52 +16,42 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/fxsml/gopipe/message/jsonschema"
 	"github.com/google/uuid"
 )
 
-// CreateOrder is the input command type.
-// JSON Schema is inferred from struct tags.
+// Schema is the source of truth — the data contract.
+// Go structs conform to the schema, not the other way around.
+const createOrderSchema = `{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"order_id": { "type": "string", "minLength": 1 },
+		"amount":   { "type": "number", "exclusiveMinimum": 0 }
+	},
+	"required": ["order_id", "amount"],
+	"additionalProperties": false
+}`
+
+// CreateOrder is the input command. Fields match the schema above.
 type CreateOrder struct {
 	OrderID string  `json:"order_id"`
 	Amount  float64 `json:"amount"`
 }
 
-// OrderCreated is the output event type.
+// OrderCreated is the output event.
 type OrderCreated struct {
 	OrderID string `json:"order_id"`
 	Status  string `json:"status"`
 }
 
 func main() {
-	// Generate a JSON Schema from the CreateOrder struct.
-	schema, err := jsonschema.For[CreateOrder](nil)
-	if err != nil {
-		log.Fatalf("generating schema: %v", err)
-	}
-	resolved, err := schema.Resolve(nil)
-	if err != nil {
-		log.Fatalf("resolving schema: %v", err)
-	}
-
-	// Build a DataValidator that checks bytes against the schema.
-	validator := func(data []byte, _ any) error {
-		var instance any
-		if err := json.Unmarshal(data, &instance); err != nil {
-			return fmt.Errorf("decoding JSON for validation: %w", err)
-		}
-		return resolved.Validate(instance)
-	}
-
-	// Wrap the JSON marshaler with pre-unmarshal validation.
-	marshaler := message.NewValidatingMarshaler(
-		message.NewJSONMarshaler(),
-		message.ValidatingMarshalerConfig{
-			UnmarshalValidation: validator,
-		},
-	)
+	// Create marshaler and register schema for the input type.
+	marshaler := jsonschema.NewMarshaler()
+	marshaler.MustRegister(CreateOrder{}, createOrderSchema)
 
 	engine := message.NewEngine(message.EngineConfig{
 		Marshaler: marshaler,
@@ -71,10 +65,7 @@ func main() {
 			fmt.Printf("Accepted: order_id=%s amount=%.2f\n", cmd.OrderID, cmd.Amount)
 			return []OrderCreated{{OrderID: cmd.OrderID, Status: "created"}}, nil
 		},
-		message.CommandHandlerConfig{
-			Source: "/orders",
-			Naming: message.KebabNaming,
-		},
+		message.CommandHandlerConfig{Source: "/orders", Naming: message.KebabNaming},
 	)
 	engine.AddHandler("process-order", nil, handler)
 
@@ -88,27 +79,31 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 1. Valid message — passes schema validation.
-	valid, _ := json.Marshal(CreateOrder{OrderID: "ORD-1", Amount: 49.99})
-	input <- message.NewRaw(valid, message.Attributes{
-		message.AttrSpecVersion: "1.0",
-		message.AttrType:        "create.order",
-		message.AttrSource:      "/test",
-		message.AttrID:          uuid.NewString(),
-	}, nil)
+	send := func(data []byte) {
+		input <- message.NewRaw(data, message.Attributes{
+			message.AttrSpecVersion: "1.0",
+			message.AttrType:        "create.order",
+			message.AttrSource:      "/test",
+			message.AttrID:          uuid.NewString(),
+		}, nil)
+	}
 
+	// 1. Valid — all required fields present with correct types.
+	valid, _ := json.Marshal(CreateOrder{OrderID: "ORD-1", Amount: 49.99})
+	send(valid)
 	fmt.Printf("Output: %s\n", <-output)
 
-	// 2. Invalid message — "amount" has wrong type; rejected by schema.
-	invalid := []byte(`{"order_id":"ORD-2","amount":"not-a-number"}`)
-	input <- message.NewRaw(invalid, message.Attributes{
-		message.AttrSpecVersion: "1.0",
-		message.AttrType:        "create.order",
-		message.AttrSource:      "/test",
-		message.AttrID:          uuid.NewString(),
-	}, nil)
+	// 2. Missing "amount" — Go would zero-fill to 0.0, but schema catches it.
+	send([]byte(`{"order_id":"ORD-2"}`))
 
-	// Shutdown
+	// 3. Wrong type — "amount" is a string, not a number.
+	send([]byte(`{"order_id":"ORD-3","amount":"free"}`))
+
+	// 4. Zero-length order_id — Go sees "", schema enforces minLength: 1.
+	send([]byte(`{"order_id":"","amount":10}`))
+
+	// Let engine drain invalid messages before shutting down.
+	time.Sleep(100 * time.Millisecond)
 	close(input)
 	cancel()
 	<-done
