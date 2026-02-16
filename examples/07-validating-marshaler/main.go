@@ -1,10 +1,10 @@
-// Example: HTTP service with JSON Schema validation using pipes.
+// Example: HTTP service with JSON Schema validation using middleware.
 //
-// Demonstrates manual pipeline composition with jsonschema validation pipes.
+// Demonstrates manual pipeline composition with jsonschema validation middleware.
 // This example shows the low-level pipe primitives instead of using the Engine.
 //
 // Pipeline:
-//   HTTP → UnmarshalPipe (validate) → Router (handle) → MarshalPipe → stdout
+//   HTTP → UnmarshalPipe+ValidationMW → Router → MarshalPipe+ValidationMW → stdout
 //
 // CloudEvents defines the envelope contract (type, source, id).
 // JSON Schema defines the payload data contract (what's inside "data").
@@ -44,7 +44,7 @@
 //
 // View individual schema:
 //
-//	curl http://localhost:8080/schema/CreateOrderCommand
+//	curl http://localhost:8080/schema/create.order.command
 package main
 
 import (
@@ -102,17 +102,21 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	// 1. Setup JSON Schema marshaler with validation for both types.
-	marshaler := jsonschema.NewMarshaler(jsonschema.Config{})
-	marshaler.MustRegister(CreateOrderCommand{}, createOrderCommandSchema)
-	marshaler.MustRegister(OrderCreatedEvent{}, orderCreatedEventSchema)
+	// 1. Setup JSON Schema registry with validation for both types.
+	registry := jsonschema.NewRegistry(jsonschema.Config{
+		Naming: message.KebabNaming,
+	})
+	registry.MustRegisterType(CreateOrderCommand{}, createOrderCommandSchema)
+	registry.MustRegisterType(OrderCreatedEvent{}, orderCreatedEventSchema)
 
 	// 2. Setup HTTP CloudEvents subscriber.
 	subscriber := cehttp.NewSubscriber(cehttp.SubscriberConfig{})
 	rawInput, _ := subscriber.Subscribe(ctx)
 
-	// 3. Unmarshal pipe: RawMessage → Message (with validation).
-	unmarshalPipe := jsonschema.NewUnmarshalPipe(marshaler, message.PipeConfig{})
+	// 3. Unmarshal pipe: RawMessage → Message (with validation middleware).
+	marshaler := message.NewJSONMarshaler()
+	unmarshalPipe := message.NewUnmarshalPipe(registry, marshaler, message.PipeConfig{})
+	unmarshalPipe.Use(jsonschema.NewInputValidationMiddleware(registry))
 	typed, _ := unmarshalPipe.Pipe(ctx, rawInput)
 
 	// 4. Router: handle messages and produce new messages.
@@ -129,8 +133,9 @@ func main() {
 	))
 	processed, _ := router.Pipe(ctx, typed)
 
-	// 5. Marshal pipe: Message → RawMessage (with validation).
-	marshalPipe := jsonschema.NewMarshalPipe(marshaler, message.PipeConfig{})
+	// 5. Marshal pipe: Message → RawMessage (with validation middleware).
+	marshalPipe := message.NewMarshalPipe(marshaler, message.PipeConfig{})
+	marshalPipe.Use(jsonschema.NewOutputValidationMiddleware(registry))
 	rawOutput, _ := marshalPipe.Pipe(ctx, processed)
 
 	// 6. Sink to stdout using pipe primitive.
@@ -148,21 +153,11 @@ func main() {
 	mux.Handle("POST /events", subscriber)
 	mux.HandleFunc("GET /schemas", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/schema+json")
-		w.Write(marshaler.Schemas())
+		w.Write(registry.Schemas())
 	})
 	mux.HandleFunc("GET /schema/{type}", func(w http.ResponseWriter, r *http.Request) {
-		typeName := r.PathValue("type")
-		var schema json.RawMessage
-
-		switch typeName {
-		case "CreateOrderCommand":
-			schema = marshaler.Schema(CreateOrderCommand{})
-		case "OrderCreatedEvent":
-			schema = marshaler.Schema(OrderCreatedEvent{})
-		default:
-			http.Error(w, "unknown type", http.StatusNotFound)
-			return
-		}
+		eventType := r.PathValue("type")
+		schema := registry.Schema(eventType)
 
 		if schema == nil {
 			http.Error(w, "schema not found", http.StatusNotFound)

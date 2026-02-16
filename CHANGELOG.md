@@ -5,6 +5,26 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **message/jsonschema:** JSON Schema validation for CloudEvents messages
+  - `Registry` for managing schemas by CloudEvents type (eventType → schema)
+  - `RegisterType(v, schema)` derives eventType from Go type via naming strategy
+  - Configurable `SchemaURI` function for custom schema URI schemes (defaults to URN)
+  - Implements `InputRegistry` for automatic instance creation in pipes
+  - `Validate(eventType, data)` validates raw bytes against compiled schemas
+  - `Schema(eventType)` and `Schemas()` for HTTP schema serving
+  - Three validation middleware types:
+    - `NewInputValidationMiddleware` - validates before unmarshaling (fail fast)
+    - `NewOutputValidationMiddleware` - validates after marshaling
+    - `NewValidationMiddleware` - validates proxy scenarios (RawMessage → RawMessage)
+  - Thread-safe for shared use across middleware and pipes
+  - Uses JSON Schema Draft 2020-12 via `santhosh-tekuri/jsonschema/v6`
+  - Separation of concerns: validation separate from marshaling
+  - See ADR 0025 and `examples/07-validating-marshaler` for usage
+
 ## [0.17.1] - 2026-02-04
 
 ### Added

@@ -29,6 +29,7 @@ Historical plans from the message package development are in [archive/](archive/
 | [0011](archive/0011-named-pools.md) | Named Pools | Complete |
 | [0012](archive/0012-engine-simplification.md) | Engine Simplification | Complete |
 | [0013](archive/0013-http-cloudevents-adapter.md) | HTTP CloudEvents Adapter | Complete |
+| [validating-marshaler-example-enhancement](validating-marshaler-example-enhancement.md) | Validating Marshaler Example Enhancement | Complete |
 
 ## Creating New Plans
 
