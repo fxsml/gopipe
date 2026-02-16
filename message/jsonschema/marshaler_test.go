@@ -3,6 +3,8 @@ package jsonschema
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/fxsml/gopipe/message"
 )
 
 const testSchema = `{
@@ -274,6 +276,93 @@ func TestMarshaler_Register(t *testing.T) {
 		err := m.Register(testData{}, `{not valid json}`)
 		if err == nil {
 			t.Fatal("expected error for invalid JSON")
+		}
+	})
+}
+
+func TestMarshaler_NewInput(t *testing.T) {
+	t.Run("creates instance for registered type with KebabNaming", func(t *testing.T) {
+		m := NewMarshaler() // Default: KebabNaming
+		m.MustRegister(testData{}, testSchema)
+
+		// KebabNaming: testData → "test.data"
+		instance := m.NewInput("test.data")
+		if instance == nil {
+			t.Fatal("expected instance, got nil")
+		}
+
+		// Should be *testData
+		ptr, ok := instance.(*testData)
+		if !ok {
+			t.Fatalf("expected *testData, got %T", instance)
+		}
+
+		// Should be zero-initialized
+		if ptr.Name != "" || ptr.Value != 0 {
+			t.Errorf("expected zero values, got Name=%q Value=%d", ptr.Name, ptr.Value)
+		}
+	})
+
+	t.Run("creates instance with DefaultNaming", func(t *testing.T) {
+		m := NewMarshaler(Config{Naming: message.DefaultNaming})
+		m.MustRegister(testData{}, testSchema)
+
+		// DefaultNaming: testData → "testData"
+		instance := m.NewInput("testData")
+		if instance == nil {
+			t.Fatal("expected instance, got nil")
+		}
+
+		_, ok := instance.(*testData)
+		if !ok {
+			t.Fatalf("expected *testData, got %T", instance)
+		}
+	})
+
+	t.Run("creates instance with SnakeNaming", func(t *testing.T) {
+		m := NewMarshaler(Config{Naming: message.SnakeNaming})
+		m.MustRegister(testData{}, testSchema)
+
+		// SnakeNaming: testData → "test_data"
+		instance := m.NewInput("test_data")
+		if instance == nil {
+			t.Fatal("expected instance, got nil")
+		}
+
+		_, ok := instance.(*testData)
+		if !ok {
+			t.Fatalf("expected *testData, got %T", instance)
+		}
+	})
+
+	t.Run("returns nil for unregistered type", func(t *testing.T) {
+		m := NewMarshaler()
+		instance := m.NewInput("unknown.type")
+		if instance != nil {
+			t.Errorf("expected nil, got %v", instance)
+		}
+	})
+
+	t.Run("handles multiple registered types", func(t *testing.T) {
+		m := NewMarshaler()
+		m.MustRegister(testData{}, testSchema)
+		m.MustRegister(testOther{}, testOtherSchema)
+
+		// Both types should be accessible
+		data := m.NewInput("test.data")
+		if data == nil {
+			t.Error("expected testData instance")
+		}
+
+		other := m.NewInput("test.other")
+		if other == nil {
+			t.Error("expected testOther instance")
+		}
+
+		// Wrong type returns nil
+		unknown := m.NewInput("test.unknown")
+		if unknown != nil {
+			t.Error("expected nil for unknown type")
 		}
 	})
 }

@@ -11,6 +11,10 @@
 //	m := jsonschema.NewMarshaler()
 //	m.MustRegister(CreateOrder{}, createOrderSchema)
 //
+// CloudEvents type is derived automatically using the naming strategy:
+//
+//	CreateOrderCommand → "create.order.command" (with KebabNaming)
+//
 // Raw schema JSON is available per type via [Marshaler.Schema], or as a
 // composed document via [Marshaler.Schemas] for HTTP serving:
 //
@@ -27,16 +31,26 @@ import (
 	"sync"
 
 	jschema "github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/fxsml/gopipe/message"
 )
 
+// Config configures the JSON Schema marshaler.
+type Config struct {
+	// Naming strategy for deriving CloudEvents types from Go types.
+	// Default: message.KebabNaming (CreateOrderCommand → "create.order.command")
+	Naming message.EventTypeNaming
+}
+
 // Marshaler encodes and decodes JSON with per-type JSON Schema validation.
-// It satisfies the message.Marshaler interface.
+// It satisfies the message.Marshaler and message.InputRegistry interfaces.
 //
 // Types without a registered schema pass through without validation.
 type Marshaler struct {
 	mu       sync.RWMutex
 	compiler *jschema.Compiler
 	schemas  map[reflect.Type]*entry
+	types    map[string]reflect.Type // CloudEvents type → Go type
+	naming   message.EventTypeNaming
 }
 
 type entry struct {
@@ -45,16 +59,30 @@ type entry struct {
 }
 
 // NewMarshaler creates a JSON marshaler with schema validation.
-func NewMarshaler() *Marshaler {
+// If no config is provided, uses KebabNaming by default.
+func NewMarshaler(cfg ...Config) *Marshaler {
+	c := Config{Naming: message.KebabNaming}
+	if len(cfg) > 0 {
+		c = cfg[0]
+		if c.Naming == nil {
+			c.Naming = message.KebabNaming
+		}
+	}
 	return &Marshaler{
 		compiler: jschema.NewCompiler(),
 		schemas:  make(map[reflect.Type]*entry),
+		types:    make(map[string]reflect.Type),
+		naming:   c.Naming,
 	}
 }
 
 // Register associates a JSON Schema with a Go type.
 // The schema is compiled immediately. During marshal and unmarshal,
 // values matching this type are validated against the schema.
+//
+// The CloudEvents type is derived automatically using the naming strategy:
+//   - CreateOrderCommand → "create.order.command" (with KebabNaming)
+//   - OrderCreatedEvent → "order.created.event"
 func (m *Marshaler) Register(v any, schemaJSON string) error {
 	t := elemType(v)
 	uri := schemaURI(t)
@@ -71,8 +99,12 @@ func (m *Marshaler) Register(v any, schemaJSON string) error {
 		return fmt.Errorf("jsonschema: compiling schema for %s: %w", t, err)
 	}
 
+	// Derive CloudEvents type using naming strategy
+	eventType := m.naming.EventType(t)
+
 	m.mu.Lock()
 	m.schemas[t] = &entry{compiled: compiled, raw: json.RawMessage(schemaJSON)}
+	m.types[eventType] = t
 	m.mu.Unlock()
 
 	return nil
@@ -145,6 +177,24 @@ func (m *Marshaler) Unmarshal(data []byte, v any) error {
 func (m *Marshaler) DataContentType() string {
 	return "application/json"
 }
+
+// NewInput creates a typed instance for the given CloudEvents type.
+// Implements message.InputRegistry.
+//
+// Returns nil if no type is registered for the given CloudEvents type.
+func (m *Marshaler) NewInput(eventType string) any {
+	m.mu.RLock()
+	t, ok := m.types[eventType]
+	m.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	return reflect.New(t).Interface()
+}
+
+// Verify Marshaler implements both interfaces.
+var _ message.Marshaler = (*Marshaler)(nil)
+var _ message.InputRegistry = (*Marshaler)(nil)
 
 func (m *Marshaler) validate(v any, data []byte) error {
 	t := elemType(v)
