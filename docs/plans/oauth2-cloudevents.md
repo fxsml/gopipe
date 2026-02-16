@@ -136,60 +136,73 @@ subscriber := http.NewSubscriber(http.SubscriberConfig{
 - Different deployments need different data extracted (claims, tenant ID, trace context)
 - It composes cleanly with the WithValue pattern from the transaction branch
 
-### Layer 3: Authorization — Router Handler Middleware
+### Layer 3: Authorization — Router-Level Middleware by Event Type
 
-This is the "routes" equivalent. In HTTP, routes have per-endpoint authorization. In gopipe, the handler is the natural equivalent — each handler processes a specific event type (like a URL endpoint processes specific paths).
+The router is the natural place for authorization. Each handler processes a specific event type (via `Handler.EventType()`), making event type the equivalent of an HTTP URL path. Authorization middleware registered on the router inspects the message's `type` attribute and checks claims accordingly.
 
 Authorization middleware is a `message.Middleware` that checks claims stored via `WithValue`. Thanks to the `messageContext.Value()` auto-propagation (from the transaction branch), claims set via `msg.WithValue(key, val)` are visible to any code calling `ctx.Value(key)` inside the handler.
+
+**Design: Event type as authorization "path"**
+
+The router already dispatches by event type. Authorization maps the same key to required permissions. This centralizes security policy in one place (analogous to HTTP router-level auth config) and keeps handlers free of auth concerns.
+
+**Granularity boundary:** Router-level authorization answers "is this caller allowed to trigger processing of *this event type*?" Business rules that depend on event data (e.g., "can this user create orders above $10k?") belong in the handler. This mirrors HTTP: route middleware checks roles/scopes, the handler checks business logic.
 
 **Middleware factories:**
 
 ```go
-// RequireClaim rejects messages where the claim at key doesn't match the expected value.
-func RequireClaim(key string, expected any) message.Middleware
+// ByEventType maps event types to authorization policies.
+// Messages with types not in the map are rejected (closed by default).
+func ByEventType(policies map[string]Policy) message.Middleware
 
-// RequireScope rejects messages that lack the given OAuth2 scope.
-func RequireScope(scope string) message.Middleware
+// RequireScope creates a Policy that checks for an OAuth2 scope in the claims.
+func RequireScope(scope string) Policy
 
-// RequireAny accepts if any of the provided checks pass.
-func RequireAny(checks ...message.Middleware) message.Middleware
+// RequireClaim creates a Policy that checks for a specific claim value.
+func RequireClaim(key string, expected any) Policy
 
-// Authorize accepts a custom authorization function.
-func Authorize(fn func(ctx context.Context, msg *message.Message) error) message.Middleware
+// RequireAny accepts if any of the provided policies pass.
+func RequireAny(policies ...Policy) Policy
+
+// Authorize creates a Policy from a custom authorization function.
+func Authorize(fn func(ctx context.Context, msg *message.Message) error) Policy
 ```
 
-**Usage with per-handler middleware:**
-
-Currently, `Router.Use()` applies middleware globally. For handler-level authorization (the "routes" analogy), we have two options:
-
-**Option A — Compose into the handler itself:**
-
-Wrap the handler's processing function with authorization logic before registration. No router API changes needed.
+**Usage — single authorization middleware on the router:**
 
 ```go
-handler := message.NewCommandHandler[PlaceOrder, OrderPlaced](
-    placeOrderFn,
-    message.CommandHandlerConfig{Source: "/orders"},
-)
-// Wrap with authorization
-handler = authz.WithMiddleware(handler, authz.RequireScope("orders:write"))
-
-engine.AddHandler("place-order", nil, handler)
+router.Use(authz.ByEventType(map[string]authz.Policy{
+    "CreateOrder": authz.RequireScope("orders:write"),
+    "GetOrder":    authz.RequireScope("orders:read"),
+    "CancelOrder": authz.RequireAny(
+        authz.RequireScope("orders:admin"),
+        authz.RequireClaim("role", "manager"),
+    ),
+}))
 ```
 
-Where `authz.WithMiddleware` returns a new `Handler` that runs the middleware before delegating to the inner handler.
-
-**Option B — Per-handler middleware on AddHandler:**
-
-Extend the router API with optional per-handler middleware.
+**Usage — custom authorization function:**
 
 ```go
-engine.AddHandler("place-order", nil, handler,
-    message.WithMiddleware(authz.RequireScope("orders:write")),
-)
+router.Use(authz.ByEventType(map[string]authz.Policy{
+    "CreateOrder": authz.Authorize(func(ctx context.Context, msg *message.Message) error {
+        claims := authz.ClaimsFromContext(ctx)
+        if !claims.HasScope("orders:write") {
+            return authz.ErrForbidden
+        }
+        return nil
+    }),
+}))
 ```
 
-Option A is simpler and requires no changes to the Router. Option B is more ergonomic but changes the `AddHandler` signature. Both are compatible with the existing architecture.
+**Different routers, different policies:** Because authorization is registered per-router via `router.Use()`, different routers can enforce different policies. An "admin" router and a "public" router can coexist with distinct authorization requirements for the same event types — no API changes needed.
+
+**Why router-level, not per-handler:**
+- Centralizes security policy — all authorization rules visible in one place
+- Event type is already the dispatch key, matching it for auth is natural
+- Composable across routers (admin vs public)
+- No changes to `AddHandler` or `Handler` interface
+- Consistent with how `Router.Use()` already works for other cross-cutting concerns
 
 ### How Claims Flow End-to-End
 
@@ -248,9 +261,13 @@ Transaction branch (WithValue) ──→ Enricher on Subscriber ──→ AuthZ 
 
 Layer 1 (HTTP AuthN middleware) is external — users bring their own. Gopipe provides documentation and examples but no built-in OAuth2 library dependency.
 
+## Decisions
+
+1. **Router-level authorization by event type:** Authorization middleware is registered on the router via `router.Use()`, mapping event types to policies. No changes to `AddHandler` or `Handler` interface needed. Different routers can enforce different policies.
+2. **General-purpose enricher:** The `MessageEnricher` is not OAuth-specific. It bridges any HTTP→message context: claims, tenant ID, trace context, etc.
+3. **Publisher auth is HTTP-specific:** The outbound counterpart to the inbound enricher. Optional `TokenSource` on the Publisher injects `Authorization: Bearer <token>` into outbound HTTP requests. Lives in `message/http`, not relevant for other transports (Kafka, NATS, etc. have their own auth mechanisms). Aligns with the Subscriptions spec's ACCESSTOKEN credential type.
+
 ## Open Questions
 
-1. **Option A vs B for per-handler middleware:** Should authorization be composed into handlers (no API change) or added as a router feature (new `AddHandler` option)?
-2. **Enricher generality:** Should the enricher be OAuth-specific or a general-purpose HTTP→message bridge? (Recommendation: general-purpose — it's useful for tracing, tenant extraction, etc.)
-3. **Publisher auth:** For outbound requests, should the Publisher support injecting Bearer tokens from a token source (e.g., `golang.org/x/oauth2.TokenSource`)? This aligns with the Subscriptions spec's ACCESSTOKEN credential type.
-4. **Webhook abuse protection:** Should we implement the CloudEvents webhook handshake (OPTIONS with `WebHook-Request-Origin`)? This is orthogonal to OAuth2 but related to HTTP security.
+1. **Webhook abuse protection:** The [CloudEvents HTTP Webhook spec](https://github.com/cloudevents/spec/blob/main/cloudevents/http-webhook.md) defines an abuse-protection handshake that prevents senders from being weaponized. Before delivering events, the sender sends an HTTP `OPTIONS` request with `WebHook-Request-Origin: sender.example.com`. The receiver must respond with `WebHook-Allowed-Origin: sender.example.com` to confirm it accepts events from that origin. Without confirmation, the sender refuses to deliver. This protects against an attacker registering a subscription pointing to a victim's URL, causing the sender to unwittingly flood the victim. In gopipe, this would mean the HTTP Subscriber optionally handles `OPTIONS` in `ServeHTTP`. Orthogonal to OAuth2 (which authenticates the sender) — this is about the receiver declaring "yes, I want events from you." Worth considering as a separate, optional feature.
+2. **Closed vs open default for ByEventType:** Should event types not in the policy map be rejected (closed by default) or allowed (open by default)? Closed is safer but requires listing all types.
