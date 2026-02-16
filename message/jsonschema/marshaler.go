@@ -11,10 +11,11 @@
 //	m := jsonschema.NewMarshaler()
 //	m.MustRegister(CreateOrder{}, createOrderSchema)
 //
-// Raw schema JSON is available via [Marshaler.Schema] for HTTP serving:
+// Raw schema JSON is available per type via [Marshaler.Schema], or as a
+// composed document via [Marshaler.Schemas] for HTTP serving:
 //
 //	w.Header().Set("Content-Type", "application/schema+json")
-//	w.Write(m.Schema(CreateOrder{}))
+//	w.Write(m.Schemas())
 package jsonschema
 
 import (
@@ -92,6 +93,29 @@ func (m *Marshaler) Schema(v any) json.RawMessage {
 		return e.raw
 	}
 	return nil
+}
+
+// Schemas returns a composed JSON Schema document containing all registered
+// schemas under $defs, keyed by Go type name. The document is a valid
+// JSON Schema that can be served as an API contract catalog.
+func (m *Marshaler) Schemas() json.RawMessage {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	defs := make(map[string]json.RawMessage, len(m.schemas))
+	for t, e := range m.schemas {
+		defs[t.Name()] = e.raw
+	}
+
+	doc := struct {
+		Schema string                     `json:"$schema"`
+		Defs   map[string]json.RawMessage `json:"$defs"`
+	}{
+		Schema: "https://json-schema.org/draft/2020-12/schema",
+		Defs:   defs,
+	}
+	data, _ := json.Marshal(doc)
+	return data
 }
 
 // Marshal encodes v to JSON. If a schema is registered for the type,

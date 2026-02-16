@@ -1,14 +1,43 @@
-// Example: JSON Schema validated messaging.
+// Example: HTTP service with JSON Schema data contracts.
 //
-// Demonstrates a custom Marshaler that validates CloudEvents payloads
+// Demonstrates a CloudEvents HTTP service that validates payloads
 // against explicit JSON Schema definitions. This solves the Go zero-value
 // dilemma: "Is amount really 0, or was the field missing?"
 //
-// CloudEvents defines the message envelope contract (type, source, id).
+// CloudEvents defines the envelope contract (type, source, id).
 // JSON Schema defines the payload data contract (what's inside "data").
 // Together they provide a full event-driven API spec.
 //
-// Run: go run ./examples/07-validating-marshaler
+//   - POST /events   — CloudEvents endpoint (binary or structured mode)
+//   - GET  /schemas  — JSON Schema catalog for all registered types
+//
+// Run:
+//
+//	go run ./examples/07-validating-marshaler
+//
+// Valid request (binary mode):
+//
+//	curl -X POST http://localhost:8080/events \
+//	  -H "Content-Type: application/json" \
+//	  -H "Ce-Specversion: 1.0" \
+//	  -H "Ce-Type: create.order.command" \
+//	  -H "Ce-Source: /test" \
+//	  -H "Ce-Id: 1" \
+//	  -d '{"order_id":"ORD-1","amount":49.99}'
+//
+// Invalid (missing required field — returns 500):
+//
+//	curl -X POST http://localhost:8080/events \
+//	  -H "Content-Type: application/json" \
+//	  -H "Ce-Specversion: 1.0" \
+//	  -H "Ce-Type: create.order.command" \
+//	  -H "Ce-Source: /test" \
+//	  -H "Ce-Id: 2" \
+//	  -d '{"order_id":"ORD-2"}'
+//
+// View schema catalog:
+//
+//	curl http://localhost:8080/schemas
 package main
 
 import (
@@ -16,16 +45,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"time"
+	"net/http"
+	"os"
+	"os/signal"
 
+	"github.com/fxsml/gopipe/channel"
 	"github.com/fxsml/gopipe/message"
+	cehttp "github.com/fxsml/gopipe/message/http"
 	"github.com/fxsml/gopipe/message/jsonschema"
-	"github.com/google/uuid"
 )
 
-// Schema is the source of truth — the data contract.
-// Go structs conform to the schema, not the other way around.
-const createOrderSchema = `{
+// Command schema — inbound data contract.
+const createOrderCommandSchema = `{
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"type": "object",
 	"properties": {
@@ -36,75 +67,97 @@ const createOrderSchema = `{
 	"additionalProperties": false
 }`
 
-// CreateOrder is the input command. Fields match the schema above.
-type CreateOrder struct {
+// Event schema — outbound data contract.
+const orderCreatedEventSchema = `{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"order_id": { "type": "string" },
+		"status":   { "type": "string" }
+	},
+	"required": ["order_id", "status"],
+	"additionalProperties": false
+}`
+
+// CreateOrderCommand is the inbound command payload.
+type CreateOrderCommand struct {
 	OrderID string  `json:"order_id"`
 	Amount  float64 `json:"amount"`
 }
 
-// OrderCreated is the output event.
-type OrderCreated struct {
+// OrderCreatedEvent is the outbound event payload.
+type OrderCreatedEvent struct {
 	OrderID string `json:"order_id"`
 	Status  string `json:"status"`
 }
 
 func main() {
-	// Create marshaler and register schema for the input type.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	// Marshaler with schemas for both command and event.
 	marshaler := jsonschema.NewMarshaler()
-	marshaler.MustRegister(CreateOrder{}, createOrderSchema)
+	marshaler.MustRegister(CreateOrderCommand{}, createOrderCommandSchema)
+	marshaler.MustRegister(OrderCreatedEvent{}, orderCreatedEventSchema)
 
 	engine := message.NewEngine(message.EngineConfig{
 		Marshaler: marshaler,
 		ErrorHandler: func(msg *message.Message, err error) {
-			fmt.Printf("Rejected: %v\n", err)
+			fmt.Fprintf(os.Stderr, "rejected: %v\n", err)
 		},
 	})
 
-	handler := message.NewCommandHandler(
-		func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
-			fmt.Printf("Accepted: order_id=%s amount=%.2f\n", cmd.OrderID, cmd.Amount)
-			return []OrderCreated{{OrderID: cmd.OrderID, Status: "created"}}, nil
+	// Handler: CreateOrderCommand → OrderCreatedEvent.
+	engine.AddHandler("process-order", nil, message.NewCommandHandler(
+		func(ctx context.Context, cmd CreateOrderCommand) ([]OrderCreatedEvent, error) {
+			return []OrderCreatedEvent{{
+				OrderID: cmd.OrderID,
+				Status:  "created",
+			}}, nil
 		},
 		message.CommandHandlerConfig{Source: "/orders", Naming: message.KebabNaming},
-	)
-	engine.AddHandler("process-order", nil, handler)
+	))
 
-	input := make(chan *message.RawMessage, 10)
-	engine.AddRawInput("input", nil, input)
-	output, _ := engine.AddRawOutput("output", nil)
+	// Input: CloudEvents via HTTP.
+	subscriber := cehttp.NewSubscriber(cehttp.SubscriberConfig{})
+	events, _ := subscriber.Subscribe(ctx)
+	engine.AddRawInput("orders", nil, events)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done, err := engine.Start(ctx)
+	// Output: print events to stdout via channel.Sink.
+	output, _ := engine.AddOutput("stdout", nil)
+	printed := channel.Sink(output, func(msg *message.Message) {
+		data, _ := json.Marshal(msg.Data)
+		fmt.Printf("[%s] %s\n", msg.Type(), data)
+	})
+
+	engineDone, err := engine.Start(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	send := func(data []byte) {
-		input <- message.NewRaw(data, message.Attributes{
-			message.AttrSpecVersion: "1.0",
-			message.AttrType:        "create.order",
-			message.AttrSource:      "/test",
-			message.AttrID:          uuid.NewString(),
-		}, nil)
+	// HTTP routes: CE endpoint + schema catalog.
+	mux := http.NewServeMux()
+	mux.Handle("POST /events", subscriber)
+	mux.HandleFunc("GET /schemas", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/schema+json")
+		w.Write(marshaler.Schemas())
+	})
+
+	server := &http.Server{Addr: ":8080", Handler: mux}
+	go func() {
+		<-ctx.Done()
+		server.Shutdown(context.Background())
+	}()
+
+	fmt.Println("Listening on :8080")
+	fmt.Println("  POST /events   — CloudEvents endpoint")
+	fmt.Println("  GET  /schemas  — JSON Schema catalog")
+	fmt.Println()
+
+	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		log.Fatal(err)
 	}
 
-	// 1. Valid — all required fields present with correct types.
-	valid, _ := json.Marshal(CreateOrder{OrderID: "ORD-1", Amount: 49.99})
-	send(valid)
-	fmt.Printf("Output: %s\n", <-output)
-
-	// 2. Missing "amount" — Go would zero-fill to 0.0, but schema catches it.
-	send([]byte(`{"order_id":"ORD-2"}`))
-
-	// 3. Wrong type — "amount" is a string, not a number.
-	send([]byte(`{"order_id":"ORD-3","amount":"free"}`))
-
-	// 4. Zero-length order_id — Go sees "", schema enforces minLength: 1.
-	send([]byte(`{"order_id":"","amount":10}`))
-
-	// Let engine drain invalid messages before shutting down.
-	time.Sleep(100 * time.Millisecond)
-	close(input)
-	cancel()
-	<-done
+	<-engineDone
+	<-printed
 }

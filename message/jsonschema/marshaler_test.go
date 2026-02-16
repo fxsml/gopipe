@@ -21,6 +21,18 @@ type testData struct {
 	Value int    `json:"value"`
 }
 
+const testOtherSchema = `{
+	"type": "object",
+	"properties": {
+		"id": { "type": "string" }
+	},
+	"required": ["id"]
+}`
+
+type testOther struct {
+	ID string `json:"id"`
+}
+
 func TestMarshaler_Unmarshal(t *testing.T) {
 	t.Run("no schema registered", func(t *testing.T) {
 		m := NewMarshaler()
@@ -177,6 +189,81 @@ func TestMarshaler_Schema(t *testing.T) {
 		m := NewMarshaler()
 		if raw := m.Schema(testData{}); raw != nil {
 			t.Errorf("expected nil, got %s", raw)
+		}
+	})
+}
+
+func TestMarshaler_Schemas(t *testing.T) {
+	t.Run("composes all registered types", func(t *testing.T) {
+		m := NewMarshaler()
+		m.MustRegister(testData{}, testSchema)
+		m.MustRegister(testOther{}, testOtherSchema)
+
+		raw := m.Schemas()
+		if raw == nil {
+			t.Fatal("expected non-nil schemas")
+		}
+		if !json.Valid(raw) {
+			t.Fatal("schemas document is not valid JSON")
+		}
+
+		var doc struct {
+			Schema string                     `json:"$schema"`
+			Defs   map[string]json.RawMessage `json:"$defs"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if doc.Schema != "https://json-schema.org/draft/2020-12/schema" {
+			t.Errorf("$schema = %q", doc.Schema)
+		}
+		if len(doc.Defs) != 2 {
+			t.Fatalf("$defs count = %d, want 2", len(doc.Defs))
+		}
+		if _, ok := doc.Defs["testData"]; !ok {
+			t.Error("missing $defs/testData")
+		}
+		if _, ok := doc.Defs["testOther"]; !ok {
+			t.Error("missing $defs/testOther")
+		}
+	})
+
+	t.Run("empty defs when no schemas", func(t *testing.T) {
+		m := NewMarshaler()
+		raw := m.Schemas()
+
+		var doc struct {
+			Defs map[string]json.RawMessage `json:"$defs"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if len(doc.Defs) != 0 {
+			t.Errorf("expected empty $defs, got %d", len(doc.Defs))
+		}
+	})
+
+	t.Run("each def is valid JSON Schema", func(t *testing.T) {
+		m := NewMarshaler()
+		m.MustRegister(testData{}, testSchema)
+
+		raw := m.Schemas()
+		var doc struct {
+			Defs map[string]json.RawMessage `json:"$defs"`
+		}
+		json.Unmarshal(raw, &doc)
+
+		for name, def := range doc.Defs {
+			if !json.Valid(def) {
+				t.Errorf("$defs/%s is not valid JSON", name)
+			}
+			var schema map[string]any
+			if err := json.Unmarshal(def, &schema); err != nil {
+				t.Errorf("$defs/%s: unmarshal failed: %v", name, err)
+			}
+			if _, ok := schema["type"]; !ok {
+				t.Errorf("$defs/%s: missing 'type' keyword", name)
+			}
 		}
 	})
 }
