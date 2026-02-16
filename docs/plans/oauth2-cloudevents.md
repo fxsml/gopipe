@@ -9,14 +9,14 @@ Research and design for OAuth2 integration with the gopipe message/http package.
 
 1. **Authentication** — HTTP middleware validates tokens (gatekeeper). Works standalone, does not require a router or handler.
 2. **Auth context propagation** — Enricher bridges HTTP identity into messages. Two channels: `WithValue` for in-process claims (security-sensitive, does not cross broker boundaries), and CloudEvents `authcontext` attributes for cross-broker provenance (informational only).
-3. **Authorization** — Router-level middleware checks claims against required permissions. Optional, only relevant when a router is present.
+3. **Authorization** — Standalone `message.Middleware` checks claims against required permissions. Composable into any pipe component: router, publisher, passthrough pipe.
 
 ## Goals
 
 1. Authenticate incoming CloudEvents HTTP requests using OAuth2 Bearer tokens
 2. Propagate auth context: `WithValue` for in-process authorization, `authcontext` attributes for cross-broker provenance
-3. Authorize message processing at the router level using token claims (optional)
-4. Support topologies without routers (e.g., HTTP-to-AMQP proxy) where authentication alone is sufficient
+3. Authorize message processing using token claims via standalone middleware (optional, composable into any pipe component)
+4. Support all topologies: routers, passthrough pipes, publishers — not coupled to any single component
 5. Align with CloudEvents spec conventions and the existing gopipe architecture
 
 ## Relevant CloudEvents Specifications
@@ -62,9 +62,9 @@ The [Subscriptions spec](https://github.com/cloudevents/spec/blob/main/subscript
 |---------|-------|-----------|-------------------|-----------|
 | **Authentication** | HTTP middleware | Token validation (JWT / introspection) | "Who is this?" | Yes (gatekeeper) |
 | **Auth context** | Subscriber enricher | `WithValue` (in-process) + `authcontext` attributes (cross-broker) | "Who triggered this?" | Optional |
-| **Authorization** | Router middleware | Claims check by event type | "Are they allowed to do this?" | Optional (requires router) |
+| **Authorization** | `message.Middleware` | Claims check by event type | "Are they allowed to do this?" | Optional |
 
-Authentication is complete on its own. A simple HTTP-to-AMQP proxy that forwards events to an internal broker needs only Layer 1 — no router, no handler, just the gatekeeper. Auth context and authorization build on top when needed.
+Each concern is independent. Authentication works alone (proxy gatekeeper). Auth context works without authorization (provenance for downstream). Authorization works wherever middleware is accepted — it is not coupled to the router.
 
 ### Layer 1: Authentication — HTTP Middleware
 
@@ -170,17 +170,17 @@ External HTTP → AuthN middleware → Subscriber → enricher → AMQP broker
 - Different deployments need different data extracted (claims, tenant ID, trace context)
 - It composes cleanly with the WithValue pattern from the transaction branch
 
-### Layer 3: Authorization — Router-Level Middleware by Event Type
+### Layer 3: Authorization — Standalone Message Middleware
 
-The router is the natural place for authorization. Each handler processes a specific event type (via `Handler.EventType()`), making event type the equivalent of an HTTP URL path. Authorization middleware registered on the router inspects the message's `type` attribute and checks claims accordingly.
+Authorization is a standalone `message.Middleware`. It reads the message's `type` attribute (the event type acts as the "path" equivalent) and checks claims from `ctx.Value()`. It is not coupled to any specific pipe component.
 
-Authorization middleware is a `message.Middleware` that checks claims stored via `WithValue`. Thanks to the `messageContext.Value()` auto-propagation (from the transaction branch), claims set via `msg.WithValue(key, val)` are visible to any code calling `ctx.Value(key)` inside the handler.
+Thanks to the `messageContext.Value()` auto-propagation (from the transaction branch), claims set via `msg.WithValue(key, val)` are visible to any code calling `ctx.Value(key)` — regardless of where the middleware runs.
 
 **Design: Event type as authorization "path"**
 
-The router already dispatches by event type. Authorization maps the same key to required permissions. This centralizes security policy in one place (analogous to HTTP router-level auth config) and keeps handlers free of auth concerns.
+The event type is the natural dispatch key for authorization — analogous to a URL path in HTTP. The middleware maps event types to required permissions.
 
-**Granularity boundary:** Router-level authorization answers "is this caller allowed to trigger processing of *this event type*?" Business rules that depend on event data (e.g., "can this user create orders above $10k?") belong in the handler. This mirrors HTTP: route middleware checks roles/scopes, the handler checks business logic.
+**Granularity boundary:** This middleware answers "is this caller allowed to process *this event type*?" Business rules that depend on event data (e.g., "can this user create orders above $10k?") belong in the handler. This mirrors HTTP: middleware checks roles/scopes, the handler checks business logic.
 
 **Middleware factories:**
 
@@ -202,9 +202,10 @@ func RequireAny(policies ...Policy) Policy
 func Authorize(fn func(ctx context.Context, msg *message.Message) error) Policy
 ```
 
-**Usage — single authorization middleware on the router:**
+**Composable into any pipe component:**
 
 ```go
+// On a router — event-type-based authorization for handlers
 router.Use(authz.ByEventType(map[string]authz.Policy{
     "CreateOrder": authz.RequireScope("orders:write"),
     "GetOrder":    authz.RequireScope("orders:read"),
@@ -213,32 +214,23 @@ router.Use(authz.ByEventType(map[string]authz.Policy{
         authz.RequireClaim("role", "manager"),
     ),
 }))
-```
 
-**Usage — custom authorization function:**
+// On a publisher — gate outbound events before sending
+publisher.Use(authz.ByEventType(map[string]authz.Policy{
+    "OrderCreated": authz.RequireScope("events:publish"),
+}))
 
-```go
-router.Use(authz.ByEventType(map[string]authz.Policy{
-    "CreateOrder": authz.Authorize(func(ctx context.Context, msg *message.Message) error {
-        claims := authz.ClaimsFromContext(ctx)
-        if !claims.HasScope("orders:write") {
-            return authz.ErrForbidden
-        }
-        return nil
-    }),
+// On a passthrough pipe — authorization as the sole concern
+pipe.Use(authz.ByEventType(map[string]authz.Policy{
+    "CreateOrder": authz.RequireScope("orders:write"),
 }))
 ```
 
-**Different routers, different policies:** Because authorization is registered per-router via `router.Use()`, different routers can enforce different policies. An "admin" router and a "public" router can coexist with distinct authorization requirements for the same event types — no API changes needed.
-
-**Why router-level, not per-handler:**
-- Centralizes security policy — all authorization rules visible in one place
-- Event type is already the dispatch key, matching it for auth is natural
-- Composable across routers (admin vs public)
-- No changes to `AddHandler` or `Handler` interface
-- Consistent with how `Router.Use()` already works for other cross-cutting concerns
+**Different components, different policies:** Each component that accepts middleware can enforce its own authorization policy independently. An "admin" router, a "public" router, and a gated publisher can coexist with distinct requirements for the same event types.
 
 ### How Claims Flow End-to-End
+
+Steps 1–4 are common to all topologies. Step 5 varies by component.
 
 ```
 1. HTTP request with Authorization: Bearer <token>
@@ -249,17 +241,17 @@ router.Use(authz.ByEventType(map[string]authz.Policy{
        │
 4. Enricher bridges: msg.WithValue(claimsKey, claims)
        │
-5. Engine: unmarshal → Router → handler
+5a. Router topology:
+    AuthZ middleware → check claims by event type → handler
        │
-6. Router applies middleware chain:
-   AuthZ middleware → ctx.Value(claimsKey) → check scopes/claims →
-       │                                         │
-       │                                    reject (return error)
+5b. Publisher topology:
+    AuthZ middleware → check claims by event type → publish
        │
-7. Handler receives ctx with claims accessible via ctx.Value()
+5c. Passthrough pipe topology:
+    AuthZ middleware → check claims by event type → forward to broker
 ```
 
-The key insight: steps 6 and 7 work because of the `messageContext.Value()` chain from the transaction branch. When the router calls `msg.Context(ctx)`, the resulting context checks the message's WithValue store before delegating to the parent. No bridging middleware needed between message and context.
+The key insight: this works because of the `messageContext.Value()` chain from the transaction branch. Claims set via `msg.WithValue(key, val)` are visible to any code calling `ctx.Value(key)` — regardless of which component the middleware runs in.
 
 ### What We Do NOT Do
 
@@ -275,9 +267,9 @@ The key insight: steps 6 and 7 work because of the `messageContext.Value()` chai
 | **Knative Eventing** | OIDC tokens on addressable resources | `EventPolicy` CRD (from/to/filters) | Kubernetes service accounts |
 | **AsyncAPI** | Declarative security schemes (all 4 OAuth2 flows) | Per-operation security bindings | Spec-level, not runtime |
 | **CloudEvents SDK-Go** | `WithMiddleware` on HTTP client | None built-in | `context.WithValue` via middleware |
-| **gopipe (proposed)** | HTTP middleware (user-provided) | Handler-level middleware (claims check) | `msg.WithValue` → `messageContext.Value` |
+| **gopipe (proposed)** | HTTP middleware (user-provided) | Standalone `message.Middleware` (claims check) | `msg.WithValue` → `messageContext.Value` |
 
-The gopipe approach is closest to the CloudEvents SDK-Go pattern but adds structured authorization at the handler level and uses the WithValue mechanism instead of relying on HTTP context propagation (which gopipe intentionally does not do).
+The gopipe approach is closest to the CloudEvents SDK-Go pattern but adds structured authorization as a composable middleware and uses the WithValue mechanism instead of relying on HTTP context propagation (which gopipe intentionally does not do).
 
 ## Security Notes
 
@@ -299,7 +291,7 @@ Layer 1 (HTTP AuthN middleware) is external — users bring their own. Gopipe pr
 
 1. **Authentication is standalone.** HTTP auth middleware works without a router or handler. An HTTP-to-AMQP proxy only needs Layer 1.
 2. **Two propagation channels.** `WithValue` for in-process authorization (security-sensitive, ephemeral). `authcontext` attributes for cross-broker provenance (informational, survives serialization). Never use attributes for authorization decisions.
-3. **Router-level authorization by event type.** Authorization middleware is registered on the router via `router.Use()`, mapping event types to policies. No changes to `AddHandler` or `Handler` interface needed. Different routers can enforce different policies. Optional — only relevant when a router is present.
+3. **Authorization is a standalone middleware.** `ByEventType` returns a `message.Middleware` that maps event types to policies. Not coupled to the router — composable into any pipe component (router, publisher, passthrough pipe). Each component can enforce its own policy independently.
 4. **General-purpose enricher.** The `MessageEnricher` is not OAuth-specific. It bridges any HTTP→message context: claims, tenant ID, trace context, etc.
 5. **Publisher auth is HTTP-specific.** The outbound counterpart to the inbound enricher. Optional `TokenSource` on the Publisher injects `Authorization: Bearer <token>` into outbound HTTP requests. Lives in `message/http`, not relevant for other transports (Kafka, NATS, etc. have their own auth mechanisms). Aligns with the Subscriptions spec's ACCESSTOKEN credential type.
 
