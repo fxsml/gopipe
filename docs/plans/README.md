@@ -7,6 +7,7 @@
 | [0007](0007-cesql-pattern-matching.md) | CESQL Pattern Matching | Proposed |
 | [autoscale-worker-pool](autoscale-worker-pool.md) | Autoscale Worker Pool | Proposed |
 | [oauth2-cloudevents](oauth2-cloudevents.md) | OAuth2 CloudEvents Integration | Proposed |
+| [webhook-abuse-protection](webhook-abuse-protection.md) | Webhook Abuse Protection Handshake | Proposed |
 
 ## Agent Guidance
 

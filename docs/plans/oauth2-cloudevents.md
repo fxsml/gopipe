@@ -5,14 +5,19 @@
 
 ## Overview
 
-Research and design for OAuth2 integration with the gopipe message/http package, separating authentication (HTTP middleware) from authorization (router handler middleware using claims via the WithValue context propagation mechanism).
+Research and design for OAuth2 integration with the gopipe message/http package. Three independent concerns:
+
+1. **Authentication** — HTTP middleware validates tokens (gatekeeper). Works standalone, does not require a router or handler.
+2. **Auth context propagation** — Enricher bridges HTTP identity into messages. Two channels: `WithValue` for in-process claims (security-sensitive, does not cross broker boundaries), and CloudEvents `authcontext` attributes for cross-broker provenance (informational only).
+3. **Authorization** — Router-level middleware checks claims against required permissions. Optional, only relevant when a router is present.
 
 ## Goals
 
 1. Authenticate incoming CloudEvents HTTP requests using OAuth2 Bearer tokens
-2. Authorize message processing at the handler level using token claims
-3. Propagate auth context through the pipeline without using message attributes
-4. Align with CloudEvents spec conventions and the existing gopipe architecture
+2. Propagate auth context: `WithValue` for in-process authorization, `authcontext` attributes for cross-broker provenance
+3. Authorize message processing at the router level using token claims (optional)
+4. Support topologies without routers (e.g., HTTP-to-AMQP proxy) where authentication alone is sufficient
+5. Align with CloudEvents spec conventions and the existing gopipe architecture
 
 ## Relevant CloudEvents Specifications
 
@@ -51,13 +56,15 @@ The [Subscriptions spec](https://github.com/cloudevents/spec/blob/main/subscript
 
 ## Architecture
 
-### Principle: Separation of Authentication and Authorization
+### Principle: Three Independent Concerns
 
-| Concern | Layer | Mechanism | Question Answered |
-|---------|-------|-----------|-------------------|
-| **Authentication** | HTTP middleware | Token validation (JWT / introspection) | "Who is this?" |
-| **Claims propagation** | Subscriber enricher | `msg.WithValue(claimsKey, claims)` | "Pass identity downstream" |
-| **Authorization** | Router handler middleware | Claims check against required permissions | "Are they allowed to do this?" |
+| Concern | Layer | Mechanism | Question Answered | Required? |
+|---------|-------|-----------|-------------------|-----------|
+| **Authentication** | HTTP middleware | Token validation (JWT / introspection) | "Who is this?" | Yes (gatekeeper) |
+| **Auth context** | Subscriber enricher | `WithValue` (in-process) + `authcontext` attributes (cross-broker) | "Who triggered this?" | Optional |
+| **Authorization** | Router middleware | Claims check by event type | "Are they allowed to do this?" | Optional (requires router) |
+
+Authentication is complete on its own. A simple HTTP-to-AMQP proxy that forwards events to an internal broker needs only Layer 1 — no router, no handler, just the gatekeeper. Auth context and authorization build on top when needed.
 
 ### Layer 1: Authentication — HTTP Middleware
 
@@ -86,7 +93,7 @@ mux.Handle("/events", authMiddleware(subscriber))
 
 This layer is intentionally outside gopipe. Users bring their own auth middleware — `go-jwt-middleware`, `coreos/go-oidc`, hand-written, etc.
 
-### Layer 2: Claims Propagation — Subscriber Enricher
+### Layer 2: Auth Context Propagation — Subscriber Enricher
 
 The HTTP subscriber currently does not propagate HTTP request context to messages (by design — see `subscriber.go:43`). We need a bridge from `*http.Request` context to message context.
 
@@ -119,15 +126,42 @@ if s.cfg.Enricher != nil {
 s.ch <- msg
 ```
 
-**Usage:**
+**Two propagation channels — different purposes:**
+
+The enricher can set both:
+
+1. **`WithValue` — in-process authorization claims.** Security-sensitive. Used by Layer 3 authorization middleware. Does not cross broker boundaries (lost on serialization). This is the right channel for OAuth2 scopes, roles, and any data used for access control decisions.
+
+2. **`authcontext` attributes — cross-broker provenance.** Informational only. Survives serialization across broker boundaries (HTTP → AMQP → Kafka). Tells downstream handlers who *triggered* the event. Uses the CloudEvents [authcontext extension](https://github.com/cloudevents/spec/blob/main/cloudevents/extensions/authcontext.md) (`authtype`, `authid`, `authclaims`). Per spec: MUST NOT contain actual credentials.
 
 ```go
 subscriber := http.NewSubscriber(http.SubscriberConfig{
     Enricher: func(r *http.Request, msg *message.RawMessage) {
         claims, _ := authn.ClaimsFromContext(r.Context())
+
+        // In-process: for authorization middleware (Layer 3)
         msg.WithValue(claimsKey, claims)
+
+        // Cross-broker: informational provenance for downstream handlers
+        msg.Attributes["authtype"] = claims.Type()   // e.g., "user", "service_account"
+        msg.Attributes["authid"]   = claims.Subject() // e.g., hashed user ID
     },
 })
+```
+
+**Why both channels:**
+- `WithValue` is secure (in-process only) but ephemeral (lost on serialization)
+- `authcontext` attributes survive broker boundaries but are informational only (not for access control)
+- A handler on an internal AMQP broker can see *who triggered* the original HTTP request via `authid`, without the original OAuth2 token being forwarded
+
+**The proxy scenario:** An HTTP-to-AMQP bridge doesn't need a router. Layer 1 (auth middleware) rejects unauthorized requests. The enricher sets `authcontext` attributes on forwarded messages so downstream consumers on the internal broker know who triggered the event. Authentication is complete — no authorization layer needed.
+
+```
+External HTTP → AuthN middleware → Subscriber → enricher → AMQP broker
+                  (gatekeeper)                    (sets authcontext)
+                                                        │
+                                          Internal consumers read
+                                          authtype/authid attributes
 ```
 
 **Why an enricher, not automatic propagation:**
@@ -229,8 +263,8 @@ The key insight: steps 6 and 7 work because of the `messageContext.Value()` chai
 
 ### What We Do NOT Do
 
-- **Do not use message `Attributes` for auth context.** Attributes serialize across broker boundaries. OAuth claims are request-scoped and in-process-only. The WithValue context wrapper is the correct propagation mechanism.
-- **Do not embed credentials in CloudEvents.** Per the authcontext extension spec: `authclaims` "MUST NOT contain actual credentials for impersonation."
+- **Do not use message `Attributes` for authorization decisions.** Authorization uses `WithValue` (in-process, not serialized). The `authcontext` attributes are strictly informational provenance — they tell downstream handlers who triggered the event, but MUST NOT be used as an authorization mechanism.
+- **Do not embed credentials in CloudEvents.** Per the authcontext extension spec: `authclaims` "MUST NOT contain actual credentials for impersonation." Use hashed identifiers, not tokens.
 - **Do not build an OAuth2 server.** gopipe validates tokens, it doesn't issue them.
 - **Do not couple to a specific OAuth2 library.** The enricher and middleware patterns accept any claims type.
 
@@ -263,11 +297,16 @@ Layer 1 (HTTP AuthN middleware) is external — users bring their own. Gopipe pr
 
 ## Decisions
 
-1. **Router-level authorization by event type:** Authorization middleware is registered on the router via `router.Use()`, mapping event types to policies. No changes to `AddHandler` or `Handler` interface needed. Different routers can enforce different policies.
-2. **General-purpose enricher:** The `MessageEnricher` is not OAuth-specific. It bridges any HTTP→message context: claims, tenant ID, trace context, etc.
-3. **Publisher auth is HTTP-specific:** The outbound counterpart to the inbound enricher. Optional `TokenSource` on the Publisher injects `Authorization: Bearer <token>` into outbound HTTP requests. Lives in `message/http`, not relevant for other transports (Kafka, NATS, etc. have their own auth mechanisms). Aligns with the Subscriptions spec's ACCESSTOKEN credential type.
+1. **Authentication is standalone.** HTTP auth middleware works without a router or handler. An HTTP-to-AMQP proxy only needs Layer 1.
+2. **Two propagation channels.** `WithValue` for in-process authorization (security-sensitive, ephemeral). `authcontext` attributes for cross-broker provenance (informational, survives serialization). Never use attributes for authorization decisions.
+3. **Router-level authorization by event type.** Authorization middleware is registered on the router via `router.Use()`, mapping event types to policies. No changes to `AddHandler` or `Handler` interface needed. Different routers can enforce different policies. Optional — only relevant when a router is present.
+4. **General-purpose enricher.** The `MessageEnricher` is not OAuth-specific. It bridges any HTTP→message context: claims, tenant ID, trace context, etc.
+5. **Publisher auth is HTTP-specific.** The outbound counterpart to the inbound enricher. Optional `TokenSource` on the Publisher injects `Authorization: Bearer <token>` into outbound HTTP requests. Lives in `message/http`, not relevant for other transports (Kafka, NATS, etc. have their own auth mechanisms). Aligns with the Subscriptions spec's ACCESSTOKEN credential type.
+
+## Related Plans
+
+- [webhook-abuse-protection](webhook-abuse-protection.md) — CloudEvents webhook handshake (separate concern)
 
 ## Open Questions
 
-1. **Webhook abuse protection:** The [CloudEvents HTTP Webhook spec](https://github.com/cloudevents/spec/blob/main/cloudevents/http-webhook.md) defines an abuse-protection handshake that prevents senders from being weaponized. Before delivering events, the sender sends an HTTP `OPTIONS` request with `WebHook-Request-Origin: sender.example.com`. The receiver must respond with `WebHook-Allowed-Origin: sender.example.com` to confirm it accepts events from that origin. Without confirmation, the sender refuses to deliver. This protects against an attacker registering a subscription pointing to a victim's URL, causing the sender to unwittingly flood the victim. In gopipe, this would mean the HTTP Subscriber optionally handles `OPTIONS` in `ServeHTTP`. Orthogonal to OAuth2 (which authenticates the sender) — this is about the receiver declaring "yes, I want events from you." Worth considering as a separate, optional feature.
-2. **Closed vs open default for ByEventType:** Should event types not in the policy map be rejected (closed by default) or allowed (open by default)? Closed is safer but requires listing all types.
+1. **Closed vs open default for ByEventType:** Should event types not in the policy map be rejected (closed by default) or allowed (open by default)? Closed is safer but requires listing all types.
