@@ -36,6 +36,7 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0022](0022-message-package-redesign.md) | Message Package Redesign | Proposed |
 | [0023](0023-engine-simplification.md) | Engine Simplification | Implemented |
 | [0024](0024-http-cloudevents-adapter.md) | HTTP CloudEvents Adapter Design | Implemented |
+| [0025](0025-json-schema-validation.md) | JSON Schema Validation | Implemented |
 
 ## History
 
