@@ -1,7 +1,7 @@
 # Plan: WithValue — Message Context for In-Process Values
 
 **Status:** Proposed
-**Related ADRs:** [0006](../adr/0006-message-acknowledgment.md), [0022](../adr/0022-message-package-redesign.md)
+**Related ADRs:** [0025](../adr/0025-message-context-values.md), [0006](../adr/0006-message-acknowledgment.md), [0022](../adr/0022-message-package-redesign.md)
 **Design Evolution:** [transaction-handling.decisions.md](transaction-handling.decisions.md)
 **Unblocks:** [transaction-handling](transaction-handling.md), [inbox-outbox](inbox-outbox.md), auth middleware
 
