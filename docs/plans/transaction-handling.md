@@ -2,7 +2,7 @@
 
 **Status:** Proposed
 **Depends On:** [withvalue](withvalue.md) (Tasks 0, 2, 5 moved there)
-**Related ADRs:** [0006](../adr/0006-message-acknowledgment.md), [0022](../adr/0022-message-package-redesign.md)
+**Related ADRs:** [0026](../adr/0026-acking-middleware-outermost.md), [0025](../adr/0025-message-context-values.md), [0006](../adr/0006-message-acknowledgment.md), [0022](../adr/0022-message-package-redesign.md)
 **Design Evolution:** [transaction-handling.decisions.md](transaction-handling.decisions.md)
 
 ## Overview
