@@ -21,9 +21,10 @@ const (
 // the effective deadline via ctx.Deadline().
 type messageContext struct {
 	context.Context
-	msg    any        // *Message or *RawMessage
+	msg    any // *Message or *RawMessage
 	attrs  Attributes
 	expiry time.Time
+	ctx    context.Context // message's in-process values (nil if none)
 }
 
 // Deadline returns the earlier of parent deadline or message expiry.
@@ -57,6 +58,11 @@ func (c *messageContext) Value(key any) any {
 	case attributesKey:
 		return c.attrs
 	default:
+		if c.ctx != nil {
+			if v := c.ctx.Value(key); v != nil {
+				return v
+			}
+		}
 		return c.Context.Value(key)
 	}
 }

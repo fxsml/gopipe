@@ -251,9 +251,14 @@ func forwardAckMiddleware() Middleware {
 				len(outputs),
 			)
 
-			// Replace each output's acking with the shared acking
+			// Replace each output's acking with the shared acking, and
+			// propagate the input's in-process context values to outputs
+			// that don't have their own. Handler-set values are preserved.
 			for _, out := range outputs {
 				out.acking = shared
+				if msg.ctx != nil && out.ctx == nil {
+					out.ctx = msg.ctx
+				}
 			}
 
 			return outputs, nil

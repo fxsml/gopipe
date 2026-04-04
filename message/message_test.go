@@ -2,6 +2,7 @@ package message
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -585,6 +586,132 @@ func TestTime(t *testing.T) {
 		}
 		if timeStr != "2025-01-15T10:30:00Z" {
 			t.Errorf("expected 2025-01-15T10:30:00Z, got %s", timeStr)
+		}
+	})
+}
+
+func TestWithValue(t *testing.T) {
+	type keyType string
+	const (
+		keyA keyType = "a"
+		keyB keyType = "b"
+		keyC keyType = "c"
+	)
+
+	t.Run("stores value accessible via Context", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		msg.WithValue(keyA, "value-a")
+
+		ctx := msg.Context(context.Background())
+		if got := ctx.Value(keyA); got != "value-a" {
+			t.Errorf("ctx.Value(keyA) = %v, want value-a", got)
+		}
+	})
+
+	t.Run("multiple WithValue calls chain", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		msg.WithValue(keyA, "value-a")
+		msg.WithValue(keyB, "value-b")
+
+		ctx := msg.Context(context.Background())
+		if got := ctx.Value(keyA); got != "value-a" {
+			t.Errorf("ctx.Value(keyA) = %v, want value-a", got)
+		}
+		if got := ctx.Value(keyB); got != "value-b" {
+			t.Errorf("ctx.Value(keyB) = %v, want value-b", got)
+		}
+	})
+
+	t.Run("message value shadows parent context value", func(t *testing.T) {
+		parent := context.WithValue(context.Background(), keyA, "parent-a")
+		msg := New("data", nil, nil)
+		msg.WithValue(keyA, "msg-a")
+
+		ctx := msg.Context(parent)
+		if got := ctx.Value(keyA); got != "msg-a" {
+			t.Errorf("ctx.Value(keyA) = %v, want msg-a (message shadows parent)", got)
+		}
+	})
+
+	t.Run("falls through to parent for unknown keys", func(t *testing.T) {
+		parent := context.WithValue(context.Background(), keyC, "parent-c")
+		msg := New("data", nil, nil)
+		msg.WithValue(keyA, "msg-a")
+
+		ctx := msg.Context(parent)
+		if got := ctx.Value(keyC); got != "parent-c" {
+			t.Errorf("ctx.Value(keyC) = %v, want parent-c", got)
+		}
+	})
+
+	t.Run("zero-cost when unused - nil ctx", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		if msg.ctx != nil {
+			t.Errorf("msg.ctx = %v, want nil when WithValue not called", msg.ctx)
+		}
+
+		parent := context.WithValue(context.Background(), keyA, "parent-a")
+		ctx := msg.Context(parent)
+		if got := ctx.Value(keyA); got != "parent-a" {
+			t.Errorf("ctx.Value(keyA) = %v, want parent-a", got)
+		}
+	})
+
+	t.Run("values not serialized to JSON", func(t *testing.T) {
+		msg := New("data", Attributes{AttrType: "test"}, nil)
+		msg.WithValue(keyA, "secret-value")
+
+		b, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatalf("MarshalJSON failed: %v", err)
+		}
+		if strings.Contains(string(b), "secret-value") {
+			t.Errorf("MarshalJSON leaked ctx value: %s", b)
+		}
+	})
+
+	t.Run("Copy propagates ctx to output messages", func(t *testing.T) {
+		in := New("in", nil, nil)
+		in.WithValue(keyA, "value-a")
+
+		out := Copy(in, "out")
+
+		ctx := out.Context(context.Background())
+		if got := ctx.Value(keyA); got != "value-a" {
+			t.Errorf("Copy: ctx.Value(keyA) = %v, want value-a", got)
+		}
+	})
+
+	t.Run("Copy: modifying output ctx does not affect input", func(t *testing.T) {
+		in := New("in", nil, nil)
+		in.WithValue(keyA, "value-a")
+
+		out := Copy(in, "out")
+		out.WithValue(keyB, "value-b")
+
+		inCtx := in.Context(context.Background())
+		if got := inCtx.Value(keyB); got != nil {
+			t.Errorf("input leaked output value: got %v", got)
+		}
+		outCtx := out.Context(context.Background())
+		if got := outCtx.Value(keyA); got != "value-a" {
+			t.Errorf("output lost inherited value: got %v", got)
+		}
+	})
+
+	t.Run("Context still provides message reference and attributes", func(t *testing.T) {
+		msg := New("data", Attributes{AttrType: "test"}, nil)
+		msg.WithValue(keyA, "value-a")
+
+		ctx := msg.Context(context.Background())
+		if FromContext(ctx) != msg {
+			t.Error("MessageFromContext did not return original message")
+		}
+		if attrs := AttributesFromContext(ctx); attrs[AttrType] != "test" {
+			t.Errorf("AttributesFromContext lost data: %v", attrs)
+		}
+		if got := ctx.Value(keyA); got != "value-a" {
+			t.Errorf("ctx.Value(keyA) = %v, want value-a", got)
 		}
 	})
 }
