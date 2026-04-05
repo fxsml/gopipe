@@ -1492,7 +1492,7 @@ func TestForwardAckContextPropagation(t *testing.T) {
 
 	t.Run("outputs inherit input ctx values under AckForward", func(t *testing.T) {
 		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.WithValue(keyA, "value-a")
+		in.SetValue(keyA, "value-a")
 
 		out1 := New("out1", nil, nil)
 		out2 := New("out2", nil, nil)
@@ -1518,10 +1518,10 @@ func TestForwardAckContextPropagation(t *testing.T) {
 
 	t.Run("handler-set output ctx is not overwritten", func(t *testing.T) {
 		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.WithValue(keyA, "input-a")
+		in.SetValue(keyA, "input-a")
 
 		out := New("out", nil, nil)
-		out.WithValue(keyA, "handler-a") // handler set its own value
+		out.SetValue(keyA, "handler-a") // handler set its own value
 
 		mw := forwardAckMiddleware()
 		handler := mw(buildHandler([]*Message{out}))
@@ -1539,7 +1539,7 @@ func TestForwardAckContextPropagation(t *testing.T) {
 
 	t.Run("no propagation when input has no ctx", func(t *testing.T) {
 		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		// no WithValue called
+		// no SetValue called
 		out := New("out", nil, nil)
 
 		mw := forwardAckMiddleware()
@@ -1556,7 +1556,7 @@ func TestForwardAckContextPropagation(t *testing.T) {
 
 	t.Run("AckOnSuccess does not propagate ctx", func(t *testing.T) {
 		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.WithValue(keyA, "value-a")
+		in.SetValue(keyA, "value-a")
 
 		out := New("out", nil, nil)
 
@@ -1574,7 +1574,7 @@ func TestForwardAckContextPropagation(t *testing.T) {
 
 	t.Run("AckManual does not propagate ctx", func(t *testing.T) {
 		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.WithValue(keyA, "value-a")
+		in.SetValue(keyA, "value-a")
 
 		out := New("out", nil, nil)
 
@@ -1592,12 +1592,12 @@ func TestForwardAckContextPropagation(t *testing.T) {
 
 	t.Run("keyB from input propagates, handler keyA preserved", func(t *testing.T) {
 		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.WithValue(keyA, "input-a")
-		in.WithValue(keyB, "input-b")
+		in.SetValue(keyA, "input-a")
+		in.SetValue(keyB, "input-b")
 
 		out := New("out", nil, nil)
 		// Handler sets only keyA on output; keyB should come from input via forwarding
-		out.WithValue(keyA, "handler-a")
+		out.SetValue(keyA, "handler-a")
 
 		mw := forwardAckMiddleware()
 		handler := mw(buildHandler([]*Message{out}))

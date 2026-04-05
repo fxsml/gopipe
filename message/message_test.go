@@ -590,7 +590,7 @@ func TestTime(t *testing.T) {
 	})
 }
 
-func TestWithValue(t *testing.T) {
+func TestSetValue(t *testing.T) {
 	type keyType string
 	const (
 		keyA keyType = "a"
@@ -600,7 +600,7 @@ func TestWithValue(t *testing.T) {
 
 	t.Run("stores value accessible via Context", func(t *testing.T) {
 		msg := New("data", nil, nil)
-		msg.WithValue(keyA, "value-a")
+		msg.SetValue(keyA, "value-a")
 
 		ctx := msg.Context(context.Background())
 		if got := ctx.Value(keyA); got != "value-a" {
@@ -608,10 +608,10 @@ func TestWithValue(t *testing.T) {
 		}
 	})
 
-	t.Run("multiple WithValue calls chain", func(t *testing.T) {
+	t.Run("multiple SetValue calls chain", func(t *testing.T) {
 		msg := New("data", nil, nil)
-		msg.WithValue(keyA, "value-a")
-		msg.WithValue(keyB, "value-b")
+		msg.SetValue(keyA, "value-a")
+		msg.SetValue(keyB, "value-b")
 
 		ctx := msg.Context(context.Background())
 		if got := ctx.Value(keyA); got != "value-a" {
@@ -625,7 +625,7 @@ func TestWithValue(t *testing.T) {
 	t.Run("message value shadows parent context value", func(t *testing.T) {
 		parent := context.WithValue(context.Background(), keyA, "parent-a")
 		msg := New("data", nil, nil)
-		msg.WithValue(keyA, "msg-a")
+		msg.SetValue(keyA, "msg-a")
 
 		ctx := msg.Context(parent)
 		if got := ctx.Value(keyA); got != "msg-a" {
@@ -636,7 +636,7 @@ func TestWithValue(t *testing.T) {
 	t.Run("falls through to parent for unknown keys", func(t *testing.T) {
 		parent := context.WithValue(context.Background(), keyC, "parent-c")
 		msg := New("data", nil, nil)
-		msg.WithValue(keyA, "msg-a")
+		msg.SetValue(keyA, "msg-a")
 
 		ctx := msg.Context(parent)
 		if got := ctx.Value(keyC); got != "parent-c" {
@@ -647,7 +647,7 @@ func TestWithValue(t *testing.T) {
 	t.Run("zero-cost when unused - nil ctx", func(t *testing.T) {
 		msg := New("data", nil, nil)
 		if msg.ctx != nil {
-			t.Errorf("msg.ctx = %v, want nil when WithValue not called", msg.ctx)
+			t.Errorf("msg.ctx = %v, want nil when SetValue not called", msg.ctx)
 		}
 
 		parent := context.WithValue(context.Background(), keyA, "parent-a")
@@ -657,9 +657,53 @@ func TestWithValue(t *testing.T) {
 		}
 	})
 
+	t.Run("Value returns bound values", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		msg.SetValue(keyA, "value-a")
+		msg.SetValue(keyB, "value-b")
+
+		if got := msg.Value(keyA); got != "value-a" {
+			t.Errorf("msg.Value(keyA) = %v, want value-a", got)
+		}
+		if got := msg.Value(keyB); got != "value-b" {
+			t.Errorf("msg.Value(keyB) = %v, want value-b", got)
+		}
+	})
+
+	t.Run("Value returns nil for unset key", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		msg.SetValue(keyA, "value-a")
+
+		if got := msg.Value(keyB); got != nil {
+			t.Errorf("msg.Value(keyB) = %v, want nil", got)
+		}
+	})
+
+	t.Run("Value returns nil when no SetValue called", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		if got := msg.Value(keyA); got != nil {
+			t.Errorf("msg.Value(keyA) = %v, want nil on empty message", got)
+		}
+	})
+
+	t.Run("Value does NOT walk parent context", func(t *testing.T) {
+		// msg.Value is the message-local view. It must not peek into
+		// any parent context — that's ctx.Value's job.
+		msg := New("data", nil, nil)
+		// Don't call SetValue; simulate a parent ctx having the key
+		// by building a messageContext through Context(). msg.Value
+		// should still return nil because the value isn't on the message.
+		parent := context.WithValue(context.Background(), keyA, "parent-a")
+		_ = msg.Context(parent) // would return "parent-a" via ctx.Value
+
+		if got := msg.Value(keyA); got != nil {
+			t.Errorf("msg.Value(keyA) = %v, want nil (message-local only)", got)
+		}
+	})
+
 	t.Run("values not serialized to JSON", func(t *testing.T) {
 		msg := New("data", Attributes{AttrType: "test"}, nil)
-		msg.WithValue(keyA, "secret-value")
+		msg.SetValue(keyA, "secret-value")
 
 		b, err := json.Marshal(msg)
 		if err != nil {
@@ -672,7 +716,7 @@ func TestWithValue(t *testing.T) {
 
 	t.Run("Copy propagates ctx to output messages", func(t *testing.T) {
 		in := New("in", nil, nil)
-		in.WithValue(keyA, "value-a")
+		in.SetValue(keyA, "value-a")
 
 		out := Copy(in, "out")
 
@@ -684,10 +728,10 @@ func TestWithValue(t *testing.T) {
 
 	t.Run("Copy: modifying output ctx does not affect input", func(t *testing.T) {
 		in := New("in", nil, nil)
-		in.WithValue(keyA, "value-a")
+		in.SetValue(keyA, "value-a")
 
 		out := Copy(in, "out")
-		out.WithValue(keyB, "value-b")
+		out.SetValue(keyB, "value-b")
 
 		inCtx := in.Context(context.Background())
 		if got := inCtx.Value(keyB); got != nil {
@@ -701,7 +745,7 @@ func TestWithValue(t *testing.T) {
 
 	t.Run("Context still provides message reference and attributes", func(t *testing.T) {
 		msg := New("data", Attributes{AttrType: "test"}, nil)
-		msg.WithValue(keyA, "value-a")
+		msg.SetValue(keyA, "value-a")
 
 		ctx := msg.Context(context.Background())
 		if FromContext(ctx) != msg {

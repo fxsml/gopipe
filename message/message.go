@@ -24,7 +24,7 @@ type TypedMessage[T any] struct {
 	acking *Acking
 
 	// ctx carries in-process, request-scoped values. It is never serialized
-	// and does not cross broker boundaries. Values are added via WithValue
+	// and does not cross broker boundaries. Values are added via SetValue
 	// and auto-propagate into handler contexts created by Context(parent).
 	ctx context.Context
 }
@@ -118,23 +118,35 @@ func (m *TypedMessage[T]) Settled() <-chan struct{} {
 	return m.acking.done()
 }
 
-// WithValue adds an in-process value to the message's context.
+// SetValue binds an in-process value to the message under key.
 // Values auto-propagate into contexts created by Context(parent) and are
-// accessible via ctx.Value(key). They are NOT serialized and do NOT cross
-// broker boundaries. Multiple calls chain: each value is added to the
-// existing context.
+// accessible via ctx.Value(key) in handlers and adapters. They are NOT
+// serialized and do NOT cross broker boundaries. Multiple calls chain:
+// each value is added to the existing context.
 //
-// If the same key exists in both the message's context and the parent
-// context, the message's value takes precedence.
+// If the same key exists in both the message and a parent context, the
+// message's value takes precedence during ctx.Value lookups.
 //
 // Not safe for concurrent use. Follows the single-writer assumption: one
 // worker processes one message at a time (same as Attributes mutation).
-func (m *TypedMessage[T]) WithValue(key, val any) {
+func (m *TypedMessage[T]) SetValue(key, val any) {
 	if m.ctx == nil {
 		m.ctx = context.WithValue(context.Background(), key, val)
 	} else {
 		m.ctx = context.WithValue(m.ctx, key, val)
 	}
+}
+
+// Value returns a value previously bound via SetValue, or nil if not set.
+//
+// This inspects only the message's own values — it does NOT walk a parent
+// context chain. In handlers, use ctx.Value(key) for the merged view of
+// message values and infrastructure context values.
+func (m *TypedMessage[T]) Value(key any) any {
+	if m.ctx == nil {
+		return nil
+	}
+	return m.ctx.Value(key)
 }
 
 // Context returns a context derived from parent with message-specific behavior.
