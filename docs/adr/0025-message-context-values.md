@@ -47,6 +47,8 @@ func (m *TypedMessage[T]) Settled() <-chan struct{}
 
 **Map over context chain:** With decoupling, the internal representation uses `map[any]any` instead of `context.Context` chain — O(1) lookup, enumerable, supports deletion, fewer allocations.
 
+**No implicit propagation:** Locals are never implicitly copied from input to output messages by the framework. Acking (delivery guarantees) and locals (in-process state) are orthogonal concerns — coupling them would make handler behavior silently change based on the router's ack strategy. Handlers that need to carry locals forward use `Copy()` (clones all locals) or `SetLocal()` (specific keys) explicitly.
+
 **Context-on-struct exception:** The Go community recognizes message-on-a-channel as the standard exception to "don't store context in structs" (Brad Fitzpatrick in golang/go#22602; Jack Lindamood; `http.Request` itself). While we no longer store a `context.Context`, the principle applies: `TypedMessage` is gopipe's request type — carrying in-process state on it is appropriate.
 
 ## Consequences

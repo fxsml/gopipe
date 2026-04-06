@@ -266,6 +266,40 @@ func PrincipalFromContext(ctx context.Context) Principal {
 }
 ```
 
+## No Implicit Propagation
+
+An earlier iteration had `forwardAckMiddleware` clone input locals to output messages (when the output had no locals of its own). This was removed.
+
+### Why Acking and Locals Are Orthogonal
+
+Acking answers: "When should the broker consider this message processed?"
+Locals answer: "What in-process state does this message carry?"
+
+These are independent concerns. Coupling them means the handler's output locals behavior *silently changes* depending on which ack strategy the router is configured with. The handler writes identical code — `New(event, attrs, nil)` — but gets different locals on outputs depending on a router-level config it doesn't see. That's surprising and hard to debug.
+
+### The Propagation Model
+
+| Mechanism | Propagates locals? | Who decides? |
+|---|---|---|
+| `Copy(msg, data)` | Yes (cloned) | Handler — explicit |
+| `msg.SetLocal()` on output | Yes (specific keys) | Handler — explicit |
+| `New(data, attrs, nil)` | No | Handler — fresh message |
+| Any ack strategy | No | Framework — never implicit |
+
+The principle: **locals propagation is always the handler's decision, never the framework's.** If a handler needs to carry a local forward, it uses `Copy()` or calls `SetLocal()` explicitly. No magic, no surprises.
+
+### Why This Is Not a Problem
+
+Auth middleware sets principal on the *input* command. The handler reads it from the input. The *output* events don't need the principal — they may be published to a broker (where locals die anyway) or consumed by different services. An `OrderPlaced` event doesn't "have" a principal; the `PlaceOrder` command did.
+
+If a handler genuinely needs to forward a local (e.g., correlation state for a saga), it does so explicitly:
+```go
+out := Copy(msg, event)  // clones all locals
+// or
+out := New(event, attrs, nil)
+out.SetLocal(sagaKey, msg.Local(sagaKey))  // forward specific local
+```
+
 ## Open Concerns
 
 1. **messageContext Deadline override**: `messageContext.Deadline()` reports message expiry without enforcing it — a contract violation (`Deadline()` implies `Done()` will fire). Consider dropping the override entirely and relying solely on `middleware.Deadline()` for enforcement. This would allow deleting `messageContext` and using plain `context.WithValue` for message/rawMessage keys.
