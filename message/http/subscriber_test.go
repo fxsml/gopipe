@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/fxsml/gopipe/message"
 )
 
 func TestSubscriber_Subscribe(t *testing.T) {
@@ -373,6 +375,107 @@ func TestSubscriber_ContextCancel(t *testing.T) {
 			// Good - cancel completed after request finished
 		case <-time.After(2 * time.Second):
 			t.Fatal("cancel did not complete")
+		}
+	})
+}
+
+func TestSubscriber_Enricher(t *testing.T) {
+	t.Run("enricher sets locals on message", func(t *testing.T) {
+		type keyType struct{}
+
+		sub := NewSubscriber(SubscriberConfig{
+			AckTimeout: time.Second,
+			Enricher: func(r *http.Request, msg *message.RawMessage) {
+				msg.SetLocal(keyType{}, r.Header.Get("X-Tenant-ID"))
+			},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
+
+		var got any
+		go func() {
+			msg := <-ch
+			got = msg.Local(keyType{})
+			msg.Ack()
+		}()
+
+		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+		req.Header.Set("X-Tenant-ID", "tenant-abc")
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		}
+		if got != "tenant-abc" {
+			t.Errorf("Local() = %v, want tenant-abc", got)
+		}
+	})
+
+	t.Run("enricher called per message in batch", func(t *testing.T) {
+		type keyType struct{}
+		var count int
+
+		sub := NewSubscriber(SubscriberConfig{
+			AckTimeout: time.Second,
+			Enricher: func(r *http.Request, msg *message.RawMessage) {
+				count++
+				msg.SetLocal(keyType{}, count)
+			},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
+
+		go func() {
+			for i := 0; i < 2; i++ {
+				msg := <-ch
+				msg.Ack()
+			}
+		}()
+
+		body := []byte(`[
+			{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}},
+			{"specversion":"1.0","id":"2","type":"test","source":"/test","data":{}}
+		]`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentTypeCloudEventsBatchJSON)
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		}
+		if count != 2 {
+			t.Errorf("enricher called %d times, want 2", count)
+		}
+	})
+
+	t.Run("nil enricher is no-op", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
+
+		go func() {
+			msg := <-ch
+			msg.Ack()
+		}()
+
+		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected %d, got %d", http.StatusOK, w.Code)
 		}
 	})
 }
