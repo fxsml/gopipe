@@ -10,6 +10,8 @@
 | [transaction-handling](transaction-handling.md) | Transaction Handling | Proposed |
 | [inbox-outbox](inbox-outbox.md) | Inbox/Outbox Pattern | Proposed |
 | [redis-transactions](redis-transactions.md) | Redis Integration | Proposed |
+| [oauth2-cloudevents](oauth2-cloudevents.md) | OAuth2 CloudEvents Integration | Proposed |
+| [webhook-abuse-protection](webhook-abuse-protection.md) | Webhook Abuse Protection Handshake | Proposed |
 
 ## Agent Guidance
 

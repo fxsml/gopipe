@@ -20,6 +20,12 @@ type SubscriberConfig struct {
 
 	// AckTimeout is the maximum time to wait for ack/nack (default: 30s).
 	AckTimeout time.Duration
+
+	// Enricher is called after message creation and before channel delivery.
+	// Use it to bridge HTTP request data into message locals (e.g., auth claims).
+	// Called once per message. For batch requests, called per message with the
+	// same *http.Request.
+	Enricher func(*http.Request, *message.RawMessage)
 }
 
 func (c SubscriberConfig) parse() SubscriberConfig {
@@ -39,8 +45,9 @@ func (c SubscriberConfig) parse() SubscriberConfig {
 // On context cancellation, new requests return 503, in-flight requests complete
 // within AckTimeout, then the channel closes.
 //
-// HTTP request context is not propagated to messages. Use CloudEvents extensions
-// for request-scoped data (tracing, deadlines).
+// HTTP request context is not propagated to messages automatically. Use the
+// Enricher callback to bridge specific request data (e.g., auth claims) into
+// message locals.
 type Subscriber struct {
 	mu         sync.RWMutex
 	ch         chan *message.RawMessage
@@ -156,6 +163,10 @@ func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+
+		if s.cfg.Enricher != nil {
+			s.cfg.Enricher(r, msg)
 		}
 
 		select {
