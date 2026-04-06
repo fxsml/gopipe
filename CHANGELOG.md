@@ -9,11 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **message/http:** `SubscriberConfig.Enricher` callback for bridging HTTP request data into message locals
+  - Called after message creation, before channel delivery
+  - Enables auth claims propagation from HTTP middleware (e.g., sidecar) into messages via `SetLocal`
+  - For batch requests, called per message with the same `*http.Request`
+  - Optional — nil enricher is a no-op
 - **message:** `SetLocal(key, val)` / `Local(key)` for in-process context propagation
   - Message-local values via `map[any]any`, never serialized, never crosses broker boundaries
   - Decoupled from `context.Context`: locals do not appear in `ctx.Value()` lookups
   - `Copy()` clones locals along with attributes
   - Unblocks auth middleware, transaction handling, and tracing adapters
+
+### Fixed
+
+- **message:** `UnmarshalPipe` and `MarshalPipe` now propagate locals across the `RawMessage`↔`Message` boundary
+  - Previously, locals set on `RawMessage` (e.g., via Enricher) were silently dropped during unmarshaling
+  - Same fix applied to `MarshalPipe` for the reverse direction
 
 ### Changed
 
