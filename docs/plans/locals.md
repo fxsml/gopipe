@@ -130,27 +130,17 @@ func (c *messageContext) Value(key any) any {
 - `message/message_test.go` — `TestSetLocal` with 14 subtests
 - `message/handler_test.go` — updated to use `MessageFromContext(ctx).Attributes`
 
-### Task 3: AckForward Locals Propagation
+### Task 3: No Implicit Locals Propagation
 
 **Status:** Complete
 
-**Goal:** When `AckForward` replaces output ackings with SharedAcking, also propagate the message locals from input to output messages.
+**Goal:** Ensure no ack strategy implicitly propagates locals from input to output messages. Locals are the handler's responsibility — use `Copy()` or `SetLocal()` explicitly.
 
-**Implementation (in forwardAckMiddleware):**
-```go
-for _, out := range outputs {
-    out.acking = shared
-    if msg.locals != nil && out.locals == nil {
-        out.locals = maps.Clone(msg.locals)
-    }
-}
-```
-
-Propagated locals are **cloned** (independent copies) to prevent cross-message mutation. The guard `out.locals == nil` ensures we don't overwrite locals that a handler explicitly set on its output.
+**Rationale:** Acking answers "when should the broker consider this message processed?" Locals answer "what in-process state does this message carry?" These are orthogonal concerns. Implicit propagation tied to ack strategy would make handler behavior silently change based on a router-level config the handler doesn't see. Handlers that need to carry locals forward should use `Copy()` or call `SetLocal()` explicitly.
 
 **Files Modified:**
-- `message/acking.go` — `forwardAckMiddleware`
-- `message/acking_test.go` — `TestForwardAckLocalsPropagation` with 6 subtests
+- `message/acking.go` — removed locals propagation from `forwardAckMiddleware`
+- `message/acking_test.go` — `TestAckMiddlewareDoesNotPropagateLocals` confirms all strategies
 
 ## Breaking Changes (vs v0.17.0)
 
@@ -225,4 +215,4 @@ func (h *OrderHandler) Handle(ctx context.Context, msg *message.Message) ([]*mes
 - [x] Locals decoupled from handler context
 - [x] Nil message safety on SetLocal/Local
 - [x] Copy clones locals (independent copies)
-- [x] AckForward propagates cloned locals
+- [x] No ack strategy implicitly propagates locals

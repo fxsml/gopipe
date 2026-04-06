@@ -214,7 +214,7 @@ func (m *TypedMessage[T]) Local(key any) any
 func (c *messageContext) Value(key any) any  // messageKey, rawMessageKey, parent only
 
 // Copy() clones locals
-// forwardAckMiddleware clones locals to outputs
+// No implicit propagation — ack strategies only forward acking, not locals
 
 // Removed:
 // - AttributesFromContext

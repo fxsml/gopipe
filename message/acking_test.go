@@ -1478,10 +1478,9 @@ func TestCopyPreservesAcking(t *testing.T) {
 	})
 }
 
-func TestForwardAckLocalsPropagation(t *testing.T) {
+func TestAckMiddlewareDoesNotPropagateLocals(t *testing.T) {
 	type keyType string
 	const keyA keyType = "a"
-	const keyB keyType = "b"
 
 	buildHandler := func(outputs []*Message) ProcessFunc {
 		return func(ctx context.Context, msg *Message) ([]*Message, error) {
@@ -1489,123 +1488,31 @@ func TestForwardAckLocalsPropagation(t *testing.T) {
 		}
 	}
 
-	t.Run("outputs inherit input locals under AckForward", func(t *testing.T) {
-		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.SetLocal(keyA, "value-a")
+	strategies := []struct {
+		name string
+		mw   func() Middleware
+	}{
+		{"AckForward", forwardAckMiddleware},
+		{"AckOnSuccess", autoAckMiddleware},
+		{"AckManual", manualAckMiddleware},
+	}
 
-		out1 := New("out1", nil, nil)
-		out2 := New("out2", nil, nil)
+	for _, s := range strategies {
+		t.Run(s.name+" does not propagate locals", func(t *testing.T) {
+			in := New("in", nil, NewAcking(func() {}, func(error) {}))
+			in.SetLocal(keyA, "value-a")
 
-		mw := forwardAckMiddleware()
-		handler := mw(buildHandler([]*Message{out1, out2}))
+			out := New("out", nil, nil)
 
-		outs, err := handler(context.Background(), in)
-		if err != nil {
-			t.Fatalf("handler returned error: %v", err)
-		}
-		if len(outs) != 2 {
-			t.Fatalf("got %d outputs, want 2", len(outs))
-		}
+			handler := s.mw()(buildHandler([]*Message{out}))
 
-		for i, o := range outs {
-			if got := o.Local(keyA); got != "value-a" {
-				t.Errorf("output %d: Local(keyA) = %v, want value-a", i, got)
+			outs, err := handler(context.Background(), in)
+			if err != nil {
+				t.Fatalf("handler returned error: %v", err)
 			}
-		}
-	})
-
-	t.Run("handler-set output locals are not overwritten", func(t *testing.T) {
-		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.SetLocal(keyA, "input-a")
-
-		out := New("out", nil, nil)
-		out.SetLocal(keyA, "handler-a") // handler set its own value
-
-		mw := forwardAckMiddleware()
-		handler := mw(buildHandler([]*Message{out}))
-
-		outs, err := handler(context.Background(), in)
-		if err != nil {
-			t.Fatalf("handler returned error: %v", err)
-		}
-
-		if got := outs[0].Local(keyA); got != "handler-a" {
-			t.Errorf("handler value overwritten: got %v, want handler-a", got)
-		}
-	})
-
-	t.Run("no propagation when input has no locals", func(t *testing.T) {
-		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		// no SetLocal called
-		out := New("out", nil, nil)
-
-		mw := forwardAckMiddleware()
-		handler := mw(buildHandler([]*Message{out}))
-
-		outs, err := handler(context.Background(), in)
-		if err != nil {
-			t.Fatalf("handler returned error: %v", err)
-		}
-		if outs[0].locals != nil {
-			t.Errorf("output locals should remain nil, got %v", outs[0].locals)
-		}
-	})
-
-	t.Run("AckOnSuccess does not propagate locals", func(t *testing.T) {
-		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.SetLocal(keyA, "value-a")
-
-		out := New("out", nil, nil)
-
-		mw := autoAckMiddleware()
-		handler := mw(buildHandler([]*Message{out}))
-
-		outs, err := handler(context.Background(), in)
-		if err != nil {
-			t.Fatalf("handler returned error: %v", err)
-		}
-		if outs[0].locals != nil {
-			t.Errorf("AckOnSuccess should not propagate locals, got %v", outs[0].locals)
-		}
-	})
-
-	t.Run("AckManual does not propagate locals", func(t *testing.T) {
-		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.SetLocal(keyA, "value-a")
-
-		out := New("out", nil, nil)
-
-		mw := manualAckMiddleware()
-		handler := mw(buildHandler([]*Message{out}))
-
-		outs, err := handler(context.Background(), in)
-		if err != nil {
-			t.Fatalf("handler returned error: %v", err)
-		}
-		if outs[0].locals != nil {
-			t.Errorf("AckManual should not propagate locals, got %v", outs[0].locals)
-		}
-	})
-
-	t.Run("propagated locals are cloned (independent)", func(t *testing.T) {
-		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.SetLocal(keyA, "input-a")
-		in.SetLocal(keyB, "input-b")
-
-		out := New("out", nil, nil)
-
-		mw := forwardAckMiddleware()
-		handler := mw(buildHandler([]*Message{out}))
-
-		outs, err := handler(context.Background(), in)
-		if err != nil {
-			t.Fatalf("handler returned error: %v", err)
-		}
-
-		// Mutating output locals should not affect input
-		outs[0].SetLocal(keyA, "modified")
-		if got := in.Local(keyA); got != "input-a" {
-			t.Errorf("input local mutated: got %v, want input-a", got)
-		}
-	})
+			if outs[0].locals != nil {
+				t.Errorf("%s should not propagate locals, got %v", s.name, outs[0].locals)
+			}
+		})
+	}
 }
