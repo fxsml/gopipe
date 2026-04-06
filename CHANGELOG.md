@@ -5,6 +5,25 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **message:** `SetLocal(key, val)` / `Local(key)` for in-process context propagation
+  - Message-local values via `map[any]any`, never serialized, never crosses broker boundaries
+  - Decoupled from `context.Context`: locals do not appear in `ctx.Value()` lookups
+  - `Copy()` clones locals along with attributes
+  - Unblocks auth middleware, transaction handling, and tracing adapters
+
+### Changed
+
+- **message:** Rename `Done()` to `Settled()` to avoid collision with `context.Context` semantics
+- **message:** Remove implicit locals propagation from `AckForward` — acking and locals are orthogonal; propagation is the handler's explicit choice via `Copy()` or `SetLocal()`
+
+### Removed
+
+- **message:** `AttributesFromContext()` — use `MessageFromContext(ctx).Attributes` instead
+
 ## [0.17.1] - 2026-02-04
 
 ### Added

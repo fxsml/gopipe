@@ -8,7 +8,6 @@ import (
 type contextKey string
 
 const (
-	attributesKey contextKey = "message.attributes"
 	messageKey    contextKey = "message.message"
 	rawMessageKey contextKey = "message.raw_message"
 )
@@ -21,8 +20,7 @@ const (
 // the effective deadline via ctx.Deadline().
 type messageContext struct {
 	context.Context
-	msg    any        // *Message or *RawMessage
-	attrs  Attributes
+	msg    any // *Message or *RawMessage
 	expiry time.Time
 }
 
@@ -42,6 +40,7 @@ func (c *messageContext) Deadline() (time.Time, bool) {
 }
 
 // Value returns message-specific values or delegates to parent.
+// Locals (SetLocal/Local) are decoupled and not returned here.
 func (c *messageContext) Value(key any) any {
 	switch key {
 	case messageKey:
@@ -54,27 +53,9 @@ func (c *messageContext) Value(key any) any {
 			return msg
 		}
 		return nil
-	case attributesKey:
-		return c.attrs
 	default:
 		return c.Context.Value(key)
 	}
-}
-
-// contextWithAttributes stores attributes in context.
-func contextWithAttributes(ctx context.Context, attrs Attributes) context.Context {
-	return context.WithValue(ctx, attributesKey, attrs)
-}
-
-// AttributesFromContext retrieves message attributes from context.
-// Returns nil if no attributes are present.
-func AttributesFromContext(ctx context.Context) Attributes {
-	v := ctx.Value(attributesKey)
-	if v == nil {
-		return nil
-	}
-	attrs, _ := v.(Attributes)
-	return attrs
 }
 
 // MessageFromContext retrieves the Message from context.

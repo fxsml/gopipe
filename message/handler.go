@@ -111,9 +111,6 @@ func (h *commandHandler[C, E]) Handle(ctx context.Context, msg *Message) ([]*Mes
 		}
 	}
 
-	// Store attributes in context for handler access
-	ctx = contextWithAttributes(ctx, msg.Attributes)
-
 	events, err := h.fn(ctx, cmd)
 	if err != nil {
 		return nil, err

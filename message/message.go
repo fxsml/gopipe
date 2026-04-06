@@ -22,6 +22,11 @@ type TypedMessage[T any] struct {
 
 	// acking coordinates acknowledgment. Can be shared across messages.
 	acking *Acking
+
+	// locals carries in-process, request-scoped values. It is never serialized
+	// and does not cross broker boundaries. Values are added via SetLocal
+	// and read via Local. These do NOT merge into contexts created by Context(parent).
+	locals map[any]any
 }
 
 // Message is the internal message type used by handlers and middleware.
@@ -91,10 +96,10 @@ func (m *TypedMessage[T]) Nack(err error) bool {
 }
 
 // Err returns the error from Nack, or nil if pending or acked.
-// Use with Done() to check settlement status, similar to context.Context:
+// Use with Settled() to check settlement status:
 //
 //	select {
-//	case <-msg.Done():
+//	case <-msg.Settled():
 //	    if err := msg.Err(); err != nil {
 //	        // nacked with error
 //	    } else {
@@ -107,10 +112,39 @@ func (m *TypedMessage[T]) Err() error {
 	return m.acking.err()
 }
 
-// Done returns a channel that is closed when the message is settled (acked or nacked).
+// Settled returns a channel that is closed when the message is settled (acked or nacked).
 // Returns nil if no acking is set.
-func (m *TypedMessage[T]) Done() <-chan struct{} {
+func (m *TypedMessage[T]) Settled() <-chan struct{} {
 	return m.acking.done()
+}
+
+// SetLocal binds an in-process value to the message under key.
+// Locals are NOT serialized and do NOT cross broker boundaries.
+// They are decoupled from contexts: use msg.Local(key) to read them,
+// not ctx.Value(key).
+//
+// Not safe for concurrent use. Follows the single-writer assumption: one
+// worker processes one message at a time (same as Attributes mutation).
+func (m *TypedMessage[T]) SetLocal(key, val any) {
+	if m == nil {
+		return
+	}
+	if m.locals == nil {
+		m.locals = make(map[any]any)
+	}
+	m.locals[key] = val
+}
+
+// Local returns a value previously bound via SetLocal, or nil if not set.
+//
+// This inspects only the message's own locals. Locals are decoupled from
+// context: they do not appear in contexts created by Context(parent).
+// Use typed helpers like TxFromMessage(msg) to read specific locals.
+func (m *TypedMessage[T]) Local(key any) any {
+	if m == nil {
+		return nil
+	}
+	return m.locals[key]
 }
 
 // Context returns a context derived from parent with message-specific behavior.
@@ -118,14 +152,16 @@ func (m *TypedMessage[T]) Done() <-chan struct{} {
 // The context provides:
 //   - Deadline from minimum of parent deadline and message ExpiryTime
 //   - Message reference via MessageFromContext or RawMessageFromContext
-//   - Attributes via AttributesFromContext
 //   - Parent cancellation propagation
 //
 // Note: This method reports the deadline via ctx.Deadline() but does not
 // create timers or enforce the deadline. Use middleware.Deadline() for
 // enforcement with proper timer cleanup.
 //
-// For settlement detection (ack/nack), use msg.Done() directly.
+// Locals (SetLocal/Local) are decoupled from context: they do NOT appear
+// in ctx.Value lookups. Use msg.Local(key) to read locals directly.
+//
+// For settlement detection (ack/nack), use msg.Settled() directly.
 // This keeps context cancellation (lifecycle) separate from message
 // settlement (domain logic).
 func (m *TypedMessage[T]) Context(parent context.Context) context.Context {
@@ -141,7 +177,6 @@ func (m *TypedMessage[T]) Context(parent context.Context) context.Context {
 	return &messageContext{
 		Context: parent,
 		msg:     msg,
-		attrs:   m.Attributes,
 		expiry:  m.ExpiryTime(),
 	}
 }
@@ -221,12 +256,13 @@ func (m *TypedMessage[T]) ExpiryTime() time.Time {
 }
 
 // Copy creates a new message with different data while preserving
-// attributes (cloned) and acknowledgment callbacks (shared).
+// attributes (cloned), acknowledgment callbacks (shared), and locals (cloned).
 func Copy[In, Out any](msg *TypedMessage[In], data Out) *TypedMessage[Out] {
 	return &TypedMessage[Out]{
 		Data:       data,
 		Attributes: maps.Clone(msg.Attributes),
 		acking:     msg.acking,
+		locals:     maps.Clone(msg.locals),
 	}
 }
 

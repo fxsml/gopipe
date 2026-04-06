@@ -1,7 +1,7 @@
 # Plan: Transaction Handling
 
 **Status:** Proposed
-**Depends On:** [withvalue](withvalue.md) (Tasks 0, 2, 5 moved there)
+**Depends On:** [locals](locals.md) (Tasks 0, 2, 5 moved there)
 **Related ADRs:** [0026](../adr/0026-acking-middleware-outermost.md), [0025](../adr/0025-message-context-values.md), [0006](../adr/0006-message-acknowledgment.md), [0022](../adr/0022-message-package-redesign.md)
 **Design Evolution:** [transaction-handling.decisions.md](transaction-handling.decisions.md)
 
@@ -13,9 +13,9 @@ This plan also lays the foundation (middleware ordering) for the [inbox-outbox p
 
 ## Prerequisites
 
-The [WithValue plan](withvalue.md) must be completed first. It provides:
-- `TypedMessage.WithValue(key, val)` — used by TxMiddleware to attach `*sql.Tx` to messages
-- `messageContext.Value()` propagation — allows adapters to extract TX via `TxFromContext(ctx)`
+The [locals plan](locals.md) must be completed first. It provides:
+- `TypedMessage.SetLocal(key, val)` — used by TxMiddleware to attach `*sql.Tx` to messages
+- `msg.Local(key)` / `MessageFromContext(ctx).Local(key)` — allows adapters to extract TX
 - `Done()` → `Settled()` rename — clean API surface before adding TX semantics
 
 ## Goals
@@ -180,7 +180,7 @@ func TxMiddleware(db *sql.DB, opts *sql.TxOptions) message.Middleware {
                 return nil, fmt.Errorf("begin tx: %w", err)
             }
 
-            msg.WithValue(ctxKey{}, tx)
+            msg.SetLocal(ctxKey{}, tx)
 
             outputs, err := next(ctx, msg)
             if err != nil {
@@ -198,7 +198,7 @@ func TxMiddleware(db *sql.DB, opts *sql.TxOptions) message.Middleware {
 }
 ```
 
-**Key design:** TxMiddleware wraps the handler in BEGIN/COMMIT/ROLLBACK. It uses `msg.WithValue` (from the [WithValue plan](withvalue.md)) to attach the TX to the message. The handler's adapter extracts it via `TxFromContext(ctx)` — the TX auto-propagates into handler context through `messageContext.Value()`.
+**Key design:** TxMiddleware wraps the handler in BEGIN/COMMIT/ROLLBACK. It uses `msg.SetLocal` (from the [locals plan](locals.md)) to attach the TX to the message. The handler's adapter extracts it via `TxFromMessage(msg)` or `MessageFromContext(ctx).Local(txKey)` — locals are decoupled from context.
 
 With Task 1's middleware reordering, acking fires AFTER this middleware returns, ensuring commit-before-ack.
 
@@ -216,7 +216,7 @@ With Task 1's middleware reordering, acking fires AFTER this middleware returns,
 ## Implementation Order
 
 ```
-[WithValue plan — prerequisite, ships first]
+[Locals plan — prerequisite, shipped]
   ↓
 Task 1: Middleware Ordering     Task 2: SQL Package
             ↓                        ↓
@@ -225,7 +225,7 @@ Task 1: Middleware Ordering     Task 2: SQL Package
               Task 3: TxMiddleware
 ```
 
-The [WithValue plan](withvalue.md) must be completed first (provides `WithValue` and `messageContext.Value()` propagation). Tasks 1 and 2 are independent and can be implemented in parallel. Task 3 depends on both.
+The [locals plan](locals.md) must be completed first (provides `SetLocal`/`Local` for message-scoped values). Tasks 1 and 2 are independent and can be implemented in parallel. Task 3 depends on both.
 
 ## End-to-End Trace
 
@@ -245,8 +245,8 @@ router.AddHandler("place-order", nil, NewPlaceOrderHandler(orderRepo))
 1. Broker delivers message
 2. Router receives message
 3. Acking middleware (outermost) calls next:
-   4. TxMiddleware: BEGIN TX, msg.WithValue(txKey, tx)
-      5. Handler: repo.Save(ctx, order) — adapter calls TxFromContext(ctx)
+   4. TxMiddleware: BEGIN TX, msg.SetLocal(txKey, tx)
+      5. Handler: repo.Save(ctx, order) — adapter calls TxFromMessage(msg)
       6. Handler returns outputs
    7. TxMiddleware: tx.Commit()
 8. Acking middleware: msg.Ack() → broker ack (AFTER commit)
