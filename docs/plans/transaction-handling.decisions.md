@@ -1,6 +1,6 @@
 # Transaction Handling - Design Evolution: Message Pipeline Context
 
-**Status:** Decided
+**Status:** Decided (Option B originally chosen; later superseded by decoupled locals — see [locals.decisions.md](locals.decisions.md))
 **Related Plan:** [transaction-handling.md](transaction-handling.md)
 
 ## Context

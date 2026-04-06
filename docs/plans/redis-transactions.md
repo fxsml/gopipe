@@ -151,7 +151,7 @@ func TxMiddleware(client goredis.UniversalClient) message.Middleware {
         return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
             pipe := client.TxPipeline()
 
-            msg.WithValue(pipelineKey{}, pipe)
+            msg.SetLocal(pipelineKey{}, pipe)
 
             outputs, err := next(ctx, msg)
             if err != nil {
@@ -170,9 +170,8 @@ func TxMiddleware(client goredis.UniversalClient) message.Middleware {
 ```
 
 **Key design:**
-- Uses `msg.WithValue` to attach pipeline (same pattern as SQL TxMiddleware for `*sql.Tx`)
-- Pipeline auto-propagates into handler context via `messageContext.Value()`
-- Adapter extracts via `CmdableFromContext(ctx, r.client)`
+- Uses `msg.SetLocal` to attach pipeline (same pattern as SQL TxMiddleware for `*sql.Tx`)
+- Adapter extracts via `CmdableFromMessage(msg, r.client)` or `CmdableFromContext(ctx, r.client)`
 - Commands queued during handler execute atomically in EXEC
 - Discard on handler error prevents partial execution
 
@@ -611,7 +610,7 @@ destPub.Publish(ctx, outboxCh)
 1.  Broker delivers message (msg.ID = "abc-123")
 2.  Router receives message
 3.  Acking middleware (outermost) calls next:
-4.    TxMiddleware: pipe = client.TxPipeline(), msg.WithValue(pipelineKey, pipe)
+4.    TxMiddleware: pipe = client.TxPipeline(), msg.SetLocal(pipelineKey, pipe)
 5.      OutboxMiddleware calls next:
 6.        Handler: repo.Save(ctx, order) → adapter queues HSET on pipeline
 7.        Handler returns: []OrderPlaced{{OrderID: "xyz"}}

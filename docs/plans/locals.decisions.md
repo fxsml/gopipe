@@ -1,7 +1,7 @@
-# WithValue - Design Evolution: From Merge to Decouple
+# Message Locals — Design Evolution: From Merge to Decouple
 
 **Status:** Decided
-**Related Plan:** [withvalue.md](withvalue.md)
+**Related Plan:** [locals.md](locals.md)
 **Prior Design:** [transaction-handling.decisions.md](transaction-handling.decisions.md)
 
 ## Context

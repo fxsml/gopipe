@@ -1,37 +1,34 @@
-# ADR 0025: Message Context for In-Process Values
+# ADR 0025: Message Locals for In-Process Values
 
 **Date:** 2026-04-04
-**Status:** Proposed
+**Status:** Implemented
+**Supersedes:** Original proposal (WithValue with context merge)
 
 ## Context
 
 TxMiddleware, tracing middleware, auth middleware, and saga coordinators all need to carry request-scoped values that travel with a message through the pipeline but must NOT cross broker boundaries (no serialization). Examples: `*sql.Tx`, trace spans, auth principals, saga state.
 
-The `Attributes` field handles serializable CloudEvents metadata. There is no established layer for in-process values. Every Go library in the ecosystem solves this with a two-layer model — serializable metadata + `context.Context` — but `TypedMessage` only has the first layer.
+The `Attributes` field handles serializable CloudEvents metadata. There is no established layer for in-process values. Every Go library in the ecosystem solves this with a two-layer model — serializable metadata + in-process state — but `TypedMessage` only has the first layer.
 
 Separately, `TypedMessage` currently exposes `Done() <-chan struct{}` and `Err() error` — the same signatures as `context.Context`. But the semantics differ: `Done()` closes on settlement (ack/nack) not cancellation, and `Err()` returns nil after ack (violating the context contract that `Err()` is non-nil when `Done()` is closed). The type accidentally satisfies `context.Context` without honoring its contract.
 
 ## Decision
 
-Add an unexported `ctx context.Context` field to `TypedMessage` with a `WithValue` method. Auto-propagate values into handler context via `messageContext.Value()`. Rename `Done()` → `Settled()` to remove the accidental context resemblance.
+Add a private `locals map[any]any` field to `TypedMessage` with `SetLocal`/`Local` methods. Locals are **decoupled from context**: they do not appear in `ctx.Value()` lookups. Rename `Done()` → `Settled()` to remove the accidental context resemblance. Remove `AttributesFromContext` (use `MessageFromContext(ctx).Attributes`).
 
 ```go
 type TypedMessage[T any] struct {
     Data       T
     Attributes Attributes
     acking     *Acking
-    ctx        context.Context  // in-process only, never serialized
+    locals     map[any]any  // in-process only, never serialized
 }
 
-// WithValue adds an in-process value. Multiple calls chain additively.
-// Values auto-propagate into msg.Context(parent) and are dropped at broker boundaries.
-func (m *TypedMessage[T]) WithValue(key, val any) {
-    if m.ctx == nil {
-        m.ctx = context.WithValue(context.Background(), key, val)
-    } else {
-        m.ctx = context.WithValue(m.ctx, key, val)
-    }
-}
+// SetLocal adds an in-process value. Backed by map for O(1) lookup.
+func (m *TypedMessage[T]) SetLocal(key, val any)
+
+// Local reads an in-process value. Returns nil if not set.
+func (m *TypedMessage[T]) Local(key any) any
 
 // Rename: Done() → Settled()
 func (m *TypedMessage[T]) Settled() <-chan struct{}
@@ -44,33 +41,40 @@ func (m *TypedMessage[T]) Settled() <-chan struct{}
 | `Data` | yes (serialized) | payload |
 | `Attributes` | yes (CloudEvents attrs) | serializable metadata |
 | `acking` | no (replaced at boundary) | acknowledgment lifecycle |
-| `ctx` | no (dropped at boundary) | in-process values |
+| `locals` | no (dropped at boundary) | in-process values |
 
-**Additive API over replacement:** `WithValue` chains like `context.WithValue` rather than replacing the stored context. Multiple independent callers (TxMiddleware, OTel, auth) can each call `WithValue` without coordinating — the safe path is the only path. Contrast Watermill's `SetContext(ctx)`, where a second caller must read-compose-set, and forgetting to read silently discards prior values.
+**Decoupled design:** The original proposal merged locals into handler contexts via `messageContext.Value()`. This was rejected due to: staleness bugs (snapshot capture), shadowing confusion, false API symmetry with `ctx.Value()`, and the discovery that third-party interop (OTel, etc.) doesn't work through merge anyway (unexported key types). See [locals.decisions.md](../plans/locals.decisions.md) for the full design evolution.
 
-**Context-on-struct exception:** The Go community recognizes message-on-a-channel as the standard exception to "don't store context in structs" (Brad Fitzpatrick in golang/go#22602; Jack Lindamood; `http.Request` itself). `TypedMessage` is gopipe's request type — equivalent to `http.Request`, which stores a context the same way.
+**Map over context chain:** With decoupling, the internal representation uses `map[any]any` instead of `context.Context` chain — O(1) lookup, enumerable, supports deletion, fewer allocations.
+
+**Context-on-struct exception:** The Go community recognizes message-on-a-channel as the standard exception to "don't store context in structs" (Brad Fitzpatrick in golang/go#22602; Jack Lindamood; `http.Request` itself). While we no longer store a `context.Context`, the principle applies: `TypedMessage` is gopipe's request type — carrying in-process state on it is appropriate.
 
 ## Consequences
 
 **Breaking Changes:**
-- `TypedMessage.Done()` renamed to `Settled()` — callers must update (internal tests only in current tree)
+- `TypedMessage.Done()` renamed to `Settled()` — callers must update
+- `SetValue()`/`Value()` renamed to `SetLocal()`/`Local()`
+- `AttributesFromContext(ctx)` removed — use `MessageFromContext(ctx).Attributes`
+- Locals do not appear in `ctx.Value()` — use `msg.Local(key)` or `MessageFromContext(ctx).Local(key)`
 
 **Benefits:**
 - Single mechanism for all in-process pipeline values (TX, traces, auth, saga)
-- Auto-propagation into handler context — no bridging middleware
-- Zero-cost when unused (nil ctx = no allocation, no lookup)
+- O(1) lookup via map (vs O(N) context chain walk)
+- Zero-cost when unused (nil map = no allocation, no lookup)
 - Values naturally die at broker boundaries (not in `MarshalJSON`/`cloudEvent`)
-- Additive API prevents silent value loss between middleware
+- No staleness bugs (direct map read, not snapshot)
+- No shadowing confusion (locals and context are separate namespaces)
 - `TypedMessage` no longer accidentally satisfies `context.Context`
+- Nil message safety on SetLocal/Local (matching Acking pattern)
 
 **Drawbacks:**
-- `WithValue` is a non-standard method name (`context.WithValue` is a package-level function)
-- Cannot enumerate or delete stored values (inherited from `context.Context`)
-- All handlers see all stored values — no per-router scoping (but adapters that don't look them up are unaffected)
+- Locals not automatically visible in `ctx.Value()` — requires explicit access via message
+- Copy must clone the map (same pattern as Attributes)
 
 ## Links
 
-- Plan: [withvalue](../plans/withvalue.md)
-- Design evolution: [transaction-handling.decisions.md](../plans/transaction-handling.decisions.md)
+- Plan: [locals](../plans/locals.md)
+- Design evolution: [locals.decisions.md](../plans/locals.decisions.md)
+- Prior design analysis: [transaction-handling.decisions.md](../plans/transaction-handling.decisions.md)
 - Related: ADR 0006 (Message Acknowledgment), ADR 0022 (Message Package Redesign)
 - Unblocks: [transaction-handling plan](../plans/transaction-handling.md), [inbox-outbox plan](../plans/inbox-outbox.md)

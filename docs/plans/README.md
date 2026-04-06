@@ -4,6 +4,7 @@
 
 | Plan | Title | Status |
 |------|-------|--------|
+| [locals](locals.md) | Message Locals | Implemented |
 | [0007](0007-cesql-pattern-matching.md) | CESQL Pattern Matching | Proposed |
 | [autoscale-worker-pool](autoscale-worker-pool.md) | Autoscale Worker Pool | Proposed |
 | [transaction-handling](transaction-handling.md) | Transaction Handling | Proposed |

@@ -2,7 +2,7 @@
 
 **Status:** Implemented
 **Related ADRs:** [0025](../adr/0025-message-context-values.md), [0006](../adr/0006-message-acknowledgment.md), [0022](../adr/0022-message-package-redesign.md)
-**Design Evolution:** [withvalue.decisions.md](withvalue.decisions.md), [transaction-handling.decisions.md](transaction-handling.decisions.md)
+**Design Evolution:** [locals.decisions.md](locals.decisions.md), [transaction-handling.decisions.md](transaction-handling.decisions.md)
 **Unblocks:** [transaction-handling](transaction-handling.md), [inbox-outbox](inbox-outbox.md), auth middleware
 
 ## Overview
