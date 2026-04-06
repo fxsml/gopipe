@@ -1,7 +1,7 @@
 # ADR 0026: Acking Middleware Outermost
 
 **Date:** 2026-04-04
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 
