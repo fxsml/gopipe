@@ -53,6 +53,44 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		}
 	})
 
+	t.Run("preserves locals across unmarshal", func(t *testing.T) {
+		registry := FactoryMap{
+			"test.data": func() any { return &PipeTestData{} },
+		}
+		marshaler := NewJSONMarshaler()
+
+		p := NewUnmarshalPipe(registry, marshaler, PipeConfig{})
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		type keyType struct{}
+		raw := &RawMessage{
+			Data:       []byte(`{"name":"test","value":1}`),
+			Attributes: Attributes{"type": "test.data"},
+		}
+		raw.SetLocal(keyType{}, "principal-123")
+
+		in := make(chan *RawMessage, 1)
+		in <- raw
+		close(in)
+
+		out, err := p.Pipe(ctx, in)
+		if err != nil {
+			t.Fatalf("Pipe() error = %v", err)
+		}
+
+		msg := <-out
+		if msg == nil {
+			t.Fatal("expected message, got nil")
+		}
+
+		got := msg.Local(keyType{})
+		if got != "principal-123" {
+			t.Errorf("Local() = %v, want principal-123", got)
+		}
+	})
+
 	t.Run("returns error for unknown type", func(t *testing.T) {
 		registry := FactoryMap{}
 		marshaler := NewJSONMarshaler()
@@ -285,6 +323,34 @@ func TestNewMarshalPipe(t *testing.T) {
 		}
 		if raw.ID() != "123" {
 			t.Errorf("id = %v, want 123", raw.ID())
+		}
+	})
+
+	t.Run("preserves locals across marshal", func(t *testing.T) {
+		marshaler := NewJSONMarshaler()
+
+		p := NewMarshalPipe(marshaler, PipeConfig{})
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		type keyType struct{}
+		msg := &Message{
+			Data:       &PipeTestData{Name: "test", Value: 1},
+			Attributes: Attributes{"type": "test.data"},
+		}
+		msg.SetLocal(keyType{}, "tenant-abc")
+
+		in := make(chan *Message, 1)
+		in <- msg
+		close(in)
+
+		out, _ := p.Pipe(ctx, in)
+		raw := <-out
+
+		got := raw.Local(keyType{})
+		if got != "tenant-abc" {
+			t.Errorf("Local() = %v, want tenant-abc", got)
 		}
 	})
 }
