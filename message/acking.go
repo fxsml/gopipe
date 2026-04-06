@@ -251,7 +251,7 @@ func forwardAckMiddleware() Middleware {
 				len(outputs),
 			)
 
-			// Replace each output's acking with the shared acking
+			// Replace each output's acking with the shared acking.
 			for _, out := range outputs {
 				out.acking = shared
 			}

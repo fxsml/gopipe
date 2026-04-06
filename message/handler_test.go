@@ -155,11 +155,11 @@ func TestNewCommandHandler(t *testing.T) {
 		}
 	})
 
-	t.Run("attributes available in context", func(t *testing.T) {
-		var ctxAttrs Attributes
+	t.Run("attributes available via message in context", func(t *testing.T) {
+		var ctxMsg *Message
 		h := NewCommandHandler(
 			func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
-				ctxAttrs = AttributesFromContext(ctx)
+				ctxMsg = MessageFromContext(ctx)
 				return nil, nil
 			},
 			CommandHandlerConfig{
@@ -177,13 +177,17 @@ func TestNewCommandHandler(t *testing.T) {
 			},
 		}
 
-		_, _ = h.Handle(context.Background(), msg)
+		ctx := msg.Context(context.Background())
+		_, _ = h.Handle(ctx, msg)
 
-		if ctxAttrs["id"] != "123" {
-			t.Errorf("expected id '123' in context, got %v", ctxAttrs["id"])
+		if ctxMsg == nil {
+			t.Fatal("expected message in context")
 		}
-		if ctxAttrs["source"] != "/original" {
-			t.Errorf("expected source '/original' in context, got %v", ctxAttrs["source"])
+		if ctxMsg.Attributes["id"] != "123" {
+			t.Errorf("expected id '123' in context, got %v", ctxMsg.Attributes["id"])
+		}
+		if ctxMsg.Attributes["source"] != "/original" {
+			t.Errorf("expected source '/original' in context, got %v", ctxMsg.Attributes["source"])
 		}
 	})
 

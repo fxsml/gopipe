@@ -179,7 +179,7 @@ func TestAckingTableTests(t *testing.T) {
 				}
 				gotSettled := false
 				select {
-				case <-msg.Done():
+				case <-msg.Settled():
 					gotSettled = true
 				default:
 				}
@@ -191,22 +191,22 @@ func TestAckingTableTests(t *testing.T) {
 				}
 
 				// Check done channel
-				done := msg.Done()
+				done := msg.Settled()
 				if tt.wantDone {
 					if done == nil {
-						t.Error("Done() returned nil, expected channel")
+						t.Error("Settled() returned nil, expected channel")
 					} else {
 						select {
 						case <-done:
 							// OK - channel is closed
 						default:
-							t.Error("Done() channel not closed after settlement")
+							t.Error("Settled() channel not closed after settlement")
 						}
 					}
 				} else if done != nil {
 					select {
 					case <-done:
-						t.Error("Done() channel closed unexpectedly")
+						t.Error("Settled() channel closed unexpectedly")
 					default:
 						// OK - channel not closed
 					}
@@ -324,7 +324,7 @@ func TestAckingTableTests(t *testing.T) {
 				}
 				gotSettled := false
 				select {
-				case <-msgs[0].Done():
+				case <-msgs[0].Settled():
 					gotSettled = true
 				default:
 				}
@@ -335,18 +335,18 @@ func TestAckingTableTests(t *testing.T) {
 					t.Errorf("Err() != nil = %v, want %v", gotErr, tt.wantErr)
 				}
 
-				done := msgs[0].Done()
+				done := msgs[0].Settled()
 				if tt.wantDone {
 					select {
 					case <-done:
 						// OK
 					default:
-						t.Error("Done() channel not closed")
+						t.Error("Settled() channel not closed")
 					}
 				} else {
 					select {
 					case <-done:
-						t.Error("Done() channel closed unexpectedly")
+						t.Error("Settled() channel closed unexpectedly")
 					default:
 						// OK
 					}
@@ -358,7 +358,7 @@ func TestAckingTableTests(t *testing.T) {
 	t.Run("ContextBehavior", func(t *testing.T) {
 		// Context does NOT cancel on message settlement.
 		// Context is for lifecycle (parent cancellation, deadline).
-		// Settlement detection uses msg.Done() directly.
+		// Settlement detection uses msg.Settled() directly.
 		tests := []struct {
 			name        string
 			setup       func() (*Message, func())
@@ -434,7 +434,7 @@ func TestAckingTableTests(t *testing.T) {
 		}
 	})
 
-	t.Run("DoneChannelBehavior", func(t *testing.T) {
+	t.Run("SettledChannelBehavior", func(t *testing.T) {
 		tests := []struct {
 			name       string
 			setup      func() (*Message, func())
@@ -499,13 +499,13 @@ func TestAckingTableTests(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				msg, action := tt.setup()
-				done := msg.Done()
+				done := msg.Settled()
 
 				// Verify not closed before action (if we expect it to close)
 				if tt.wantClosed && done != nil {
 					select {
 					case <-done:
-						t.Error("Done() closed before action")
+						t.Error("Settled() closed before action")
 					default:
 						// OK
 					}
@@ -515,7 +515,7 @@ func TestAckingTableTests(t *testing.T) {
 
 				if done == nil {
 					if tt.wantClosed {
-						t.Error("Done() returned nil, expected channel")
+						t.Error("Settled() returned nil, expected channel")
 					}
 					return
 				}
@@ -523,11 +523,11 @@ func TestAckingTableTests(t *testing.T) {
 				select {
 				case <-done:
 					if !tt.wantClosed {
-						t.Error("Done() closed unexpectedly")
+						t.Error("Settled() closed unexpectedly")
 					}
 				default:
 					if tt.wantClosed {
-						t.Error("Done() not closed after settlement")
+						t.Error("Settled() not closed after settlement")
 					}
 				}
 			})
@@ -633,7 +633,7 @@ func TestAckingCallbackSafety(t *testing.T) {
 			func() {
 				// Try to access acking state from callback
 				select {
-				case <-msg.Done():
+				case <-msg.Settled():
 				default:
 				}
 				close(done)
@@ -688,7 +688,7 @@ func TestAckingCallbackSafety(t *testing.T) {
 			func(err error) {
 				// Access message from nack callback
 				select {
-				case <-msg.Done():
+				case <-msg.Settled():
 				default:
 				}
 				_ = msg.Context(context.Background())
@@ -734,11 +734,11 @@ func TestAckingEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("message with nil acking - Done channel select works", func(t *testing.T) {
+	t.Run("message with nil acking - Settled channel select works", func(t *testing.T) {
 		msg := New("data", nil, nil)
 		select {
-		case <-msg.Done():
-			t.Error("Done() on nil acking should not be closed")
+		case <-msg.Settled():
+			t.Error("Settled() on nil acking should not be closed")
 		default:
 			// OK - nil channel causes default case
 		}
@@ -765,10 +765,10 @@ func TestAckingEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("message with nil acking - Done returns nil", func(t *testing.T) {
+	t.Run("message with nil acking - Settled returns nil", func(t *testing.T) {
 		msg := New("data", nil, nil)
-		if got := msg.Done(); got != nil {
-			t.Errorf("Done() on nil acking = %v, want nil", got)
+		if got := msg.Settled(); got != nil {
+			t.Errorf("Settled() on nil acking = %v, want nil", got)
 		}
 	})
 
@@ -815,7 +815,7 @@ func TestAckingEdgeCases(t *testing.T) {
 			}
 			// Verify done channel was closed despite panic
 			select {
-			case <-msg.Done():
+			case <-msg.Settled():
 				// OK - channel closed as expected
 			default:
 				t.Error("done channel should be closed even after panic")
@@ -839,7 +839,7 @@ func TestAckingEdgeCases(t *testing.T) {
 			}
 			// Verify done channel was closed despite panic
 			select {
-			case <-msg.Done():
+			case <-msg.Settled():
 				// OK - channel closed as expected
 			default:
 				t.Error("done channel should be closed even after panic")
@@ -902,18 +902,18 @@ func TestMessageContextHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("AttributesFromContext returns attributes", func(t *testing.T) {
+	t.Run("attributes accessible via MessageFromContext", func(t *testing.T) {
 		acking := NewAcking(func() {}, func(error) {})
 		attrs := Attributes{"type": "test", "source": "/test"}
 		msg := New("data", attrs, acking)
 		ctx := msg.Context(context.Background())
 
-		got := AttributesFromContext(ctx)
-		if got["type"] != "test" {
-			t.Errorf("AttributesFromContext().type = %v, want test", got["type"])
+		got := MessageFromContext(ctx)
+		if got.Attributes["type"] != "test" {
+			t.Errorf("Attributes.type = %v, want test", got.Attributes["type"])
 		}
-		if got["source"] != "/test" {
-			t.Errorf("AttributesFromContext().source = %v, want /test", got["source"])
+		if got.Attributes["source"] != "/test" {
+			t.Errorf("Attributes.source = %v, want /test", got.Attributes["source"])
 		}
 	})
 
@@ -931,10 +931,9 @@ func TestMessageContextHelpers(t *testing.T) {
 			t.Errorf("MessageFromContext() after ack = %v, want %v", got, msg)
 		}
 
-		// Attributes should still be accessible
-		attrs := AttributesFromContext(ctx)
-		if attrs["key"] != "value" {
-			t.Errorf("AttributesFromContext() after ack = %v, want value", attrs["key"])
+		// Attributes should still be accessible via message
+		if got.Attributes["key"] != "value" {
+			t.Errorf("Attributes after ack = %v, want value", got.Attributes["key"])
 		}
 	})
 }
@@ -1082,33 +1081,33 @@ func TestMessageContextWithParent(t *testing.T) {
 		}
 	})
 
-	t.Run("msg.Done channel closes on settlement (not ctx.Done)", func(t *testing.T) {
+	t.Run("msg.Settled channel closes on settlement (not ctx.Done)", func(t *testing.T) {
 		acking := NewAcking(func() {}, func(error) {})
 		msg := New("data", nil, acking)
 		_ = msg.Context(context.Background())
 
-		// msg.Done() should return non-nil channel
-		done := msg.Done()
+		// msg.Settled() should return non-nil channel
+		done := msg.Settled()
 		if done == nil {
-			t.Fatal("msg.Done() returned nil")
+			t.Fatal("msg.Settled() returned nil")
 		}
 
 		// Should not be closed yet
 		select {
 		case <-done:
-			t.Error("msg.Done() closed before settlement")
+			t.Error("msg.Settled() closed before settlement")
 		default:
 			// OK
 		}
 
 		msg.Ack()
 
-		// msg.Done() should close after settlement
+		// msg.Settled() should close after settlement
 		select {
 		case <-done:
 			// OK
 		case <-time.After(time.Second):
-			t.Error("msg.Done() not closed after settlement")
+			t.Error("msg.Settled() not closed after settlement")
 		}
 	})
 
@@ -1168,12 +1167,12 @@ func TestMessageContextWithParent(t *testing.T) {
 			t.Error("contexts should not be cancelled after settlement (lifecycle separate from settlement)")
 		}
 
-		// Use msg.Done() for settlement detection
+		// Use msg.Settled() for settlement detection
 		select {
-		case <-msg.Done():
-			// OK - settlement detected via msg.Done()
+		case <-msg.Settled():
+			// OK - settlement detected via msg.Settled()
 		default:
-			t.Error("msg.Done() should be closed after settlement")
+			t.Error("msg.Settled() should be closed after settlement")
 		}
 	})
 
@@ -1285,7 +1284,7 @@ func TestAckingStateTransitions(t *testing.T) {
 
 			gotSettled := false
 			select {
-			case <-msg.Done():
+			case <-msg.Settled():
 				gotSettled = true
 			default:
 			}
@@ -1367,7 +1366,7 @@ func TestSharedAckingWithForwardPattern(t *testing.T) {
 		}
 	})
 
-	t.Run("sibling messages detect settlement via Done channel", func(t *testing.T) {
+	t.Run("sibling messages detect settlement via Settled channel", func(t *testing.T) {
 		inputAcking := NewAcking(func() {}, func(error) {})
 		input := New("input", nil, inputAcking)
 
@@ -1380,16 +1379,16 @@ func TestSharedAckingWithForwardPattern(t *testing.T) {
 		out1 := New("out1", nil, outputAcking)
 		out2 := New("out2", nil, outputAcking)
 
-		// Done channels should not be closed yet
+		// Settled channels should not be closed yet
 		select {
-		case <-out1.Done():
-			t.Error("out1.Done() should not be closed before nack")
+		case <-out1.Settled():
+			t.Error("out1.Settled() should not be closed before nack")
 		default:
 			// OK
 		}
 		select {
-		case <-out2.Done():
-			t.Error("out2.Done() should not be closed before nack")
+		case <-out2.Settled():
+			t.Error("out2.Settled() should not be closed before nack")
 		default:
 			// OK
 		}
@@ -1397,23 +1396,23 @@ func TestSharedAckingWithForwardPattern(t *testing.T) {
 		// Nack one output
 		out1.Nack(errors.New("fail"))
 
-		// Both Done channels should close (shared acking)
+		// Both Settled channels should close (shared acking)
 		select {
-		case <-out1.Done():
+		case <-out1.Settled():
 			// OK
 		case <-time.After(time.Second):
-			t.Error("out1.Done() should be closed after nack")
+			t.Error("out1.Settled() should be closed after nack")
 		}
 		select {
-		case <-out2.Done():
+		case <-out2.Settled():
 			// OK
 		case <-time.After(time.Second):
-			t.Error("out2.Done() should be closed after nack (shared acking)")
+			t.Error("out2.Settled() should be closed after nack (shared acking)")
 		}
 
-		// Verify state using Done() + Err()
+		// Verify state using Settled() + Err()
 		select {
-		case <-out1.Done():
+		case <-out1.Settled():
 			if out1.Err() == nil {
 				t.Error("out1 should be nacked")
 			}
@@ -1421,7 +1420,7 @@ func TestSharedAckingWithForwardPattern(t *testing.T) {
 			t.Error("out1 should be settled")
 		}
 		select {
-		case <-out2.Done():
+		case <-out2.Settled():
 			if out2.Err() == nil {
 				t.Error("out2 should be nacked (shared acking)")
 			}
@@ -1477,4 +1476,43 @@ func TestCopyPreservesAcking(t *testing.T) {
 			t.Errorf("ack count = %d, want 1", atomic.LoadInt32(&ackCount))
 		}
 	})
+}
+
+func TestAckMiddlewareDoesNotPropagateLocals(t *testing.T) {
+	type keyType string
+	const keyA keyType = "a"
+
+	buildHandler := func(outputs []*Message) ProcessFunc {
+		return func(ctx context.Context, msg *Message) ([]*Message, error) {
+			return outputs, nil
+		}
+	}
+
+	strategies := []struct {
+		name string
+		mw   func() Middleware
+	}{
+		{"AckForward", forwardAckMiddleware},
+		{"AckOnSuccess", autoAckMiddleware},
+		{"AckManual", manualAckMiddleware},
+	}
+
+	for _, s := range strategies {
+		t.Run(s.name+" does not propagate locals", func(t *testing.T) {
+			in := New("in", nil, NewAcking(func() {}, func(error) {}))
+			in.SetLocal(keyA, "value-a")
+
+			out := New("out", nil, nil)
+
+			handler := s.mw()(buildHandler([]*Message{out}))
+
+			outs, err := handler(context.Background(), in)
+			if err != nil {
+				t.Fatalf("handler returned error: %v", err)
+			}
+			if outs[0].locals != nil {
+				t.Errorf("%s should not propagate locals, got %v", s.name, outs[0].locals)
+			}
+		})
+	}
 }
