@@ -177,7 +177,6 @@ func (m *TypedMessage[T]) Context(parent context.Context) context.Context {
 	return &messageContext{
 		Context: parent,
 		msg:     msg,
-		attrs:   m.Attributes,
 		expiry:  m.ExpiryTime(),
 	}
 }

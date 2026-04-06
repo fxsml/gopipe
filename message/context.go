@@ -21,7 +21,6 @@ const (
 type messageContext struct {
 	context.Context
 	msg    any // *Message or *RawMessage
-	attrs  Attributes
 	expiry time.Time
 }
 
