@@ -1,7 +1,7 @@
 # Plan: Inbox/Outbox Pattern
 
 **Status:** Proposed
-**Depends On:** [withvalue](withvalue.md), [transaction-handling](transaction-handling.md)
+**Depends On:** [locals](locals.md), [transaction-handling](transaction-handling.md)
 
 ## Overview
 

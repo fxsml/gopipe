@@ -98,7 +98,8 @@ engine := message.NewEngine(message.EngineConfig{
 handler := message.NewCommandHandler(
     func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
         // Access message attributes via context if needed:
-        // attrs := message.AttributesFromContext(ctx)
+        // msg := message.MessageFromContext(ctx)
+        // attrs := msg.Attributes
         return []OrderCreated{{OrderID: "123"}}, nil
     },
     message.CommandHandlerConfig{
