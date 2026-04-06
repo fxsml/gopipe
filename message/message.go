@@ -23,10 +23,10 @@ type TypedMessage[T any] struct {
 	// acking coordinates acknowledgment. Can be shared across messages.
 	acking *Acking
 
-	// ctx carries in-process, request-scoped values. It is never serialized
-	// and does not cross broker boundaries. Values are added via SetValue
-	// and auto-propagate into handler contexts created by Context(parent).
-	ctx context.Context
+	// locals carries in-process, request-scoped values. It is never serialized
+	// and does not cross broker boundaries. Values are added via SetLocal
+	// and read via Local. These do NOT merge into contexts created by Context(parent).
+	locals map[any]any
 }
 
 // Message is the internal message type used by handlers and middleware.
@@ -118,35 +118,33 @@ func (m *TypedMessage[T]) Settled() <-chan struct{} {
 	return m.acking.done()
 }
 
-// SetValue binds an in-process value to the message under key.
-// Values auto-propagate into contexts created by Context(parent) and are
-// accessible via ctx.Value(key) in handlers and adapters. They are NOT
-// serialized and do NOT cross broker boundaries. Multiple calls chain:
-// each value is added to the existing context.
-//
-// If the same key exists in both the message and a parent context, the
-// message's value takes precedence during ctx.Value lookups.
+// SetLocal binds an in-process value to the message under key.
+// Locals are NOT serialized and do NOT cross broker boundaries.
+// They are decoupled from contexts: use msg.Local(key) to read them,
+// not ctx.Value(key).
 //
 // Not safe for concurrent use. Follows the single-writer assumption: one
 // worker processes one message at a time (same as Attributes mutation).
-func (m *TypedMessage[T]) SetValue(key, val any) {
-	if m.ctx == nil {
-		m.ctx = context.WithValue(context.Background(), key, val)
-	} else {
-		m.ctx = context.WithValue(m.ctx, key, val)
+func (m *TypedMessage[T]) SetLocal(key, val any) {
+	if m == nil {
+		return
 	}
+	if m.locals == nil {
+		m.locals = make(map[any]any)
+	}
+	m.locals[key] = val
 }
 
-// Value returns a value previously bound via SetValue, or nil if not set.
+// Local returns a value previously bound via SetLocal, or nil if not set.
 //
-// This inspects only the message's own values — it does NOT walk a parent
-// context chain. In handlers, use ctx.Value(key) for the merged view of
-// message values and infrastructure context values.
-func (m *TypedMessage[T]) Value(key any) any {
-	if m.ctx == nil {
+// This inspects only the message's own locals. Locals are decoupled from
+// context: they do not appear in contexts created by Context(parent).
+// Use typed helpers like TxFromMessage(msg) to read specific locals.
+func (m *TypedMessage[T]) Local(key any) any {
+	if m == nil {
 		return nil
 	}
-	return m.ctx.Value(key)
+	return m.locals[key]
 }
 
 // Context returns a context derived from parent with message-specific behavior.
@@ -154,12 +152,14 @@ func (m *TypedMessage[T]) Value(key any) any {
 // The context provides:
 //   - Deadline from minimum of parent deadline and message ExpiryTime
 //   - Message reference via MessageFromContext or RawMessageFromContext
-//   - Attributes via AttributesFromContext
 //   - Parent cancellation propagation
 //
 // Note: This method reports the deadline via ctx.Deadline() but does not
 // create timers or enforce the deadline. Use middleware.Deadline() for
 // enforcement with proper timer cleanup.
+//
+// Locals (SetLocal/Local) are decoupled from context: they do NOT appear
+// in ctx.Value lookups. Use msg.Local(key) to read locals directly.
 //
 // For settlement detection (ack/nack), use msg.Settled() directly.
 // This keeps context cancellation (lifecycle) separate from message
@@ -179,7 +179,6 @@ func (m *TypedMessage[T]) Context(parent context.Context) context.Context {
 		msg:     msg,
 		attrs:   m.Attributes,
 		expiry:  m.ExpiryTime(),
-		ctx:     m.ctx,
 	}
 }
 
@@ -258,14 +257,13 @@ func (m *TypedMessage[T]) ExpiryTime() time.Time {
 }
 
 // Copy creates a new message with different data while preserving
-// attributes (cloned), acknowledgment callbacks (shared), and in-process
-// context values (shared).
+// attributes (cloned), acknowledgment callbacks (shared), and locals (cloned).
 func Copy[In, Out any](msg *TypedMessage[In], data Out) *TypedMessage[Out] {
 	return &TypedMessage[Out]{
 		Data:       data,
 		Attributes: maps.Clone(msg.Attributes),
 		acking:     msg.acking,
-		ctx:        msg.ctx,
+		locals:     maps.Clone(msg.locals),
 	}
 }
 

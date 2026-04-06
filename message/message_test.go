@@ -590,172 +590,148 @@ func TestTime(t *testing.T) {
 	})
 }
 
-func TestSetValue(t *testing.T) {
+func TestSetLocal(t *testing.T) {
 	type keyType string
 	const (
 		keyA keyType = "a"
 		keyB keyType = "b"
-		keyC keyType = "c"
 	)
 
-	t.Run("stores value accessible via Context", func(t *testing.T) {
+	t.Run("stores and retrieves value", func(t *testing.T) {
 		msg := New("data", nil, nil)
-		msg.SetValue(keyA, "value-a")
+		msg.SetLocal(keyA, "value-a")
+
+		if got := msg.Local(keyA); got != "value-a" {
+			t.Errorf("msg.Local(keyA) = %v, want value-a", got)
+		}
+	})
+
+	t.Run("multiple SetLocal calls", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		msg.SetLocal(keyA, "value-a")
+		msg.SetLocal(keyB, "value-b")
+
+		if got := msg.Local(keyA); got != "value-a" {
+			t.Errorf("msg.Local(keyA) = %v, want value-a", got)
+		}
+		if got := msg.Local(keyB); got != "value-b" {
+			t.Errorf("msg.Local(keyB) = %v, want value-b", got)
+		}
+	})
+
+	t.Run("overwrite existing key", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		msg.SetLocal(keyA, "old")
+		msg.SetLocal(keyA, "new")
+
+		if got := msg.Local(keyA); got != "new" {
+			t.Errorf("msg.Local(keyA) = %v, want new", got)
+		}
+	})
+
+	t.Run("Local returns nil for unset key", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		msg.SetLocal(keyA, "value-a")
+
+		if got := msg.Local(keyB); got != nil {
+			t.Errorf("msg.Local(keyB) = %v, want nil", got)
+		}
+	})
+
+	t.Run("Local returns nil when no SetLocal called", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		if got := msg.Local(keyA); got != nil {
+			t.Errorf("msg.Local(keyA) = %v, want nil on empty message", got)
+		}
+	})
+
+	t.Run("zero-cost when unused - nil locals", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		if msg.locals != nil {
+			t.Errorf("msg.locals = %v, want nil when SetLocal not called", msg.locals)
+		}
+	})
+
+	t.Run("locals decoupled from context", func(t *testing.T) {
+		msg := New("data", nil, nil)
+		msg.SetLocal(keyA, "local-a")
 
 		ctx := msg.Context(context.Background())
-		if got := ctx.Value(keyA); got != "value-a" {
-			t.Errorf("ctx.Value(keyA) = %v, want value-a", got)
+		if got := ctx.Value(keyA); got != nil {
+			t.Errorf("ctx.Value(keyA) = %v, want nil (locals are decoupled)", got)
+		}
+		// But readable via message
+		if got := msg.Local(keyA); got != "local-a" {
+			t.Errorf("msg.Local(keyA) = %v, want local-a", got)
 		}
 	})
 
-	t.Run("multiple SetValue calls chain", func(t *testing.T) {
-		msg := New("data", nil, nil)
-		msg.SetValue(keyA, "value-a")
-		msg.SetValue(keyB, "value-b")
-
-		ctx := msg.Context(context.Background())
-		if got := ctx.Value(keyA); got != "value-a" {
-			t.Errorf("ctx.Value(keyA) = %v, want value-a", got)
-		}
-		if got := ctx.Value(keyB); got != "value-b" {
-			t.Errorf("ctx.Value(keyB) = %v, want value-b", got)
-		}
-	})
-
-	t.Run("message value shadows parent context value", func(t *testing.T) {
+	t.Run("context parent values unaffected", func(t *testing.T) {
 		parent := context.WithValue(context.Background(), keyA, "parent-a")
 		msg := New("data", nil, nil)
-		msg.SetValue(keyA, "msg-a")
+		msg.SetLocal(keyA, "local-a")
 
 		ctx := msg.Context(parent)
-		if got := ctx.Value(keyA); got != "msg-a" {
-			t.Errorf("ctx.Value(keyA) = %v, want msg-a (message shadows parent)", got)
-		}
-	})
-
-	t.Run("falls through to parent for unknown keys", func(t *testing.T) {
-		parent := context.WithValue(context.Background(), keyC, "parent-c")
-		msg := New("data", nil, nil)
-		msg.SetValue(keyA, "msg-a")
-
-		ctx := msg.Context(parent)
-		if got := ctx.Value(keyC); got != "parent-c" {
-			t.Errorf("ctx.Value(keyC) = %v, want parent-c", got)
-		}
-	})
-
-	t.Run("zero-cost when unused - nil ctx", func(t *testing.T) {
-		msg := New("data", nil, nil)
-		if msg.ctx != nil {
-			t.Errorf("msg.ctx = %v, want nil when SetValue not called", msg.ctx)
-		}
-
-		parent := context.WithValue(context.Background(), keyA, "parent-a")
-		ctx := msg.Context(parent)
+		// Parent value still visible through context (locals don't shadow)
 		if got := ctx.Value(keyA); got != "parent-a" {
-			t.Errorf("ctx.Value(keyA) = %v, want parent-a", got)
+			t.Errorf("ctx.Value(keyA) = %v, want parent-a (locals don't shadow)", got)
 		}
 	})
 
-	t.Run("Value returns bound values", func(t *testing.T) {
-		msg := New("data", nil, nil)
-		msg.SetValue(keyA, "value-a")
-		msg.SetValue(keyB, "value-b")
-
-		if got := msg.Value(keyA); got != "value-a" {
-			t.Errorf("msg.Value(keyA) = %v, want value-a", got)
-		}
-		if got := msg.Value(keyB); got != "value-b" {
-			t.Errorf("msg.Value(keyB) = %v, want value-b", got)
-		}
-	})
-
-	t.Run("Value returns nil for unset key", func(t *testing.T) {
-		msg := New("data", nil, nil)
-		msg.SetValue(keyA, "value-a")
-
-		if got := msg.Value(keyB); got != nil {
-			t.Errorf("msg.Value(keyB) = %v, want nil", got)
-		}
-	})
-
-	t.Run("Value returns nil when no SetValue called", func(t *testing.T) {
-		msg := New("data", nil, nil)
-		if got := msg.Value(keyA); got != nil {
-			t.Errorf("msg.Value(keyA) = %v, want nil on empty message", got)
-		}
-	})
-
-	t.Run("Value does NOT walk parent context", func(t *testing.T) {
-		// msg.Value is the message-local view. It must not peek into
-		// any parent context — that's ctx.Value's job.
-		msg := New("data", nil, nil)
-		// Don't call SetValue; simulate a parent ctx having the key
-		// by building a messageContext through Context(). msg.Value
-		// should still return nil because the value isn't on the message.
-		parent := context.WithValue(context.Background(), keyA, "parent-a")
-		_ = msg.Context(parent) // would return "parent-a" via ctx.Value
-
-		if got := msg.Value(keyA); got != nil {
-			t.Errorf("msg.Value(keyA) = %v, want nil (message-local only)", got)
-		}
-	})
-
-	t.Run("values not serialized to JSON", func(t *testing.T) {
+	t.Run("locals not serialized to JSON", func(t *testing.T) {
 		msg := New("data", Attributes{AttrType: "test"}, nil)
-		msg.SetValue(keyA, "secret-value")
+		msg.SetLocal(keyA, "secret-value")
 
 		b, err := json.Marshal(msg)
 		if err != nil {
 			t.Fatalf("MarshalJSON failed: %v", err)
 		}
 		if strings.Contains(string(b), "secret-value") {
-			t.Errorf("MarshalJSON leaked ctx value: %s", b)
+			t.Errorf("MarshalJSON leaked local value: %s", b)
 		}
 	})
 
-	t.Run("Copy propagates ctx to output messages", func(t *testing.T) {
+	t.Run("Copy clones locals", func(t *testing.T) {
 		in := New("in", nil, nil)
-		in.SetValue(keyA, "value-a")
+		in.SetLocal(keyA, "value-a")
 
 		out := Copy(in, "out")
 
-		ctx := out.Context(context.Background())
-		if got := ctx.Value(keyA); got != "value-a" {
-			t.Errorf("Copy: ctx.Value(keyA) = %v, want value-a", got)
+		if got := out.Local(keyA); got != "value-a" {
+			t.Errorf("Copy: out.Local(keyA) = %v, want value-a", got)
 		}
 	})
 
-	t.Run("Copy: modifying output ctx does not affect input", func(t *testing.T) {
+	t.Run("Copy: modifying output locals does not affect input", func(t *testing.T) {
 		in := New("in", nil, nil)
-		in.SetValue(keyA, "value-a")
+		in.SetLocal(keyA, "value-a")
 
 		out := Copy(in, "out")
-		out.SetValue(keyB, "value-b")
+		out.SetLocal(keyB, "value-b")
 
-		inCtx := in.Context(context.Background())
-		if got := inCtx.Value(keyB); got != nil {
-			t.Errorf("input leaked output value: got %v", got)
+		if got := in.Local(keyB); got != nil {
+			t.Errorf("input leaked output local: got %v", got)
 		}
-		outCtx := out.Context(context.Background())
-		if got := outCtx.Value(keyA); got != "value-a" {
-			t.Errorf("output lost inherited value: got %v", got)
+		if got := out.Local(keyA); got != "value-a" {
+			t.Errorf("output lost inherited local: got %v", got)
 		}
 	})
 
-	t.Run("Context still provides message reference and attributes", func(t *testing.T) {
+	t.Run("Context still provides message reference", func(t *testing.T) {
 		msg := New("data", Attributes{AttrType: "test"}, nil)
-		msg.SetValue(keyA, "value-a")
+		msg.SetLocal(keyA, "value-a")
 
 		ctx := msg.Context(context.Background())
 		if FromContext(ctx) != msg {
 			t.Error("MessageFromContext did not return original message")
 		}
-		if attrs := AttributesFromContext(ctx); attrs[AttrType] != "test" {
-			t.Errorf("AttributesFromContext lost data: %v", attrs)
-		}
-		if got := ctx.Value(keyA); got != "value-a" {
-			t.Errorf("ctx.Value(keyA) = %v, want value-a", got)
+	})
+
+	t.Run("nil message safety", func(t *testing.T) {
+		var msg *Message
+		msg.SetLocal(keyA, "value") // should not panic
+		if got := msg.Local(keyA); got != nil {
+			t.Errorf("nil msg.Local(keyA) = %v, want nil", got)
 		}
 	})
 }

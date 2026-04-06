@@ -902,18 +902,18 @@ func TestMessageContextHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("AttributesFromContext returns attributes", func(t *testing.T) {
+	t.Run("attributes accessible via MessageFromContext", func(t *testing.T) {
 		acking := NewAcking(func() {}, func(error) {})
 		attrs := Attributes{"type": "test", "source": "/test"}
 		msg := New("data", attrs, acking)
 		ctx := msg.Context(context.Background())
 
-		got := AttributesFromContext(ctx)
-		if got["type"] != "test" {
-			t.Errorf("AttributesFromContext().type = %v, want test", got["type"])
+		got := MessageFromContext(ctx)
+		if got.Attributes["type"] != "test" {
+			t.Errorf("Attributes.type = %v, want test", got.Attributes["type"])
 		}
-		if got["source"] != "/test" {
-			t.Errorf("AttributesFromContext().source = %v, want /test", got["source"])
+		if got.Attributes["source"] != "/test" {
+			t.Errorf("Attributes.source = %v, want /test", got.Attributes["source"])
 		}
 	})
 
@@ -931,10 +931,9 @@ func TestMessageContextHelpers(t *testing.T) {
 			t.Errorf("MessageFromContext() after ack = %v, want %v", got, msg)
 		}
 
-		// Attributes should still be accessible
-		attrs := AttributesFromContext(ctx)
-		if attrs["key"] != "value" {
-			t.Errorf("AttributesFromContext() after ack = %v, want value", attrs["key"])
+		// Attributes should still be accessible via message
+		if got.Attributes["key"] != "value" {
+			t.Errorf("Attributes after ack = %v, want value", got.Attributes["key"])
 		}
 	})
 }
@@ -1479,7 +1478,7 @@ func TestCopyPreservesAcking(t *testing.T) {
 	})
 }
 
-func TestForwardAckContextPropagation(t *testing.T) {
+func TestForwardAckLocalsPropagation(t *testing.T) {
 	type keyType string
 	const keyA keyType = "a"
 	const keyB keyType = "b"
@@ -1490,9 +1489,9 @@ func TestForwardAckContextPropagation(t *testing.T) {
 		}
 	}
 
-	t.Run("outputs inherit input ctx values under AckForward", func(t *testing.T) {
+	t.Run("outputs inherit input locals under AckForward", func(t *testing.T) {
 		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.SetValue(keyA, "value-a")
+		in.SetLocal(keyA, "value-a")
 
 		out1 := New("out1", nil, nil)
 		out2 := New("out2", nil, nil)
@@ -1509,19 +1508,18 @@ func TestForwardAckContextPropagation(t *testing.T) {
 		}
 
 		for i, o := range outs {
-			ctx := o.Context(context.Background())
-			if got := ctx.Value(keyA); got != "value-a" {
-				t.Errorf("output %d: ctx.Value(keyA) = %v, want value-a", i, got)
+			if got := o.Local(keyA); got != "value-a" {
+				t.Errorf("output %d: Local(keyA) = %v, want value-a", i, got)
 			}
 		}
 	})
 
-	t.Run("handler-set output ctx is not overwritten", func(t *testing.T) {
+	t.Run("handler-set output locals are not overwritten", func(t *testing.T) {
 		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.SetValue(keyA, "input-a")
+		in.SetLocal(keyA, "input-a")
 
 		out := New("out", nil, nil)
-		out.SetValue(keyA, "handler-a") // handler set its own value
+		out.SetLocal(keyA, "handler-a") // handler set its own value
 
 		mw := forwardAckMiddleware()
 		handler := mw(buildHandler([]*Message{out}))
@@ -1531,15 +1529,14 @@ func TestForwardAckContextPropagation(t *testing.T) {
 			t.Fatalf("handler returned error: %v", err)
 		}
 
-		ctx := outs[0].Context(context.Background())
-		if got := ctx.Value(keyA); got != "handler-a" {
+		if got := outs[0].Local(keyA); got != "handler-a" {
 			t.Errorf("handler value overwritten: got %v, want handler-a", got)
 		}
 	})
 
-	t.Run("no propagation when input has no ctx", func(t *testing.T) {
+	t.Run("no propagation when input has no locals", func(t *testing.T) {
 		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		// no SetValue called
+		// no SetLocal called
 		out := New("out", nil, nil)
 
 		mw := forwardAckMiddleware()
@@ -1549,14 +1546,14 @@ func TestForwardAckContextPropagation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handler returned error: %v", err)
 		}
-		if outs[0].ctx != nil {
-			t.Errorf("output ctx should remain nil, got %v", outs[0].ctx)
+		if outs[0].locals != nil {
+			t.Errorf("output locals should remain nil, got %v", outs[0].locals)
 		}
 	})
 
-	t.Run("AckOnSuccess does not propagate ctx", func(t *testing.T) {
+	t.Run("AckOnSuccess does not propagate locals", func(t *testing.T) {
 		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.SetValue(keyA, "value-a")
+		in.SetLocal(keyA, "value-a")
 
 		out := New("out", nil, nil)
 
@@ -1567,14 +1564,14 @@ func TestForwardAckContextPropagation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handler returned error: %v", err)
 		}
-		if outs[0].ctx != nil {
-			t.Errorf("AckOnSuccess should not propagate ctx, got %v", outs[0].ctx)
+		if outs[0].locals != nil {
+			t.Errorf("AckOnSuccess should not propagate locals, got %v", outs[0].locals)
 		}
 	})
 
-	t.Run("AckManual does not propagate ctx", func(t *testing.T) {
+	t.Run("AckManual does not propagate locals", func(t *testing.T) {
 		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.SetValue(keyA, "value-a")
+		in.SetLocal(keyA, "value-a")
 
 		out := New("out", nil, nil)
 
@@ -1585,19 +1582,17 @@ func TestForwardAckContextPropagation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handler returned error: %v", err)
 		}
-		if outs[0].ctx != nil {
-			t.Errorf("AckManual should not propagate ctx, got %v", outs[0].ctx)
+		if outs[0].locals != nil {
+			t.Errorf("AckManual should not propagate locals, got %v", outs[0].locals)
 		}
 	})
 
-	t.Run("keyB from input propagates, handler keyA preserved", func(t *testing.T) {
+	t.Run("propagated locals are cloned (independent)", func(t *testing.T) {
 		in := New("in", nil, NewAcking(func() {}, func(error) {}))
-		in.SetValue(keyA, "input-a")
-		in.SetValue(keyB, "input-b")
+		in.SetLocal(keyA, "input-a")
+		in.SetLocal(keyB, "input-b")
 
 		out := New("out", nil, nil)
-		// Handler sets only keyA on output; keyB should come from input via forwarding
-		out.SetValue(keyA, "handler-a")
 
 		mw := forwardAckMiddleware()
 		handler := mw(buildHandler([]*Message{out}))
@@ -1607,15 +1602,10 @@ func TestForwardAckContextPropagation(t *testing.T) {
 			t.Fatalf("handler returned error: %v", err)
 		}
 
-		ctx := outs[0].Context(context.Background())
-		// Handler-set ctx means the whole input ctx is NOT merged - per design,
-		// we preserve the handler's entire ctx chain when out.ctx != nil.
-		if got := ctx.Value(keyA); got != "handler-a" {
-			t.Errorf("keyA: got %v, want handler-a", got)
-		}
-		// keyB only exists on input ctx, not output ctx
-		if got := ctx.Value(keyB); got != nil {
-			t.Errorf("keyB should not be on output (handler owns ctx chain): got %v", got)
+		// Mutating output locals should not affect input
+		outs[0].SetLocal(keyA, "modified")
+		if got := in.Local(keyA); got != "input-a" {
+			t.Errorf("input local mutated: got %v, want input-a", got)
 		}
 	})
 }

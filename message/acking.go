@@ -2,6 +2,7 @@ package message
 
 import (
 	"context"
+	"maps"
 	"sync"
 )
 
@@ -252,12 +253,12 @@ func forwardAckMiddleware() Middleware {
 			)
 
 			// Replace each output's acking with the shared acking, and
-			// propagate the input's in-process context values to outputs
-			// that don't have their own. Handler-set values are preserved.
+			// propagate the input's locals to outputs that don't have
+			// their own. Handler-set locals are preserved.
 			for _, out := range outputs {
 				out.acking = shared
-				if msg.ctx != nil && out.ctx == nil {
-					out.ctx = msg.ctx
+				if msg.locals != nil && out.locals == nil {
+					out.locals = maps.Clone(msg.locals)
 				}
 			}
 
