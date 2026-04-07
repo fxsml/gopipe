@@ -7,6 +7,7 @@ require (
 	github.com/fxsml/gopipe/channel v0.16.0
 	github.com/fxsml/gopipe/pipe v0.16.0
 	github.com/google/uuid v1.6.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 )
 
 require (
@@ -15,6 +16,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
+	golang.org/x/text v0.14.0 // indirect
 )
 
 replace github.com/fxsml/gopipe/pipe => ../pipe
