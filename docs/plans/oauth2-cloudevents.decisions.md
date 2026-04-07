@@ -84,7 +84,7 @@ Clear, explicit, no new types to learn. The user controls the claims type. **Cut
 
 ### `MessageEnricher` Named Type
 
-`func(*http.Request, *message.RawMessage)` inline in the config is sufficient. Not an interface, not reused elsewhere. **Cut** the named type — keep it as an anonymous function type on the config field.
+`func(*http.Request, []*message.RawMessage)` inline in the config is sufficient. Not an interface, not reused elsewhere. **Cut** the named type — keep it as an anonymous function type on the config field. The slice-based signature makes both `Enricher` and `Validator` transparent about HTTP request cardinality.
 
 ### Publisher `TokenSource`
 
@@ -124,7 +124,8 @@ The enricher is opt-in, explicit about what crosses the HTTP→message boundary,
 type SubscriberConfig struct {
     BufferSize int
     AckTimeout time.Duration
-    Enricher   func(*http.Request, *message.RawMessage) // optional
+    Validator  func(*http.Request, []*message.RawMessage) error // optional
+    Enricher   func(*http.Request, []*message.RawMessage)       // optional
 }
 ```
 
@@ -133,6 +134,7 @@ type SubscriberConfig struct {
 | Component | API |
 |-----------|-----|
 | Authentication | None — external HTTP middleware or sidecar |
+| Validation | `SubscriberConfig.Validator` — one config field |
 | Propagation | `SubscriberConfig.Enricher` — one config field |
 | Authorization | None — user writes a `message.Middleware` |
 

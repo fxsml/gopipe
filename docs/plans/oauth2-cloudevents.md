@@ -70,15 +70,19 @@ One new config field. The enricher runs after message creation, before channel d
 type SubscriberConfig struct {
     BufferSize int
     AckTimeout time.Duration
-    Enricher   func(*http.Request, *message.RawMessage) // optional
+    Validator  func(*http.Request, []*message.RawMessage) error // optional
+    Enricher   func(*http.Request, []*message.RawMessage)       // optional
 }
 ```
 
-In `ServeHTTP`, after `ce.FromCloudEvent`:
+In `ServeHTTP`, after creating all messages from `ce.FromCloudEvent`:
 
 ```go
+if s.cfg.Validator != nil {
+    if err := s.cfg.Validator(r, msgs); err != nil { /* nack all, return HTTP error */ }
+}
 if s.cfg.Enricher != nil {
-    s.cfg.Enricher(r, msg)
+    s.cfg.Enricher(r, msgs)
 }
 ```
 
@@ -86,11 +90,13 @@ Usage (sidecar scenario — claims in headers):
 
 ```go
 subscriber := http.NewSubscriber(http.SubscriberConfig{
-    Enricher: func(r *http.Request, msg *message.RawMessage) {
-        msg.SetLocal(principalKey, Principal{
-            Subject: r.Header.Get("X-Auth-Subject"),
-            Scopes:  strings.Split(r.Header.Get("X-Auth-Scopes"), ","),
-        })
+    Enricher: func(r *http.Request, msgs []*message.RawMessage) {
+        for _, msg := range msgs {
+            msg.SetLocal(principalKey, Principal{
+                Subject: r.Header.Get("X-Auth-Subject"),
+                Scopes:  strings.Split(r.Header.Get("X-Auth-Scopes"), ","),
+            })
+        }
     },
 })
 ```
@@ -99,9 +105,11 @@ Usage (application middleware scenario — claims in context):
 
 ```go
 subscriber := http.NewSubscriber(http.SubscriberConfig{
-    Enricher: func(r *http.Request, msg *message.RawMessage) {
+    Enricher: func(r *http.Request, msgs []*message.RawMessage) {
         claims, _ := authn.ClaimsFromContext(r.Context())
-        msg.SetLocal(principalKey, claims)
+        for _, msg := range msgs {
+            msg.SetLocal(principalKey, claims)
+        }
     },
 })
 ```
@@ -142,7 +150,7 @@ Client → Envoy (validates JWT, injects X-Auth-* headers) → Pod
            │
     Subscriber.ServeHTTP
            │
-    Enricher: msg.SetLocal(principalKey, Principal{...})
+    Enricher: for each msg → msg.SetLocal(principalKey, Principal{...})
            │
     UnmarshalPipe (preserves locals)
            │
@@ -193,10 +201,10 @@ return []*Message{{
 - `message/http/subscriber.go` — add `Enricher` field to config, call in `ServeHTTP`
 
 **Acceptance Criteria:**
-- [ ] Enricher called once per message after creation, before channel delivery
-- [ ] Enricher has access to `*http.Request` and `*message.RawMessage`
+- [ ] Enricher called with full message slice after Validator, before channel delivery
+- [ ] Enricher has access to `*http.Request` and `[]*message.RawMessage`
 - [ ] Nil enricher is no-op (existing behavior unchanged)
-- [ ] Batch mode: enricher called per message, same request
+- [ ] Validator called before Enricher; on error, all messages nacked
 
 ## Implementation Order
 
