@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -385,8 +386,10 @@ func TestSubscriber_Enricher(t *testing.T) {
 
 		sub := NewSubscriber(SubscriberConfig{
 			AckTimeout: time.Second,
-			Enricher: func(r *http.Request, msg *message.RawMessage) {
-				msg.SetLocal(keyType{}, r.Header.Get("X-Tenant-ID"))
+			Enricher: func(r *http.Request, msgs []*message.RawMessage) {
+				for _, msg := range msgs {
+					msg.SetLocal(keyType{}, r.Header.Get("X-Tenant-ID"))
+				}
 			},
 		})
 		ctx, cancel := context.WithCancel(context.Background())
@@ -416,15 +419,15 @@ func TestSubscriber_Enricher(t *testing.T) {
 		}
 	})
 
-	t.Run("enricher called per message in batch", func(t *testing.T) {
+	t.Run("enricher receives full batch slice", func(t *testing.T) {
 		type keyType struct{}
-		var count int
 
 		sub := NewSubscriber(SubscriberConfig{
 			AckTimeout: time.Second,
-			Enricher: func(r *http.Request, msg *message.RawMessage) {
-				count++
-				msg.SetLocal(keyType{}, count)
+			Enricher: func(r *http.Request, msgs []*message.RawMessage) {
+				for i, msg := range msgs {
+					msg.SetLocal(keyType{}, i+1)
+				}
 			},
 		})
 		ctx, cancel := context.WithCancel(context.Background())
@@ -451,9 +454,6 @@ func TestSubscriber_Enricher(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
 		}
-		if count != 2 {
-			t.Errorf("enricher called %d times, want 2", count)
-		}
 	})
 
 	t.Run("nil enricher is no-op", func(t *testing.T) {
@@ -476,6 +476,234 @@ func TestSubscriber_Enricher(t *testing.T) {
 
 		if w.Code != http.StatusOK {
 			t.Errorf("expected %d, got %d", http.StatusOK, w.Code)
+		}
+	})
+}
+
+// statusError is a test helper that implements StatusCoder.
+type statusError struct {
+	code int
+	msg  string
+}
+
+func (e *statusError) Error() string    { return e.msg }
+func (e *statusError) StatusCode() int  { return e.code }
+
+func TestSubscriber_Validator(t *testing.T) {
+	t.Run("nil validator is no-op", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
+
+		go func() {
+			msg := <-ch
+			msg.Ack()
+		}()
+
+		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected %d, got %d", http.StatusOK, w.Code)
+		}
+	})
+
+	t.Run("validator error returns 400 by default", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{
+			AckTimeout: time.Second,
+			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+				return errors.New("invalid payload")
+			},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		_, _ = sub.Subscribe(ctx)
+
+		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected %d, got %d", http.StatusBadRequest, w.Code)
+		}
+	})
+
+	t.Run("validator error with StatusCoder uses custom status", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{
+			AckTimeout: time.Second,
+			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+				return &statusError{code: http.StatusForbidden, msg: "forbidden"}
+			},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		_, _ = sub.Subscribe(ctx)
+
+		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected %d, got %d", http.StatusForbidden, w.Code)
+		}
+	})
+
+	t.Run("validator wrapped error with StatusCoder unwraps correctly", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{
+			AckTimeout: time.Second,
+			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+				return fmt.Errorf("validation: %w", &statusError{code: http.StatusForbidden, msg: "forbidden"})
+			},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		_, _ = sub.Subscribe(ctx)
+
+		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected %d, got %d", http.StatusForbidden, w.Code)
+		}
+	})
+
+	t.Run("validator error nacks all messages in batch", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{
+			AckTimeout: time.Second,
+			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+				if len(msgs) != 2 {
+					t.Errorf("expected 2 messages, got %d", len(msgs))
+				}
+				return errors.New("batch rejected")
+			},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		_, _ = sub.Subscribe(ctx)
+
+		body := []byte(`[
+			{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}},
+			{"specversion":"1.0","id":"2","type":"test","source":"/test","data":{}}
+		]`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentTypeCloudEventsBatchJSON)
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected %d, got %d", http.StatusBadRequest, w.Code)
+		}
+	})
+
+	t.Run("validator success allows delivery", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{
+			AckTimeout: time.Second,
+			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+				return nil // pass
+			},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
+
+		go func() {
+			msg := <-ch
+			msg.Ack()
+		}()
+
+		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected %d, got %d", http.StatusOK, w.Code)
+		}
+	})
+
+	t.Run("validator runs before enricher", func(t *testing.T) {
+		var order []string
+
+		sub := NewSubscriber(SubscriberConfig{
+			AckTimeout: time.Second,
+			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+				order = append(order, "validator")
+				return nil
+			},
+			Enricher: func(r *http.Request, msgs []*message.RawMessage) {
+				order = append(order, "enricher")
+			},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
+
+		go func() {
+			msg := <-ch
+			msg.Ack()
+		}()
+
+		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected %d, got %d", http.StatusOK, w.Code)
+		}
+		if len(order) != 2 || order[0] != "validator" || order[1] != "enricher" {
+			t.Errorf("expected [validator enricher], got %v", order)
+		}
+	})
+
+	t.Run("validator error skips enricher", func(t *testing.T) {
+		enricherCalled := false
+
+		sub := NewSubscriber(SubscriberConfig{
+			AckTimeout: time.Second,
+			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+				return errors.New("rejected")
+			},
+			Enricher: func(r *http.Request, msgs []*message.RawMessage) {
+				enricherCalled = true
+			},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		_, _ = sub.Subscribe(ctx)
+
+		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+		w := httptest.NewRecorder()
+
+		sub.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected %d, got %d", http.StatusBadRequest, w.Code)
+		}
+		if enricherCalled {
+			t.Error("enricher should not be called when validator fails")
 		}
 	})
 }

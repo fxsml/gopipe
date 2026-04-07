@@ -9,10 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **message/http:** `SubscriberConfig.Validator` callback for validating parsed messages before delivery
+  - Called after message creation, before Enricher and channel delivery
+  - Receives the full `[]*message.RawMessage` slice and `*http.Request`
+  - On error, all messages are nacked and an HTTP error is returned
+  - Errors implementing `StatusCoder` interface control the HTTP status code; otherwise defaults to 400
 - **message/http:** `SubscriberConfig.Enricher` callback for bridging HTTP request data into message locals
-  - Called after message creation, before channel delivery
+  - Called after Validator, before channel delivery
+  - Receives the full `[]*message.RawMessage` slice and `*http.Request`
   - Enables auth claims propagation from HTTP middleware (e.g., sidecar) into messages via `SetLocal`
-  - For batch requests, called per message with the same `*http.Request`
   - Optional — nil enricher is a no-op
 - **message:** `SetLocal(key, val)` / `Local(key)` for in-process context propagation
   - Message-local values via `map[any]any`, never serialized, never crosses broker boundaries
