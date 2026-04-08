@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/cloudevents/sdk-go/v2/binding"
 	"github.com/cloudevents/sdk-go/v2/protocol"
@@ -23,6 +24,11 @@ type SubscriberConfig struct {
 	ErrorHandler func(err error)
 	// Logger is used for logging (default: slog.Default()).
 	Logger message.Logger
+	// CleanupHandler is called when the subscriber finishes (context cancels or receiver returns EOF).
+	// Use it to close underlying protocol-layer resources like AMQP receivers.
+	CleanupHandler func(ctx context.Context)
+	// CleanupTimeout sets the timeout for cleanup operations (default: 0, no timeout).
+	CleanupTimeout time.Duration
 }
 
 // Subscriber wraps a CloudEvents protocol.Receiver as a gopipe input source.
@@ -64,6 +70,8 @@ func NewSubscriber(receiver protocol.Receiver, cfg SubscriberConfig) *Subscriber
 			}
 		},
 	}
+	pipeCfg.CleanupHandler = cfg.CleanupHandler
+	pipeCfg.CleanupTimeout = cfg.CleanupTimeout
 	if pipeCfg.Concurrency <= 0 {
 		pipeCfg.Concurrency = 1
 	}

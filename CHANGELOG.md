@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Receives the wrapped error containing `RetryState`, extractable via `RetryStateFromError`
   - Not called for non-retryable errors (`ErrRetryNotRetryable`) or context cancellation
   - Eliminates need for wrapper middleware to detect retry exhaustion
+- **message/cloudevents:** `CleanupHandler` on `PublisherConfig` and `SubscriberConfig`
+  - `CleanupHandler func(ctx context.Context)` — same signature as `pipe.Config.CleanupHandler`
+  - `CleanupTimeout time.Duration` — same as `pipe.Config.CleanupTimeout`
+  - Called when publisher/subscriber finishes (input channel closes, context cancels, or receiver returns EOF)
+  - Eliminates manual resource tracking for protocol-layer resources (e.g., AMQP senders/receivers)
 - **message:** `DotNaming` strategy for dot-separated event types (`OrderCreated` → `"order.created"`)
 - **message/http:** `SubscriberConfig.Validator` callback for validating parsed messages before delivery
   - Called after message creation, before Enricher and channel delivery
