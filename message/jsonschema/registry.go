@@ -104,6 +104,9 @@ func NewRegistry(cfg Config) *Registry {
 
 // Register associates a JSON Schema with a CloudEvents type string.
 // No Go type is tracked, so NewInput returns nil for this event type.
+// Passing this Registry to UnmarshalPipe will cause Register-only types
+// to be rejected with ErrUnknownType, which is expected — proxy
+// scenarios should use NewValidationMiddleware instead of UnmarshalPipe.
 //
 // Use this for proxy scenarios where messages are validated and forwarded
 // without unmarshaling into Go structs:
@@ -240,7 +243,9 @@ func (r *Registry) Schemas() json.RawMessage {
 // NewInput creates a typed instance for the given CloudEvents type.
 // Implements message.InputRegistry.
 //
-// Returns nil if no Go type was registered for the CloudEvents type.
+// Returns nil when the event type was registered via Register (type-free)
+// or when the event type is not registered at all. Only types added
+// via RegisterType produce a non-nil instance.
 func (r *Registry) NewInput(eventType string) any {
 	r.mu.RLock()
 	t, ok := r.types[eventType]
