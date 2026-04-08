@@ -48,7 +48,7 @@ type NamingStrategy interface {
     TypeName(t reflect.Type) string  // Go type → CE type
 }
 
-var KebabNaming NamingStrategy   // OrderCreated → "order.created"
+var DotNaming NamingStrategy   // OrderCreated → "order.created"
 var SnakeNaming NamingStrategy   // OrderCreated → "order_created"
 ```
 
@@ -72,7 +72,7 @@ func (s snakeNaming) TypeName(t reflect.Type) string {
 
 **Used by handler constructors:**
 ```go
-handler := message.NewHandler(processOrder, message.KebabNaming)
+handler := message.NewHandler(processOrder, message.DotNaming)
 // handler.EventType() returns "order.created"
 ```
 
@@ -94,7 +94,7 @@ handler := message.NewHandler(
     func(ctx context.Context, msg *Message[OrderCreated]) ([]*RawMessage, error) {
         // ...
     },
-    message.KebabNaming,  // derives EventType from OrderCreated
+    message.DotNaming,  // derives EventType from OrderCreated
 )
 // handler.EventType() returns "order.created"
 // handler.NewInput() returns *OrderCreated for unmarshaling
@@ -121,7 +121,7 @@ marshaler.Unmarshal(data, instance)
 |------|-----------|-------|
 | `message/marshaler.go` | Marshaler | Interface definition |
 | `message/json_marshaler.go` | JSONMarshaler | JSON implementation |
-| `message/naming.go` | NamingStrategy | Interface, KebabNaming, SnakeNaming |
+| `message/naming.go` | NamingStrategy | Interface, DotNaming, SnakeNaming |
 
 ## Test Plan
 
@@ -132,8 +132,8 @@ marshaler.Unmarshal(data, instance)
 4. Round-trip: Marshal then Unmarshal preserves data
 
 ### NamingStrategy Tests
-5. KebabNaming: OrderCreated → "order.created"
-6. KebabNaming: CreateOrderCommand → "create.order.command"
+5. DotNaming: OrderCreated → "order.created"
+6. DotNaming: CreateOrderCommand → "create.order.command"
 7. SnakeNaming: OrderCreated → "order_created"
 8. SnakeNaming: CreateOrderCommand → "create_order_command"
 9. Handles edge cases: ID, URL, HTTPRequest
@@ -144,7 +144,7 @@ marshaler.Unmarshal(data, instance)
 - [ ] Marshaler interface with Marshal, Unmarshal, DataContentType
 - [ ] JSONMarshaler implements Marshaler
 - [ ] NamingStrategy interface with TypeName
-- [ ] KebabNaming implementation
+- [ ] DotNaming implementation
 - [ ] SnakeNaming implementation
 - [ ] Tests pass (`make test`)
 - [ ] Build passes (`make build && make vet`)

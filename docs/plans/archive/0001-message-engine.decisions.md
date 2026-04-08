@@ -151,13 +151,13 @@ type NamingStrategy interface {
     TypeName(t reflect.Type) string  // Go type → CE type
 }
 
-var KebabNaming NamingStrategy   // OrderCreated → "order.created"
+var DotNaming NamingStrategy   // OrderCreated → "order.created"
 var SnakeNaming NamingStrategy   // OrderCreated → "order_created"
 ```
 
 **Handler registration flow:**
 ```go
-handler := message.NewHandler(processOrder, message.KebabNaming)
+handler := message.NewHandler(processOrder, message.DotNaming)
 // handler.EventType() returns "order.created"
 // handler.NewInput() returns *OrderCreated for unmarshaling
 
@@ -212,7 +212,7 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{
         Source: "/orders-service",
-        Naming: message.KebabNaming,
+        Naming: message.DotNaming,
     },
 )
 // handler.EventType() returns "create.order" (from CreateOrder)
@@ -245,7 +245,7 @@ handler := message.NewHandler(
             }),
         }, nil
     },
-    message.KebabNaming,  // derives handler.EventType() from OrderCreated
+    message.DotNaming,  // derives handler.EventType() from OrderCreated
 )
 // handler.EventType() returns "order.created"
 // handler.NewInput() returns *OrderCreated for unmarshaling
@@ -373,7 +373,7 @@ Response: handler → B.post → A.post
 
 **Ingress (CE type → handler):**
 ```go
-handler := message.NewHandler(processOrder, message.KebabNaming)
+handler := message.NewHandler(processOrder, message.DotNaming)
 // handler.EventType() returns "order.created"
 // handler.NewInput() returns *OrderCreated for unmarshaling
 
@@ -421,7 +421,7 @@ type NamingStrategy interface {
     TypeName(t reflect.Type) string  // Go type → CE type
 }
 
-var KebabNaming NamingStrategy   // OrderCreated → "order.created"
+var DotNaming NamingStrategy   // OrderCreated → "order.created"
 var SnakeNaming NamingStrategy   // OrderCreated → "order_created"
 ```
 
@@ -562,7 +562,7 @@ Core components are well-defined:
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| NamingStrategy | ✅ Ready | Standalone utility, KebabNaming, SnakeNaming |
+| NamingStrategy | ✅ Ready | Standalone utility, DotNaming, SnakeNaming |
 | Marshaler | ✅ Ready | Pure serialization interface |
 | JSONMarshaler | ✅ Ready | JSON implementation |
 | Matcher | ✅ Ready | Interface in message/, implementations in match/ |
@@ -582,7 +582,7 @@ Core components are well-defined:
 
 ## Implementation Order
 
-1. `message/naming.go` - NamingStrategy interface, KebabNaming, SnakeNaming
+1. `message/naming.go` - NamingStrategy interface, DotNaming, SnakeNaming
 2. `message/marshaler.go` - Marshaler interface
 3. `message/json_marshaler.go` - JSONMarshaler implementation
 4. `message/matcher.go` - Matcher interface

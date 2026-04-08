@@ -46,7 +46,7 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{
         Source: "/orders",
-        Naming: message.KebabNaming,
+        Naming: message.DotNaming,
     },
 )
 engine.AddHandler("orders", nil, handler)
@@ -85,7 +85,7 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{
         Source: "/orders",
-        Naming: message.KebabNaming,
+        Naming: message.DotNaming,
     },
 )
 engine.AddHandler("orders", nil, handler)
@@ -185,7 +185,7 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{
         Source: "/orders",
-        Naming: message.KebabNaming,
+        Naming: message.DotNaming,
     },
 )
 ```

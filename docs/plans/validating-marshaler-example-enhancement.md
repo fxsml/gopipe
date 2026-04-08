@@ -150,7 +150,7 @@ func main() {
         },
         message.CommandHandlerConfig{
             Source: "/order-processor",
-            Naming: message.KebabNaming,
+            Naming: message.DotNaming,
         },
     ))
 

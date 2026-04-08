@@ -33,7 +33,7 @@ type Registry struct {
 }
 
 type Config struct {
-    Naming    message.EventTypeNaming              // Default: KebabNaming
+    Naming    message.EventTypeNaming              // Default: DotNaming
     SchemaURI func(eventType string) string        // Default: urn:gopipe:schema:cloudevents:{eventType}
 }
 
@@ -87,7 +87,7 @@ unmarshalPipe.Use(jsonschema.NewInputValidationMiddleware(registry))
 
 ```go
 registry := jsonschema.NewRegistry(jsonschema.Config{
-    Naming: message.KebabNaming,
+    Naming: message.DotNaming,
 })
 registry.MustRegisterType(CreateOrder{}, orderSchema)
 // Derives "create.order" automatically

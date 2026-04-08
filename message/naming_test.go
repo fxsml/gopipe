@@ -12,7 +12,7 @@ type ID struct{}
 type IOBroker struct{}
 type XMLHTTPRequest struct{}
 
-func TestKebabNaming(t *testing.T) {
+func TestDotNaming(t *testing.T) {
 	tests := []struct {
 		input    any
 		expected string
@@ -23,6 +23,29 @@ func TestKebabNaming(t *testing.T) {
 		{ID{}, "id"},
 		{IOBroker{}, "io.broker"},
 		{XMLHTTPRequest{}, "xmlhttp.request"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			result := DotNaming.EventType(reflect.TypeOf(tt.input))
+			if result != tt.expected {
+				t.Errorf("DotNaming(%T) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestKebabNaming(t *testing.T) {
+	tests := []struct {
+		input    any
+		expected string
+	}{
+		{OrderCreated{}, "order-created"},
+		{UserSignedUp{}, "user-signed-up"},
+		{HTTPRequest{}, "http-request"},
+		{ID{}, "id"},
+		{IOBroker{}, "io-broker"},
+		{XMLHTTPRequest{}, "xmlhttp-request"},
 	}
 
 	for _, tt := range tests {

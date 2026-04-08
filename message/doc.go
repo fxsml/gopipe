@@ -26,7 +26,7 @@
 //		func(ctx context.Context, cmd OrderCmd) ([]OrderEvent, error) {
 //			return []OrderEvent{{ID: cmd.ID, Status: "created"}}, nil
 //		},
-//		message.CommandHandlerConfig{Source: "/orders", Naming: message.KebabNaming},
+//		message.CommandHandlerConfig{Source: "/orders", Naming: message.DotNaming},
 //	)
 //	engine.AddHandler("orders", nil, handler)
 //

@@ -166,7 +166,7 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{
         Source: "/orders",
-        Naming: message.KebabNaming,
+        Naming: message.DotNaming,
     },
 )
 engine.AddHandler("process-order", nil, handler)
@@ -207,7 +207,7 @@ defaultOut, _ := engine.AddRawOutput("default", nil)  // catch-all
 | `handler.go` | Handler interface, NewHandler, NewCommandHandler |
 | `message.go` | Message types, Copy, Acking |
 | `marshaler.go` | Marshaler interface, JSONMarshaler |
-| `naming.go` | EventTypeNaming, KebabNaming, SnakeNaming |
+| `naming.go` | EventTypeNaming, DotNaming, SnakeNaming |
 | `registry.go` | InputRegistry, FactoryMap |
 | `matcher.go` | Matcher interface |
 | `pipes.go` | Marshal/Unmarshal pipes |

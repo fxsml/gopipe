@@ -97,7 +97,7 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{
         Source: "/orders-service",
-        Naming: message.KebabNaming,
+        Naming: message.DotNaming,
     },
 )
 ```
@@ -198,7 +198,7 @@ type NamingStrategy interface {
     TypeName(t reflect.Type) string  // Go type → CE type
 }
 
-var KebabNaming NamingStrategy   // OrderCreated → "order.created"
+var DotNaming NamingStrategy   // OrderCreated → "order.created"
 var SnakeNaming NamingStrategy   // OrderCreated → "order_created"
 ```
 
@@ -259,7 +259,7 @@ handler := message.NewHandler(
             }),
         }, nil
     },
-    message.KebabNaming,  // OrderCreated → "order.created"
+    message.DotNaming,  // OrderCreated → "order.created"
 )
 
 // handler.EventType() returns "order.created"
@@ -296,7 +296,7 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{
         Source: "/orders-service",
-        Naming: message.KebabNaming,  // CreateOrder → "create.order", OrderCreated → "order.created"
+        Naming: message.DotNaming,  // CreateOrder → "create.order", OrderCreated → "order.created"
     },
 )
 
@@ -414,7 +414,7 @@ engine.AddLoopback(message.LoopbackConfig{
 ## MVP Implementation Order
 
 ### Phase 1: Core Types (depends on Plan 0002)
-1. `message/naming.go` - NamingStrategy interface, KebabNaming, SnakeNaming
+1. `message/naming.go` - NamingStrategy interface, DotNaming, SnakeNaming
 2. `message/marshaler.go` - Marshaler interface
 3. `message/json_marshaler.go` - JSONMarshaler implementation
 
@@ -479,7 +479,7 @@ engine.AddLoopback(message.LoopbackConfig{
 21. InputConfig.Matcher filters incoming messages
 22. OutputConfig.Matcher routes to correct output
 23. Loopback bypasses marshal/unmarshal
-24. KebabNaming: OrderCreated → "order.created"
+24. DotNaming: OrderCreated → "order.created"
 25. SnakeNaming: OrderCreated → "order_created"
 
 ## Acceptance Criteria
@@ -490,7 +490,7 @@ engine.AddLoopback(message.LoopbackConfig{
 - [ ] NewCommandHandler takes config with Source + Naming, receives cmd directly
 - [ ] AttributesFromContext for accessing message attributes in handlers
 - [ ] Marshaler interface with Marshal, Unmarshal, DataContentType
-- [ ] NamingStrategy with KebabNaming, SnakeNaming
+- [ ] NamingStrategy with DotNaming, SnakeNaming
 - [ ] Engine.Start() orchestrates flow
 - [ ] AddInput(ch, cfg) with optional Matcher for filtering
 - [ ] AddOutput(cfg) returns channel, routes by Matcher

@@ -36,7 +36,7 @@ func NewValidationMiddleware(registry *Registry) middleware.Middleware[*message.
 // Example - Validate before unmarshaling:
 //
 //	registry := jsonschema.NewRegistry(jsonschema.Config{
-//	    Naming: message.KebabNaming,
+//	    Naming: message.DotNaming,
 //	})
 //	registry.MustRegisterType(CreateOrder{}, schema)
 //
@@ -61,7 +61,7 @@ func NewInputValidationMiddleware(registry *Registry) middleware.Middleware[*mes
 // Example - Validate after marshaling:
 //
 //	registry := jsonschema.NewRegistry(jsonschema.Config{
-//	    Naming: message.KebabNaming,
+//	    Naming: message.DotNaming,
 //	})
 //	registry.MustRegisterType(OrderCreated{}, schema)
 //

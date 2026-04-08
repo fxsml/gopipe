@@ -41,7 +41,7 @@ func TestSubscriberPlugin(t *testing.T) {
 				received <- data.Value
 				return nil, nil
 			},
-			message.CommandHandlerConfig{Source: "/test", Naming: message.KebabNaming},
+			message.CommandHandlerConfig{Source: "/test", Naming: message.DotNaming},
 		)
 		if err := engine.AddHandler("test-handler", nil, handler); err != nil {
 			t.Fatalf("failed to add handler: %v", err)
@@ -100,7 +100,7 @@ func TestPublisherPlugin(t *testing.T) {
 			func(ctx context.Context, data TestEvent) ([]OutputEvent, error) {
 				return []OutputEvent{{Result: "done"}}, nil
 			},
-			message.CommandHandlerConfig{Source: "/test", Naming: message.KebabNaming},
+			message.CommandHandlerConfig{Source: "/test", Naming: message.DotNaming},
 		)
 		if err := engine.AddHandler("test-handler", nil, handler); err != nil {
 			t.Fatalf("failed to add handler: %v", err)

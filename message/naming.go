@@ -15,8 +15,12 @@ type EventTypeNaming interface {
 // Example: OrderCreated → "OrderCreated"
 var DefaultNaming EventTypeNaming = defaultNaming{}
 
-// KebabNaming converts PascalCase to dot-separated lowercase.
+// DotNaming converts PascalCase to dot-separated lowercase.
 // Example: OrderCreated → "order.created"
+var DotNaming EventTypeNaming = dotNaming{}
+
+// KebabNaming converts PascalCase to kebab-case (hyphen-separated lowercase).
+// Example: OrderCreated → "order-created"
 var KebabNaming EventTypeNaming = kebabNaming{}
 
 // SnakeNaming converts PascalCase to underscore-separated lowercase.
@@ -29,10 +33,16 @@ func (defaultNaming) EventType(t reflect.Type) string {
 	return t.Name()
 }
 
+type dotNaming struct{}
+
+func (dotNaming) EventType(t reflect.Type) string {
+	return splitPascalCase(t.Name(), ".")
+}
+
 type kebabNaming struct{}
 
 func (kebabNaming) EventType(t reflect.Type) string {
-	return splitPascalCase(t.Name(), ".")
+	return splitPascalCase(t.Name(), "-")
 }
 
 type snakeNaming struct{}
@@ -43,10 +53,10 @@ func (snakeNaming) EventType(t reflect.Type) string {
 
 // splitPascalCase splits a PascalCase string into lowercase words joined by sep.
 // Consecutive uppercase letters are treated as acronyms:
-//   - HTTPRequest → http.request
-//   - IOBroker → io.broker
-//   - ID → id
-//   - OrderCreated → order.created
+//   - HTTPRequest → "http", "request"
+//   - IOBroker → "io", "broker"
+//   - ID → "id"
+//   - OrderCreated → "order", "created"
 func splitPascalCase(s string, sep string) string {
 	if s == "" {
 		return ""

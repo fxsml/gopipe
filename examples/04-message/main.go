@@ -50,7 +50,7 @@ func main() {
 		},
 		message.CommandHandlerConfig{
 			Source: "/orders",
-			Naming: message.KebabNaming, // CreateOrder -> "create.order"
+			Naming: message.DotNaming, // CreateOrder → "create.order"
 		},
 	)
 	engine.AddHandler("process-order", nil, handler)

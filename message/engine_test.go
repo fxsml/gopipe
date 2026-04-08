@@ -23,7 +23,7 @@ func TestEngine_BasicFlow(t *testing.T) {
 		},
 		CommandHandlerConfig{
 			Source: "/test",
-			Naming: KebabNaming,
+			Naming: DotNaming,
 		},
 	)
 	_ = engine.AddHandler("test-handler", nil, handler)
@@ -155,7 +155,7 @@ func TestEngine_InputMatcher(t *testing.T) {
 			mu.Unlock()
 			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	)
 	_ = engine.AddHandler("test", nil, handler)
 
@@ -213,7 +213,7 @@ func TestEngine_OutputMatcher(t *testing.T) {
 		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
 			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	)
 	_ = engine.AddHandler("test", nil, handler)
 
@@ -269,7 +269,7 @@ func TestEngine_MultipleInputs(t *testing.T) {
 			mu.Unlock()
 			return nil, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	)
 	_ = engine.AddHandler("test", nil, handler)
 
@@ -316,7 +316,7 @@ func TestEngine_HandlerError(t *testing.T) {
 		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
 			return nil, testErr
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	)
 	_ = engine.AddHandler("test", nil, handler)
 
@@ -354,7 +354,7 @@ func TestEngine_ContextCancellation(t *testing.T) {
 		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
 			return []TestEvent{}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	)
 	_ = engine.AddHandler("test", nil, handler)
 
@@ -397,7 +397,7 @@ func TestEngine_DrainsInFlightMessages(t *testing.T) {
 			mu.Unlock()
 			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	)
 	_ = engine.AddHandler("test", nil, handler)
 
@@ -483,7 +483,7 @@ func TestEngine_AddInputAfterStart(t *testing.T) {
 			mu.Unlock()
 			return nil, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	)
 	_ = engine.AddHandler("test", nil, handler)
 
@@ -533,7 +533,7 @@ func TestEngine_AddOutputAfterStart(t *testing.T) {
 		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
 			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	)
 	_ = engine.AddHandler("test", nil, handler)
 
@@ -582,7 +582,7 @@ func TestEngine_TypedIO(t *testing.T) {
 		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
 			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	)
 	_ = engine.AddHandler("test", nil, handler)
 
@@ -649,7 +649,7 @@ func TestEngine_MixedIO(t *testing.T) {
 			mu.Unlock()
 			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	)
 	_ = engine.AddHandler("test", nil, handler)
 
@@ -726,7 +726,7 @@ func TestEngine_HandlerMatcher(t *testing.T) {
 			mu.Unlock()
 			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	)
 
 	// Register handler with a matcher that only accepts messages from /allowed source
@@ -779,7 +779,7 @@ func TestEngine_AddPlugin(t *testing.T) {
 				func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
 					return []TestEvent{{ID: cmd.ID, Status: "from-plugin"}}, nil
 				},
-				CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+				CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 			)
 			return e.AddHandler("plugin-handler", nil, handler)
 		}
@@ -894,7 +894,7 @@ func TestEngine_NoGoroutineLeakOnShutdown(t *testing.T) {
 		func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
 			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	)
 	_ = engine.AddHandler("test", nil, handler)
 
@@ -984,7 +984,7 @@ func TestEngine_RouterPool(t *testing.T) {
 
 			return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	)
 	_ = engine.AddHandler("test", nil, handler)
 
@@ -1049,7 +1049,7 @@ func TestEngine_DefaultMarshaler(t *testing.T) {
 		},
 		CommandHandlerConfig{
 			Source: "/test",
-			Naming: KebabNaming,
+			Naming: DotNaming,
 		},
 	)
 	_ = engine.AddHandler("test-handler", nil, handler)
@@ -1140,7 +1140,7 @@ func TestEngine_GracefulShutdown_HandlerDropsMessages(t *testing.T) {
 			}
 			return []FinalEvent{{ID: cmd.ID, Status: "kept"}}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	))
 
 	input := make(chan *RawMessage, 10)
@@ -1204,7 +1204,7 @@ func TestEngine_GracefulShutdown_HandlerMultipliesMessages(t *testing.T) {
 				{ID: cmd.ID + "-c", Status: "copy-c"},
 			}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	))
 
 	input := make(chan *RawMessage, 10)
@@ -1265,7 +1265,7 @@ func TestEngine_ShutdownTimeout_MarshalUnmarshalPipes(t *testing.T) {
 		func(ctx context.Context, cmd Step1Command) ([]FinalEvent, error) {
 			return []FinalEvent{{ID: cmd.ID, Status: "processed"}}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	))
 
 	// Raw input - we intentionally do NOT close this
@@ -1317,7 +1317,7 @@ func TestEngine_ShutdownTimeout_ImmediateShutdown(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 			return []FinalEvent{{ID: cmd.ID, Status: "processed"}}, nil
 		},
-		CommandHandlerConfig{Source: "/test", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/test", Naming: DotNaming},
 	))
 
 	input := make(chan *RawMessage, 100)

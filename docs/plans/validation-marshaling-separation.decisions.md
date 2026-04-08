@@ -80,7 +80,7 @@ publisher.Publish(ctx, validated)
 // Usage: With types (for handlers)
 marshaler := jsonschema.NewMarshaler(jsonschema.Config{
     Registry: validator,  // Share registry!
-    Naming:   message.KebabNaming,
+    Naming:   message.DotNaming,
 })
 marshaler.RegisterType(CreateOrder{})  // Links Go type to "order.created"
 ```
@@ -262,7 +262,7 @@ publisher.Publish(ctx, validated)
 // Pattern 2: Handlers (with types, shared registry)
 marshaler := jsonschema.NewMarshaler(jsonschema.Config{
     Registry: registry,  // ✅ Share schemas!
-    Naming:   message.KebabNaming,
+    Naming:   message.DotNaming,
 })
 marshaler.Register(CreateOrder{}, orderSchema)  // Links type to "order.created"
 
@@ -272,7 +272,7 @@ engine := message.NewEngine(message.EngineConfig{
 
 // Pattern 3: Isolated (Marshaler creates its own Registry)
 marshaler := jsonschema.NewMarshaler(jsonschema.Config{
-    Naming: message.KebabNaming,
+    Naming: message.DotNaming,
 })
 marshaler.Register(CreateOrder{}, orderSchema)
 // marshaler.registry is internal
