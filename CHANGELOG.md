@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **pipe/middleware:** `RetryConfig.OnExhausted` callback for retry exhaustion events (#101)
+  - Called when retries are exhausted via `MaxAttempts` or `Timeout`
+  - Receives the wrapped error containing `RetryState`, extractable via `RetryStateFromError`
+  - Not called for non-retryable errors (`ErrRetryNotRetryable`) or context cancellation
+  - Eliminates need for wrapper middleware to detect retry exhaustion
 - **message:** `DotNaming` strategy for dot-separated event types (`OrderCreated` → `"order.created"`)
 - **message/http:** `SubscriberConfig.Validator` callback for validating parsed messages before delivery
   - Called after message creation, before Enricher and channel delivery
