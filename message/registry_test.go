@@ -46,7 +46,7 @@ func TestRouter_InputRegistry(t *testing.T) {
 			func(ctx context.Context, msg *Message) ([]*Message, error) {
 				return nil, nil
 			},
-			KebabNaming,
+			DotNaming,
 		)
 		_ = router.AddHandler("", nil, handler)
 

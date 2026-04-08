@@ -41,7 +41,7 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{
         Source: "/orders",
-        Naming: message.KebabNaming, // CreateOrder -> "create.order"
+        Naming: message.DotNaming, // CreateOrder -> "create.order"
     },
 )
 ```
@@ -58,7 +58,7 @@ handler := message.NewHandler[OrderCreated](
         log.Printf("Order %s created", evt.OrderID)
         return nil, nil // No output messages
     },
-    message.KebabNaming,
+    message.DotNaming,
 )
 ```
 

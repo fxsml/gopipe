@@ -19,7 +19,7 @@ func TestRouter_BasicRouting(t *testing.T) {
 				Attributes: msg.Attributes,
 			},
 		}, nil
-	}, KebabNaming)
+	}, DotNaming)
 
 	_ = router.AddHandler("", nil, handler)
 
@@ -96,7 +96,7 @@ func TestRouter_HandlerMatcher(t *testing.T) {
 
 	handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 		return []*Message{{Data: msg.Data, Attributes: msg.Attributes}}, nil
-	}, KebabNaming)
+	}, DotNaming)
 
 	// Add handler with matcher that rejects messages without "allowed" attribute
 	_ = router.AddHandler("", matcherFunc(func(attrs Attributes) bool {
@@ -148,7 +148,7 @@ func TestRouter_HandlerError(t *testing.T) {
 
 	handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 		return nil, testErr
-	}, KebabNaming)
+	}, DotNaming)
 
 	_ = router.AddHandler("", nil, handler)
 
@@ -183,7 +183,7 @@ func TestRouter_MultipleOutputs(t *testing.T) {
 			{Data: TestEvent{ID: "2"}, Attributes: Attributes{"type": "test.event"}},
 			{Data: TestEvent{ID: "3"}, Attributes: Attributes{"type": "test.event"}},
 		}, nil
-	}, KebabNaming)
+	}, DotNaming)
 
 	_ = router.AddHandler("", nil, handler)
 
@@ -214,7 +214,7 @@ func TestRouter_ContextCancellation(t *testing.T) {
 
 	handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 		return []*Message{{Data: msg.Data, Attributes: msg.Attributes}}, nil
-	}, KebabNaming)
+	}, DotNaming)
 
 	_ = router.AddHandler("", nil, handler)
 
@@ -271,7 +271,7 @@ func TestRouter_Standalone(t *testing.T) {
 				},
 			},
 		}, nil
-	}, KebabNaming)
+	}, DotNaming)
 
 	_ = router.AddHandler("", nil, handler)
 
@@ -439,10 +439,10 @@ func TestRouter_DuplicateHandler(t *testing.T) {
 
 	handler1 := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 		return nil, nil
-	}, KebabNaming)
+	}, DotNaming)
 	handler2 := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 		return nil, nil
-	}, KebabNaming)
+	}, DotNaming)
 
 	_ = router.AddHandler("test1", nil, handler1)
 	err := router.AddHandler("test2", nil, handler2)
@@ -488,7 +488,7 @@ func TestRouter_AckStrategy_Default(t *testing.T) {
 
 		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 			return nil, nil // Success
-		}, KebabNaming)
+		}, DotNaming)
 		_ = router.AddHandler("", nil, handler)
 
 		ctx := context.Background()
@@ -520,7 +520,7 @@ func TestRouter_AckStrategy_Default(t *testing.T) {
 
 		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 			return nil, errors.New("handler error")
-		}, KebabNaming)
+		}, DotNaming)
 		_ = router.AddHandler("", nil, handler)
 
 		ctx := context.Background()
@@ -555,7 +555,7 @@ func TestRouter_AckStrategy_Manual(t *testing.T) {
 		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 			msg.Ack() // Manual ack
 			return nil, nil
-		}, KebabNaming)
+		}, DotNaming)
 		_ = router.AddHandler("", nil, handler)
 
 		ctx := context.Background()
@@ -584,7 +584,7 @@ func TestRouter_AckStrategy_Manual(t *testing.T) {
 
 		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 			return nil, errors.New("handler error")
-		}, KebabNaming)
+		}, DotNaming)
 		_ = router.AddHandler("", nil, handler)
 
 		ctx := context.Background()
@@ -618,7 +618,7 @@ func TestRouter_AckStrategy_Forward(t *testing.T) {
 				{Data: "out1", Attributes: Attributes{"type": "output"}},
 				{Data: "out2", Attributes: Attributes{"type": "output"}},
 			}, nil
-		}, KebabNaming)
+		}, DotNaming)
 		_ = router.AddHandler("", nil, handler)
 
 		ctx := context.Background()
@@ -662,7 +662,7 @@ func TestRouter_AckStrategy_Forward(t *testing.T) {
 				{Data: "out1", Attributes: Attributes{"type": "output"}},
 				{Data: "out2", Attributes: Attributes{"type": "output"}},
 			}, nil
-		}, KebabNaming)
+		}, DotNaming)
 		_ = router.AddHandler("", nil, handler)
 
 		ctx := context.Background()
@@ -714,7 +714,7 @@ func TestRouter_AckingMiddleware_Outermost(t *testing.T) {
 		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 			order = append(order, "handler")
 			return nil, nil
-		}, KebabNaming)
+		}, DotNaming)
 		_ = router.AddHandler("", nil, handler)
 
 		ctx := context.Background()
@@ -763,7 +763,7 @@ func TestRouter_ProcessTimeout(t *testing.T) {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
-		}, KebabNaming)
+		}, DotNaming)
 
 		_ = router.AddHandler("", nil, handler)
 
@@ -804,7 +804,7 @@ func TestRouter_ProcessTimeout(t *testing.T) {
 				Data:       TestEvent{ID: msg.Data.(*TestCommand).ID, Status: "done"},
 				Attributes: msg.Attributes,
 			}}, nil
-		}, KebabNaming)
+		}, DotNaming)
 
 		_ = router.AddHandler("", nil, handler)
 
@@ -844,7 +844,7 @@ func TestRouter_ProcessTimeout(t *testing.T) {
 				Data:       TestEvent{ID: msg.Data.(*TestCommand).ID, Status: "done"},
 				Attributes: msg.Attributes,
 			}}, nil
-		}, KebabNaming)
+		}, DotNaming)
 
 		_ = router.AddHandler("", nil, handler)
 
@@ -889,7 +889,7 @@ func TestRouter_ProcessTimeout(t *testing.T) {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
-		}, KebabNaming)
+		}, DotNaming)
 
 		_ = router.AddHandler("", nil, handler)
 

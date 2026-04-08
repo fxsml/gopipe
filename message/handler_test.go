@@ -22,7 +22,7 @@ func TestNewHandler(t *testing.T) {
 			func(ctx context.Context, msg *Message) ([]*Message, error) {
 				return nil, nil
 			},
-			KebabNaming,
+			DotNaming,
 		)
 
 		if h.EventType() != "test.command" {
@@ -35,7 +35,7 @@ func TestNewHandler(t *testing.T) {
 			func(ctx context.Context, msg *Message) ([]*Message, error) {
 				return nil, nil
 			},
-			KebabNaming,
+			DotNaming,
 		)
 
 		instance := h.NewInput()
@@ -52,7 +52,7 @@ func TestNewHandler(t *testing.T) {
 				received = *cmd
 				return []*Message{New(TestEvent{ID: cmd.ID, Status: "done"}, nil, nil)}, nil
 			},
-			KebabNaming,
+			DotNaming,
 		)
 
 		cmd := &TestCommand{ID: "123", Name: "test"}
@@ -82,7 +82,7 @@ func TestNewCommandHandler(t *testing.T) {
 			},
 			CommandHandlerConfig{
 				Source: "/test",
-				Naming: KebabNaming,
+				Naming: DotNaming,
 			},
 		)
 
@@ -98,7 +98,7 @@ func TestNewCommandHandler(t *testing.T) {
 			},
 			CommandHandlerConfig{
 				Source: "/test-service",
-				Naming: KebabNaming,
+				Naming: DotNaming,
 			},
 		)
 
@@ -144,7 +144,7 @@ func TestNewCommandHandler(t *testing.T) {
 			},
 			CommandHandlerConfig{
 				Source: "/test",
-				Naming: KebabNaming,
+				Naming: DotNaming,
 			},
 		)
 
@@ -164,7 +164,7 @@ func TestNewCommandHandler(t *testing.T) {
 			},
 			CommandHandlerConfig{
 				Source: "/test",
-				Naming: KebabNaming,
+				Naming: DotNaming,
 			},
 		)
 
@@ -198,7 +198,7 @@ func TestNewCommandHandler(t *testing.T) {
 			},
 			CommandHandlerConfig{
 				Source: "/test",
-				Naming: KebabNaming,
+				Naming: DotNaming,
 				Attributes: Attributes{
 					AttrDataSchema: "https://example.com/schema.json",
 					"customext":    "custom-value",

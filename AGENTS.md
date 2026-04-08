@@ -205,7 +205,8 @@ engine.AddSubscriber("orders", subscriber)
 | `EventTypeNaming` | `NamingStrategy` | More precise about what it names |
 | `InputRegistry` | `TypeRegistry` | Matches `Handler.NewInput()` method |
 | `Use()` | `ApplyMiddleware()` | Standard Go pattern (gin, echo, etc.) |
-| `KebabNaming` | `DotNaming` | Describes output format: `order.created` |
+| `DotNaming` | `KebabNaming` | Correctly describes output format: `order.created` (dots) |
+| `KebabNaming` | — | Fixed: now produces true kebab-case: `order-created` (hyphens) |
 
 ## File Organization
 
@@ -219,7 +220,7 @@ message/
 ├── handler.go      # Handler interface, NewHandler, NewCommandHandler
 ├── message.go      # Message types, Copy, Acking
 ├── marshaler.go    # Marshaler interface, JSONMarshaler
-├── naming.go       # EventTypeNaming, KebabNaming, SnakeNaming
+├── naming.go       # EventTypeNaming, DotNaming, KebabNaming, SnakeNaming
 ├── registry.go     # InputRegistry, FactoryMap
 ├── matcher.go      # Matcher interface
 ├── errors.go       # Error types

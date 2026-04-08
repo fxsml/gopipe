@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **message:** `DotNaming` strategy for dot-separated event types (`OrderCreated` → `"order.created"`)
 - **message/http:** `SubscriberConfig.Validator` callback for validating parsed messages before delivery
   - Called after message creation, before Enricher and channel delivery
   - Receives the full `[]*message.RawMessage` slice and `*http.Request`
@@ -43,12 +44,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **message:** `KebabNaming` now produces true kebab-case with hyphens (`OrderCreated` → `"order-created"`) instead of dots; previous dot-separated behavior preserved as `DotNaming`
 - **message:** `UnmarshalPipe` and `MarshalPipe` now propagate locals across the `RawMessage`↔`Message` boundary
   - Previously, locals set on `RawMessage` (e.g., via Enricher) were silently dropped during unmarshaling
   - Same fix applied to `MarshalPipe` for the reverse direction
 
 ### Changed
 
+- **message:** Default naming in `jsonschema.Registry` changed from `KebabNaming` to `DotNaming`
+- **message:** All existing `KebabNaming` usages migrated to `DotNaming` — no behavior change for current consumers
 - **message:** Rename `Done()` to `Settled()` to avoid collision with `context.Context` semantics
 - **message:** Remove implicit locals propagation from `AckForward` — acking and locals are orthogonal; propagation is the handler's explicit choice via `Copy()` or `SetLocal()`
 

@@ -104,7 +104,7 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{
         Source: "/orders-service",
-        Naming: message.KebabNaming,  // CreateOrder → "create.order"
+        Naming: message.DotNaming,  // CreateOrder → "create.order"
     },
 )
 // handler.EventType() returns "create.order"

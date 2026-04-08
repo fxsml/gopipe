@@ -104,7 +104,7 @@ func main() {
 
 	// 1. Setup JSON Schema registry with validation for both types.
 	registry := jsonschema.NewRegistry(jsonschema.Config{
-		Naming: message.KebabNaming,
+		Naming: message.DotNaming,
 	})
 	registry.MustRegisterType(CreateOrderCommand{}, createOrderCommandSchema)
 	registry.MustRegisterType(OrderCreatedEvent{}, orderCreatedEventSchema)
@@ -129,7 +129,7 @@ func main() {
 				Status:  "created",
 			}}, nil
 		},
-		message.CommandHandlerConfig{Source: "/orders", Naming: message.KebabNaming},
+		message.CommandHandlerConfig{Source: "/orders", Naming: message.DotNaming},
 	))
 	processed, _ := router.Pipe(ctx, typed)
 

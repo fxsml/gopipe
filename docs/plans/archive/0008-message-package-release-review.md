@@ -122,7 +122,7 @@ const (
 | Matcher composition | ✅ Ready | match.All, match.Any, match.Types |
 | Message acknowledgment | ✅ Ready | Ack/Nack with callbacks |
 | JSON marshaling | ✅ Ready | JSONMarshaler |
-| Naming strategies | ✅ Ready | KebabNaming, SnakeNaming |
+| Naming strategies | ✅ Ready | DotNaming, SnakeNaming |
 
 ### Consider Adding
 

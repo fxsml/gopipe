@@ -67,7 +67,7 @@ func main() {
 		},
 		message.CommandHandlerConfig{
 			Source: "/processor",
-			Naming: message.KebabNaming,
+			Naming: message.DotNaming,
 		},
 	))
 

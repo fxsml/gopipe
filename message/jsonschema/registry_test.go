@@ -39,7 +39,7 @@ type testOther struct {
 }
 
 func TestRegistry_RegisterType(t *testing.T) {
-	t.Run("registers type with KebabNaming", func(t *testing.T) {
+	t.Run("registers type with DotNaming", func(t *testing.T) {
 		registry := NewRegistry(Config{})
 		if err := registry.RegisterType(testData{}, testSchema); err != nil {
 			t.Fatalf("RegisterType failed: %v", err)

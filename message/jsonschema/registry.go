@@ -8,12 +8,12 @@
 // Register schemas by CloudEvents type:
 //
 //	registry := jsonschema.NewRegistry(jsonschema.Config{
-//	    Naming: message.KebabNaming,
+//	    Naming: message.DotNaming,
 //	})
 //
 //	// With Go type (supports NewInput for unmarshaling):
 //	registry.MustRegisterType(CreateOrderCommand{}, commandSchema)
-//	// → registers as "create.order.command" with KebabNaming
+//	// → registers as "create.order.command" with DotNaming
 //
 //	// Without Go type (proxy scenarios, no unmarshaling needed):
 //	registry.MustRegister("order.created", orderSchema)
@@ -46,7 +46,7 @@ import (
 type Config struct {
 	// Naming strategy for deriving CloudEvents types from Go types.
 	// Used by RegisterType to automatically convert Go type names to event types.
-	// Default: message.KebabNaming (CreateOrderCommand → "create.order.command")
+	// Default: message.DotNaming (CreateOrderCommand → "create.order.command")
 	Naming message.EventTypeNaming
 
 	// SchemaURI generates a unique URI for schema compilation.
@@ -83,11 +83,11 @@ type entry struct {
 }
 
 // NewRegistry creates a schema validation registry.
-// If cfg.Naming is nil, uses KebabNaming by default.
+// If cfg.Naming is nil, uses DotNaming by default.
 // If cfg.SchemaURI is nil, uses defaultSchemaURI.
 func NewRegistry(cfg Config) *Registry {
 	if cfg.Naming == nil {
-		cfg.Naming = message.KebabNaming
+		cfg.Naming = message.DotNaming
 	}
 	if cfg.SchemaURI == nil {
 		cfg.SchemaURI = defaultSchemaURI
@@ -148,7 +148,7 @@ func (r *Registry) MustRegister(eventType, schemaJSON string) {
 // Example:
 //
 //	registry.RegisterType(CreateOrderCommand{}, commandSchema)
-//	// With KebabNaming: CreateOrderCommand → "create.order.command"
+//	// With DotNaming: CreateOrderCommand → "create.order.command"
 //
 // The Go type is tracked for InputRegistry.NewInput() support.
 // Internally calls Register and then records the Go type mapping.
