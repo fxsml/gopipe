@@ -403,6 +403,229 @@ func TestRetryStateFromError(t *testing.T) {
 	}
 }
 
+// TestRetryMiddleware_OnExhaustedCalledOnMaxAttempts verifies OnExhausted is called when max attempts are reached
+func TestRetryMiddleware_OnExhaustedCalledOnMaxAttempts(t *testing.T) {
+	var exhaustedErr error
+	callCount := 0
+
+	processFunc := func(ctx context.Context, in int) ([]int, error) {
+		return nil, errors.New("persistent error")
+	}
+
+	retryConfig := RetryConfig{
+		ShouldRetry: ShouldRetry(),
+		Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
+		MaxAttempts: 3,
+		OnExhausted: func(err error) {
+			exhaustedErr = err
+			callCount++
+		},
+	}
+
+	retryMw := Retry[int, int](retryConfig)
+	wrappedFunc := retryMw(processFunc)
+
+	_, err := wrappedFunc(context.Background(), 5)
+
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+
+	if callCount != 1 {
+		t.Errorf("expected OnExhausted to be called once, got %d", callCount)
+	}
+
+	if exhaustedErr == nil {
+		t.Fatal("expected OnExhausted to receive an error, got nil")
+	}
+
+	if !errors.Is(exhaustedErr, ErrRetryMaxAttempts) {
+		t.Errorf("expected OnExhausted error to wrap ErrRetryMaxAttempts, got %v", exhaustedErr)
+	}
+
+	state := RetryStateFromError(exhaustedErr)
+	if state == nil {
+		t.Fatal("expected RetryState extractable from OnExhausted error")
+	}
+	if state.Attempts != 3 {
+		t.Errorf("expected 3 attempts in state, got %d", state.Attempts)
+	}
+}
+
+// TestRetryMiddleware_OnExhaustedCalledOnTimeout verifies OnExhausted is called when timeout is reached
+func TestRetryMiddleware_OnExhaustedCalledOnTimeout(t *testing.T) {
+	var exhaustedErr error
+	callCount := 0
+
+	processFunc := func(ctx context.Context, in int) ([]int, error) {
+		return nil, errors.New("slow error")
+	}
+
+	retryConfig := RetryConfig{
+		ShouldRetry: ShouldRetry(),
+		Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
+		MaxAttempts: -1, // unlimited retries
+		Timeout:     10 * time.Millisecond,
+		OnExhausted: func(err error) {
+			exhaustedErr = err
+			callCount++
+		},
+	}
+
+	retryMw := Retry[int, int](retryConfig)
+	wrappedFunc := retryMw(processFunc)
+
+	_, err := wrappedFunc(context.Background(), 5)
+
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+
+	if callCount != 1 {
+		t.Errorf("expected OnExhausted to be called once, got %d", callCount)
+	}
+
+	if exhaustedErr == nil {
+		t.Fatal("expected OnExhausted to receive an error, got nil")
+	}
+
+	if !errors.Is(exhaustedErr, ErrRetryTimeout) {
+		t.Errorf("expected OnExhausted error to wrap ErrRetryTimeout, got %v", exhaustedErr)
+	}
+}
+
+// TestRetryMiddleware_OnExhaustedNotCalledOnSuccess verifies OnExhausted is not called when processing succeeds
+func TestRetryMiddleware_OnExhaustedNotCalledOnSuccess(t *testing.T) {
+	callCount := 0
+
+	processFunc := func(ctx context.Context, in int) ([]int, error) {
+		return []int{in}, nil
+	}
+
+	retryConfig := RetryConfig{
+		ShouldRetry: ShouldRetry(),
+		Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
+		MaxAttempts: 3,
+		OnExhausted: func(err error) {
+			callCount++
+		},
+	}
+
+	retryMw := Retry[int, int](retryConfig)
+	wrappedFunc := retryMw(processFunc)
+
+	_, err := wrappedFunc(context.Background(), 5)
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+
+	if callCount != 0 {
+		t.Errorf("expected OnExhausted not to be called, got %d calls", callCount)
+	}
+}
+
+// TestRetryMiddleware_OnExhaustedNotCalledOnNotRetryable verifies OnExhausted is not called for non-retryable errors
+func TestRetryMiddleware_OnExhaustedNotCalledOnNotRetryable(t *testing.T) {
+	callCount := 0
+
+	processFunc := func(ctx context.Context, in int) ([]int, error) {
+		return nil, errors.New("non-retryable")
+	}
+
+	retryConfig := RetryConfig{
+		ShouldRetry: ShouldNotRetry(), // nothing is retryable
+		Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
+		MaxAttempts: 3,
+		OnExhausted: func(err error) {
+			callCount++
+		},
+	}
+
+	retryMw := Retry[int, int](retryConfig)
+	wrappedFunc := retryMw(processFunc)
+
+	_, err := wrappedFunc(context.Background(), 5)
+
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+
+	if !errors.Is(err, ErrRetryNotRetryable) {
+		t.Errorf("expected ErrRetryNotRetryable, got %v", err)
+	}
+
+	if callCount != 0 {
+		t.Errorf("expected OnExhausted not to be called for non-retryable error, got %d calls", callCount)
+	}
+}
+
+// TestRetryMiddleware_OnExhaustedNotCalledOnContextCancel verifies OnExhausted is not called on context cancellation
+func TestRetryMiddleware_OnExhaustedNotCalledOnContextCancel(t *testing.T) {
+	callCount := 0
+	ctx, cancel := context.WithCancel(context.Background())
+
+	attempts := 0
+	processFunc := func(ctx context.Context, in int) ([]int, error) {
+		attempts++
+		return nil, errors.New("error")
+	}
+
+	retryConfig := RetryConfig{
+		ShouldRetry: ShouldRetry(),
+		Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
+		MaxAttempts: 100,
+		OnExhausted: func(err error) {
+			callCount++
+		},
+	}
+
+	retryMw := Retry[int, int](retryConfig)
+	wrappedFunc := retryMw(processFunc)
+
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := wrappedFunc(ctx, 5)
+
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+
+	if callCount != 0 {
+		t.Errorf("expected OnExhausted not to be called on context cancellation, got %d calls", callCount)
+	}
+}
+
+// TestRetryMiddleware_OnExhaustedNilIsNoOp verifies nil OnExhausted does not panic
+func TestRetryMiddleware_OnExhaustedNilIsNoOp(t *testing.T) {
+	processFunc := func(ctx context.Context, in int) ([]int, error) {
+		return nil, errors.New("persistent error")
+	}
+
+	retryConfig := RetryConfig{
+		ShouldRetry: ShouldRetry(),
+		Backoff:     ConstantBackoff(1*time.Millisecond, 0.0),
+		MaxAttempts: 2,
+		// OnExhausted is nil — should not panic
+	}
+
+	retryMw := Retry[int, int](retryConfig)
+	wrappedFunc := retryMw(processFunc)
+
+	_, err := wrappedFunc(context.Background(), 5)
+
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+
+	if !errors.Is(err, ErrRetryMaxAttempts) {
+		t.Errorf("expected ErrRetryMaxAttempts, got %v", err)
+	}
+}
+
 // TestShouldRetryFunctions verifies ShouldRetry and ShouldNotRetry logic
 func TestShouldRetryFunctions(t *testing.T) {
 	err1 := errors.New("error 1")

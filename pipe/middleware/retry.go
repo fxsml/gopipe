@@ -103,6 +103,13 @@ type RetryConfig struct {
 	// Timeout sets the overall time limit for all processing attempts combined.
 	// Zero or negative value means no timeout. Default is 1 minute.
 	Timeout time.Duration
+
+	// OnExhausted is called when retries are exhausted, either by reaching MaxAttempts
+	// or exceeding Timeout. The error wraps ErrRetryMaxAttempts or ErrRetryTimeout and
+	// carries the full RetryState, extractable via RetryStateFromError.
+	// Not called for non-retryable errors or context cancellation.
+	// If nil, no callback is invoked.
+	OnExhausted func(err error)
 }
 
 // RetryState tracks the progress and history of retry attempts.
@@ -250,14 +257,22 @@ func Retry[In, Out any](cfg RetryConfig) Middleware[In, Out] {
 				}
 
 				if cfg.MaxAttempts > 0 && state.Attempts >= cfg.MaxAttempts {
-					return nil, state.error(ErrRetryMaxAttempts)
+					err = state.error(ErrRetryMaxAttempts)
+					if cfg.OnExhausted != nil {
+						cfg.OnExhausted(err)
+					}
+					return nil, err
 				}
 
 				var timeoutCh <-chan time.Time
 				if cfg.Timeout > 0 {
 					remaining := cfg.Timeout - time.Since(state.Start)
 					if remaining <= 0 {
-						return nil, state.error(ErrRetryTimeout)
+						err = state.error(ErrRetryTimeout)
+						if cfg.OnExhausted != nil {
+							cfg.OnExhausted(err)
+						}
+						return nil, err
 					}
 					timeoutCh = time.After(remaining)
 				}
@@ -266,7 +281,11 @@ func Retry[In, Out any](cfg RetryConfig) Middleware[In, Out] {
 				case <-ctx.Done():
 					return nil, state.error(ctx.Err())
 				case <-timeoutCh:
-					return nil, state.error(ErrRetryTimeout)
+					err = state.error(ErrRetryTimeout)
+					if cfg.OnExhausted != nil {
+						cfg.OnExhausted(err)
+					}
+					return nil, err
 				case <-time.After(cfg.Backoff(state.Attempts)):
 				}
 			}
