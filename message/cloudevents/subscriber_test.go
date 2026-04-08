@@ -151,6 +151,112 @@ func TestSubscriber(t *testing.T) {
 		}
 	})
 
+	t.Run("calls CleanupHandler on completion", func(t *testing.T) {
+		receiver := newMockReceiver() // Empty receiver -> EOF
+
+		cleaned := make(chan struct{})
+		source := NewSubscriber(receiver, SubscriberConfig{
+			CleanupHandler: func(context.Context) { close(cleaned) },
+		})
+
+		ch, err := source.Subscribe(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Drain the channel
+		for range ch {
+		}
+
+		select {
+		case <-cleaned:
+			// success
+		case <-time.After(time.Second):
+			t.Error("expected Cleanup to be called")
+		}
+	})
+
+	t.Run("calls CleanupHandler on context cancellation", func(t *testing.T) {
+		// Create a receiver that blocks until context cancelled
+		receiver := &mockReceiver{}
+
+		cleaned := make(chan struct{})
+		source := NewSubscriber(receiver, SubscriberConfig{
+			CleanupHandler: func(context.Context) { close(cleaned) },
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		ch, err := source.Subscribe(ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cancel()
+
+		// Drain the channel
+		for range ch {
+		}
+
+		select {
+		case <-cleaned:
+			// success
+		case <-time.After(time.Second):
+			t.Error("expected Cleanup to be called on context cancellation")
+		}
+	})
+
+	t.Run("CleanupTimeout sets deadline on cleanup context", func(t *testing.T) {
+		receiver := newMockReceiver() // Empty receiver -> EOF
+
+		cleaned := make(chan struct{})
+		source := NewSubscriber(receiver, SubscriberConfig{
+			CleanupHandler: func(ctx context.Context) {
+				if _, ok := ctx.Deadline(); !ok {
+					t.Error("expected context to have a deadline")
+				}
+				close(cleaned)
+			},
+			CleanupTimeout: 5 * time.Second,
+		})
+
+		ch, err := source.Subscribe(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		for range ch {
+		}
+
+		select {
+		case <-cleaned:
+			// success
+		case <-time.After(time.Second):
+			t.Error("expected CleanupHandler to be called")
+		}
+	})
+
+	t.Run("nil CleanupHandler does not panic", func(t *testing.T) {
+		receiver := newMockReceiver() // Empty receiver -> EOF
+		source := NewSubscriber(receiver, SubscriberConfig{
+			CleanupHandler: nil,
+		})
+
+		ch, err := source.Subscribe(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		select {
+		case _, ok := <-ch:
+			if ok {
+				t.Error("expected channel to be closed")
+			}
+			// success — no panic
+		case <-time.After(time.Second):
+			t.Error("expected channel to close")
+		}
+	})
+
 	t.Run("Use applies middleware", func(t *testing.T) {
 		event := cloudevents.NewEvent()
 		event.SetID("test-id")
