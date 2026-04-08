@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Unblocks auth middleware, transaction handling, and tracing adapters
 - **message/jsonschema:** JSON Schema validation for CloudEvents messages
   - `Registry` for managing schemas by CloudEvents type (eventType → schema)
+  - `Register(eventType, schema)` for type-free schema registration (proxy scenarios)
   - `RegisterType(v, schema)` derives eventType from Go type via naming strategy
   - Configurable `SchemaURI` function for custom schema URI schemes (defaults to URN)
   - Implements `InputRegistry` for automatic instance creation in pipes

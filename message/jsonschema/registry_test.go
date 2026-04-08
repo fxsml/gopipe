@@ -95,6 +95,129 @@ func TestRegistry_RegisterType(t *testing.T) {
 	})
 }
 
+func TestRegistry_Register(t *testing.T) {
+	t.Run("registers schema by event type string", func(t *testing.T) {
+		registry := NewRegistry(Config{})
+		if err := registry.Register("order.created", testSchema); err != nil {
+			t.Fatalf("Register failed: %v", err)
+		}
+
+		schema := registry.Schema("order.created")
+		if schema == nil {
+			t.Fatal("expected schema for order.created")
+		}
+	})
+
+	t.Run("validates data against registered schema", func(t *testing.T) {
+		registry := NewRegistry(Config{})
+		registry.MustRegister("order.created", testSchema)
+
+		if err := registry.Validate("order.created", []byte(`{"name":"ok","value":42}`)); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+
+		err := registry.Validate("order.created", []byte(`{"name":"ok"}`))
+		if err == nil {
+			t.Fatal("expected validation error for missing required field")
+		}
+	})
+
+	t.Run("NewInput returns nil for type-free registration", func(t *testing.T) {
+		registry := NewRegistry(Config{})
+		registry.MustRegister("order.created", testSchema)
+
+		instance := registry.NewInput("order.created")
+		if instance != nil {
+			t.Errorf("expected nil from NewInput for type-free registration, got %T", instance)
+		}
+	})
+
+	t.Run("appears in Schemas catalog", func(t *testing.T) {
+		registry := NewRegistry(Config{})
+		registry.MustRegister("order.created", testSchema)
+
+		raw := registry.Schemas()
+		var doc struct {
+			Defs map[string]json.RawMessage `json:"$defs"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if _, ok := doc.Defs["order.created"]; !ok {
+			t.Error("missing order.created in $defs")
+		}
+	})
+
+	t.Run("coexists with RegisterType", func(t *testing.T) {
+		registry := NewRegistry(Config{})
+		registry.MustRegister("order.created", testSchema)
+		registry.MustRegisterType(testOther{}, testOtherSchema)
+
+		// Both schemas accessible
+		if registry.Schema("order.created") == nil {
+			t.Error("expected schema for order.created")
+		}
+		if registry.Schema("test.other") == nil {
+			t.Error("expected schema for test.other")
+		}
+
+		// NewInput: nil for Register, non-nil for RegisterType
+		if registry.NewInput("order.created") != nil {
+			t.Error("expected nil NewInput for type-free registration")
+		}
+		if registry.NewInput("test.other") == nil {
+			t.Error("expected non-nil NewInput for RegisterType")
+		}
+
+		// Schemas catalog contains both
+		raw := registry.Schemas()
+		var doc struct {
+			Defs map[string]json.RawMessage `json:"$defs"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if len(doc.Defs) != 2 {
+			t.Fatalf("expected 2 defs, got %d", len(doc.Defs))
+		}
+	})
+
+	t.Run("invalid schema JSON", func(t *testing.T) {
+		registry := NewRegistry(Config{})
+		err := registry.Register("order.created", `{not valid json}`)
+		if err == nil {
+			t.Fatal("expected error for invalid JSON")
+		}
+	})
+
+	t.Run("custom SchemaURI function", func(t *testing.T) {
+		customURICalled := false
+		registry := NewRegistry(Config{
+			SchemaURI: func(eventType string) string {
+				customURICalled = true
+				return "https://example.com/schemas/" + eventType
+			},
+		})
+
+		if err := registry.Register("order.created", testSchema); err != nil {
+			t.Fatalf("Register failed: %v", err)
+		}
+		if !customURICalled {
+			t.Error("custom SchemaURI function was not called")
+		}
+	})
+}
+
+func TestRegistry_MustRegister_panics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for invalid schema")
+		}
+	}()
+	registry := NewRegistry(Config{})
+	registry.MustRegister("order.created", `{not valid}`)
+}
+
 func TestRegistry_Validate(t *testing.T) {
 	t.Run("valid data", func(t *testing.T) {
 		registry := NewRegistry(Config{})
@@ -458,6 +581,36 @@ func TestNewOutputValidationMiddleware(t *testing.T) {
 		_, err := fn(context.Background(), msg)
 		if err != context.Canceled {
 			t.Fatalf("expected context.Canceled, got: %v", err)
+		}
+	})
+}
+
+func TestNewValidationMiddleware_typeFreeRegister(t *testing.T) {
+	registry := NewRegistry(Config{})
+	registry.MustRegister("order.created", testSchema)
+	mw := NewValidationMiddleware(registry)
+
+	passthrough := func(_ context.Context, raw *message.RawMessage) ([]*message.RawMessage, error) {
+		return []*message.RawMessage{raw}, nil
+	}
+	fn := mw(passthrough)
+
+	t.Run("valid message passes through", func(t *testing.T) {
+		raw := message.NewRaw([]byte(`{"name":"ok","value":1}`), message.Attributes{"type": "order.created"}, nil)
+		results, err := fn(context.Background(), raw)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+	})
+
+	t.Run("invalid message rejected", func(t *testing.T) {
+		raw := message.NewRaw([]byte(`{"name":"ok"}`), message.Attributes{"type": "order.created"}, nil)
+		_, err := fn(context.Background(), raw)
+		if err == nil {
+			t.Fatal("expected validation error")
 		}
 	})
 }

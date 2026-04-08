@@ -10,8 +10,13 @@
 //	registry := jsonschema.NewRegistry(jsonschema.Config{
 //	    Naming: message.KebabNaming,
 //	})
+//
+//	// With Go type (supports NewInput for unmarshaling):
 //	registry.MustRegisterType(CreateOrderCommand{}, commandSchema)
 //	// → registers as "create.order.command" with KebabNaming
+//
+//	// Without Go type (proxy scenarios, no unmarshaling needed):
+//	registry.MustRegister("order.created", orderSchema)
 //
 // Validation middleware:
 //
@@ -97,18 +102,17 @@ func NewRegistry(cfg Config) *Registry {
 	}
 }
 
-// RegisterType associates a JSON Schema with a Go type.
-// The CloudEvents type is derived using the naming strategy.
+// Register associates a JSON Schema with a CloudEvents type string.
+// No Go type is tracked, so NewInput returns nil for this event type.
+// Passing this Registry to UnmarshalPipe will cause Register-only types
+// to be rejected with ErrUnknownType, which is expected — proxy
+// scenarios should use NewValidationMiddleware instead of UnmarshalPipe.
 //
-// Example:
+// Use this for proxy scenarios where messages are validated and forwarded
+// without unmarshaling into Go structs:
 //
-//	registry.RegisterType(CreateOrderCommand{}, commandSchema)
-//	// With KebabNaming: CreateOrderCommand → "create.order.command"
-//
-// The Go type is tracked for InputRegistry.NewInput() support.
-func (r *Registry) RegisterType(v any, schemaJSON string) error {
-	t := elemType(v)
-	eventType := r.naming.EventType(t)
+//	registry.Register("order.created", orderSchema)
+func (r *Registry) Register(eventType, schemaJSON string) error {
 	uri := r.schemaURI(eventType)
 
 	// Compile schema
@@ -124,9 +128,40 @@ func (r *Registry) RegisterType(v any, schemaJSON string) error {
 		return fmt.Errorf("jsonschema: compiling schema for %s: %w", eventType, err)
 	}
 
-	// Store schema and track Go type
 	r.mu.Lock()
 	r.schemas[eventType] = &entry{compiled: compiled, raw: json.RawMessage(schemaJSON)}
+	r.mu.Unlock()
+
+	return nil
+}
+
+// MustRegister is like Register but panics on error.
+func (r *Registry) MustRegister(eventType, schemaJSON string) {
+	if err := r.Register(eventType, schemaJSON); err != nil {
+		panic(err)
+	}
+}
+
+// RegisterType associates a JSON Schema with a Go type.
+// The CloudEvents type is derived using the naming strategy.
+//
+// Example:
+//
+//	registry.RegisterType(CreateOrderCommand{}, commandSchema)
+//	// With KebabNaming: CreateOrderCommand → "create.order.command"
+//
+// The Go type is tracked for InputRegistry.NewInput() support.
+// Internally calls Register and then records the Go type mapping.
+func (r *Registry) RegisterType(v any, schemaJSON string) error {
+	t := elemType(v)
+	eventType := r.naming.EventType(t)
+
+	if err := r.Register(eventType, schemaJSON); err != nil {
+		return err
+	}
+
+	// Track Go type for NewInput()
+	r.mu.Lock()
 	r.types[eventType] = t
 	r.reverse[t] = eventType
 	r.mu.Unlock()
@@ -208,7 +243,9 @@ func (r *Registry) Schemas() json.RawMessage {
 // NewInput creates a typed instance for the given CloudEvents type.
 // Implements message.InputRegistry.
 //
-// Returns nil if no Go type was registered for the CloudEvents type.
+// Returns nil when the event type was registered via Register (type-free)
+// or when the event type is not registered at all. Only types added
+// via RegisterType produce a non-nil instance.
 func (r *Registry) NewInput(eventType string) any {
 	r.mu.RLock()
 	t, ok := r.types[eventType]
