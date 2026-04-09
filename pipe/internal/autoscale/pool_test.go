@@ -383,11 +383,14 @@ func TestPool_NoGoroutineLeak_ContextCancel(t *testing.T) {
 
 	in := make(chan int)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	out := pool.Start(ctx, in, 10)
 
-	// Send some items
+	// Send some items — use a done channel to know when the sender exits
+	senderDone := make(chan struct{})
 	go func() {
+		defer close(senderDone)
 		for i := range 5 {
 			select {
 			case in <- i:
@@ -407,7 +410,8 @@ func TestPool_NoGoroutineLeak_ContextCancel(t *testing.T) {
 		}
 	}
 
-	// Close input to allow cleanup
+	// Wait for sender to exit before closing input (prevents send-on-closed-channel)
+	<-senderDone
 	close(in)
 
 	// Drain remaining output

@@ -219,6 +219,22 @@ func startAutoscaledProcessing[In, Out any](
 ) <-chan Out {
 	as := cfg.Autoscale.parse()
 
+	// Create shutdown context that's only cancelled on forced shutdown.
+	// This mirrors the static path: handlers continue during grace period
+	// and are only cancelled when forced shutdown fires.
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+
+	// Wrap fn with ProcessTimeout if configured (mirrors static path behavior)
+	wrappedFn := func(ctx context.Context, val In) ([]Out, error) {
+		handlerCtx := ctx
+		if cfg.ProcessTimeout > 0 {
+			var cancel context.CancelFunc
+			handlerCtx, cancel = context.WithTimeout(ctx, cfg.ProcessTimeout)
+			defer cancel()
+		}
+		return fn(handlerCtx, val)
+	}
+
 	pool := autoscale.NewPool(
 		autoscale.PoolConfig{
 			MinWorkers:        as.MinWorkers,
@@ -228,13 +244,16 @@ func startAutoscaledProcessing[In, Out any](
 			ScaleDownCooldown: as.ScaleDownCooldown,
 			CheckInterval:     as.CheckInterval,
 		},
-		fn,
+		wrappedFn,
 		cfg.ErrorHandler,
 		ErrShutdownDropped,
 	)
 
-	poolOut := pool.Start(ctx, in, cfg.BufferSize)
-	out := make(chan Out, cfg.BufferSize)
+	// Pass shutdownCtx so workers continue during grace period
+	poolOut := pool.Start(shutdownCtx, in, cfg.BufferSize)
+
+	// Single wrapper channel (unbuffered) — poolOut already has the buffer
+	out := make(chan Out)
 	poolDone := make(chan struct{})
 
 	// Forward outputs and handle cleanup
@@ -243,6 +262,9 @@ func startAutoscaledProcessing[In, Out any](
 			out <- v
 		}
 		close(poolDone)
+
+		// Cancel shutdown context after all workers exit (idempotent)
+		shutdownCancel()
 
 		// Pool has completed - handle cleanup
 		if cfg.CleanupHandler != nil {
@@ -258,13 +280,24 @@ func startAutoscaledProcessing[In, Out any](
 		close(out)
 	}()
 
-	// Handle shutdown timeout
+	// Handle shutdown: grace period then forced stop (mirrors static path)
 	go func() {
 		select {
 		case <-ctx.Done():
 			if cfg.ShutdownTimeout > 0 {
-				time.Sleep(cfg.ShutdownTimeout)
+				// Grace period — wait for natural completion or timeout
+				select {
+				case <-poolDone:
+					// Workers finished naturally within grace period
+				case <-time.After(cfg.ShutdownTimeout):
+					// Force shutdown after grace period
+					pool.Stop()
+					shutdownCancel() // Cancel handler contexts
+				}
+			} else {
+				// No grace period — force shutdown immediately
 				pool.Stop()
+				shutdownCancel()
 			}
 		case <-poolDone:
 			// Pool finished naturally, nothing to do

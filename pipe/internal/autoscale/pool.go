@@ -25,6 +25,8 @@ type Pool[In, Out any] struct {
 	errorHandler func(in any, err error)
 	shutdownErr  error // Error to report when shutdown drops messages
 
+	ctx context.Context // stored for spawning workers during scaling
+
 	mu       sync.Mutex
 	workers  map[int]*worker
 	nextID   int
@@ -68,6 +70,7 @@ func NewPool[In, Out any](
 
 // Start begins processing items from the input channel and returns the output channel.
 func (p *Pool[In, Out]) Start(ctx context.Context, in <-chan In, bufferSize int) <-chan Out {
+	p.ctx = ctx
 	p.in = in
 	p.out = make(chan Out, bufferSize)
 	p.done = make(chan struct{})
@@ -163,14 +166,12 @@ func (p *Pool[In, Out]) runWorker(ctx context.Context, w *worker) {
 				continue
 			}
 
-			for i, r := range results {
+			for _, r := range results {
 				select {
 				case p.out <- r:
 				case <-p.done:
-					// Report this and remaining outputs as dropped
-					for _, dropped := range results[i:] {
-						p.errorHandler(dropped, p.shutdownErr)
-					}
+					// Report the input value as dropped (not individual outputs)
+					p.errorHandler(val, p.shutdownErr)
 					return
 				}
 			}
@@ -205,7 +206,7 @@ func (p *Pool[In, Out]) evaluate() {
 	if active >= total &&
 		total < int64(p.cfg.MaxWorkers) &&
 		now.Sub(p.lastScaleUp) >= p.cfg.ScaleUpCooldown {
-		p.spawnWorker(context.Background())
+		p.spawnWorker(p.ctx)
 		p.lastScaleUp = now
 		return
 	}
