@@ -22,7 +22,7 @@
 //			n, err := strconv.Atoi(in)
 //			return []int{n}, err
 //		},
-//		pipe.Config{Concurrency: 4, BufferSize: 10},
+//		pipe.Config{Pool: pipe.PoolConfig{Workers: 4, BufferSize: 10}},
 //	)
 //	out, _ := p.Pipe(ctx, input)
 //

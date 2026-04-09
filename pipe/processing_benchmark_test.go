@@ -9,19 +9,19 @@ import (
 // BenchmarkProcessing_StaticConcurrency benchmarks processing with static worker count.
 func BenchmarkProcessing_StaticConcurrency(b *testing.B) {
 	benchmarks := []struct {
-		name        string
-		concurrency int
-		items       int
-		workTime    time.Duration
+		name     string
+		workers  int
+		items    int
+		workTime time.Duration
 	}{
-		{"Concurrency1_Items100_Fast", 1, 100, 0},
-		{"Concurrency4_Items100_Fast", 4, 100, 0},
-		{"Concurrency8_Items100_Fast", 8, 100, 0},
-		{"Concurrency1_Items100_Slow", 1, 100, time.Microsecond},
-		{"Concurrency4_Items100_Slow", 4, 100, time.Microsecond},
-		{"Concurrency8_Items100_Slow", 8, 100, time.Microsecond},
-		{"Concurrency4_Items1000_Fast", 4, 1000, 0},
-		{"Concurrency8_Items1000_Fast", 8, 1000, 0},
+		{"Workers1_Items100_Fast", 1, 100, 0},
+		{"Workers4_Items100_Fast", 4, 100, 0},
+		{"Workers8_Items100_Fast", 8, 100, 0},
+		{"Workers1_Items100_Slow", 1, 100, time.Microsecond},
+		{"Workers4_Items100_Slow", 4, 100, time.Microsecond},
+		{"Workers8_Items100_Slow", 8, 100, time.Microsecond},
+		{"Workers4_Items1000_Fast", 4, 1000, 0},
+		{"Workers8_Items1000_Fast", 8, 1000, 0},
 	}
 
 	for _, bm := range benchmarks {
@@ -38,8 +38,7 @@ func BenchmarkProcessing_StaticConcurrency(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				in := make(chan int, bm.items)
 				out := startProcessing(context.Background(), in, process, Config{
-					Concurrency: bm.concurrency,
-					BufferSize:  bm.items,
+					Pool: PoolConfig{Workers: bm.workers, BufferSize: bm.items},
 				})
 
 				// Send all items
@@ -91,15 +90,14 @@ func BenchmarkProcessing_Autoscale(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				in := make(chan int, bm.items)
 				out := startProcessing(context.Background(), in, process, Config{
-					Autoscale: &AutoscaleConfig{
-						MinWorkers:        bm.minWorkers,
+					Pool: PoolConfig{
+						Workers:           bm.minWorkers,
 						MaxWorkers:        bm.maxWorkers,
 						ScaleUpCooldown:   time.Millisecond,
 						ScaleDownCooldown: time.Millisecond,
 						ScaleDownAfter:    100 * time.Millisecond,
 						CheckInterval:     time.Millisecond,
 					},
-					BufferSize: bm.items,
 				})
 
 				// Send all items
@@ -128,12 +126,11 @@ func BenchmarkProcessing_Comparison(b *testing.B) {
 		return []int{v * 2}, nil
 	}
 
-	b.Run("Static_Concurrency4", func(b *testing.B) {
+	b.Run("Static_Workers4", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			in := make(chan int, items)
 			out := startProcessing(context.Background(), in, process, Config{
-				Concurrency: 4,
-				BufferSize:  items,
+				Pool: PoolConfig{Workers: 4, BufferSize: items},
 			})
 
 			go func() {
@@ -148,12 +145,11 @@ func BenchmarkProcessing_Comparison(b *testing.B) {
 		}
 	})
 
-	b.Run("Static_Concurrency8", func(b *testing.B) {
+	b.Run("Static_Workers8", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			in := make(chan int, items)
 			out := startProcessing(context.Background(), in, process, Config{
-				Concurrency: 8,
-				BufferSize:  items,
+				Pool: PoolConfig{Workers: 8, BufferSize: items},
 			})
 
 			go func() {
@@ -172,15 +168,15 @@ func BenchmarkProcessing_Comparison(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			in := make(chan int, items)
 			out := startProcessing(context.Background(), in, process, Config{
-				Autoscale: &AutoscaleConfig{
-					MinWorkers:        1,
+				Pool: PoolConfig{
+					Workers:           1,
 					MaxWorkers:        8,
+					BufferSize:        items,
 					ScaleUpCooldown:   time.Millisecond,
 					ScaleDownCooldown: time.Millisecond,
 					ScaleDownAfter:    50 * time.Millisecond,
 					CheckInterval:     time.Millisecond,
 				},
-				BufferSize: items,
 			})
 
 			go func() {
@@ -199,15 +195,15 @@ func BenchmarkProcessing_Comparison(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			in := make(chan int, items)
 			out := startProcessing(context.Background(), in, process, Config{
-				Autoscale: &AutoscaleConfig{
-					MinWorkers:        4,
+				Pool: PoolConfig{
+					Workers:           4,
 					MaxWorkers:        8,
+					BufferSize:        items,
 					ScaleUpCooldown:   time.Millisecond,
 					ScaleDownCooldown: time.Millisecond,
 					ScaleDownAfter:    50 * time.Millisecond,
 					CheckInterval:     time.Millisecond,
 				},
-				BufferSize: items,
 			})
 
 			go func() {
@@ -234,21 +230,18 @@ func BenchmarkProcessing_BurstLoad(b *testing.B) {
 		return []int{v * 2}, nil
 	}
 
-	b.Run("Static_Concurrency4", func(b *testing.B) {
+	b.Run("Static_Workers4", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			in := make(chan int, burstSize)
 			out := startProcessing(context.Background(), in, process, Config{
-				Concurrency: 4,
-				BufferSize:  burstSize,
+				Pool: PoolConfig{Workers: 4, BufferSize: burstSize},
 			})
 
 			go func() {
 				for burst := 0; burst < bursts; burst++ {
-					// Send burst
 					for j := 0; j < burstSize; j++ {
 						in <- j
 					}
-					// Brief pause between bursts
 					time.Sleep(time.Millisecond)
 				}
 				close(in)
@@ -263,24 +256,22 @@ func BenchmarkProcessing_BurstLoad(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			in := make(chan int, burstSize)
 			out := startProcessing(context.Background(), in, process, Config{
-				Autoscale: &AutoscaleConfig{
-					MinWorkers:        1,
+				Pool: PoolConfig{
+					Workers:           1,
 					MaxWorkers:        8,
+					BufferSize:        burstSize,
 					ScaleUpCooldown:   time.Millisecond,
 					ScaleDownCooldown: 5 * time.Millisecond,
 					ScaleDownAfter:    10 * time.Millisecond,
 					CheckInterval:     time.Millisecond,
 				},
-				BufferSize: burstSize,
 			})
 
 			go func() {
 				for burst := 0; burst < bursts; burst++ {
-					// Send burst
 					for j := 0; j < burstSize; j++ {
 						in <- j
 					}
-					// Brief pause between bursts
 					time.Sleep(time.Millisecond)
 				}
 				close(in)

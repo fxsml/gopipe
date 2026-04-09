@@ -59,7 +59,7 @@ Autoscaling is enabled when `MaxWorkers > Workers`. This eliminates the need for
 ```
 pipe/
 ├── pool.go                   # PoolConfig type with parse() and isAutoscale()
-├── processing.go             # Config + Dispatcher + startStaticProcessing() + startAutoscaledProcessing()
+├── processing.go             # Config + startProcessing() + startStaticProcessing() + startAutoscaledProcessing()
 └── internal/autoscale/
     ├── config.go             # Default constants
     ├── pool.go               # Pool struct, worker management, scaler loop
@@ -81,15 +81,15 @@ type PoolConfig struct {
     // Default: Workers (static mode)
     MaxWorkers int
 
+    // BufferSize sets the output channel buffer size.
+    // Default: 0 (unbuffered)
+    BufferSize int
+
     // Autoscale timing (only used when MaxWorkers > Workers)
     ScaleDownAfter    time.Duration // Default: 30s
     ScaleUpCooldown   time.Duration // Default: 5s
     ScaleDownCooldown time.Duration // Default: 10s
     CheckInterval     time.Duration // Default: 1s
-
-    // BufferSize sets the output channel buffer size.
-    // Default: 0 (unbuffered)
-    BufferSize int
 }
 
 func (c PoolConfig) isAutoscale() bool {
@@ -98,8 +98,11 @@ func (c PoolConfig) isAutoscale() bool {
 
 // In pipe/processing.go
 type Config struct {
-    // Pool configures the worker pool.
+    // Pool configures the worker pool (worker count, autoscaling, and buffer size).
     Pool PoolConfig
+
+    // ProcessTimeout sets a per-message processing deadline (default: 0, no timeout).
+    ProcessTimeout time.Duration
 
     // ErrorHandler is called when processing fails.
     // Default logs via slog.Error.
@@ -112,8 +115,8 @@ type Config struct {
     CleanupTimeout time.Duration
 
     // ShutdownTimeout controls shutdown behavior on context cancellation.
-    // If <= 0, waits indefinitely for input to close naturally.
-    // If > 0, waits up to this duration then forces shutdown.
+    // If <= 0, forces immediate shutdown (no grace period).
+    // If > 0, waits up to this duration for natural completion, then forces shutdown.
     ShutdownTimeout time.Duration
 }
 ```
@@ -133,6 +136,19 @@ p := pipe.NewProcessPipe(fn, pipe.Config{
 
 // Default (1 static worker)
 p := pipe.NewProcessPipe(fn, pipe.Config{})
+
+// With buffer and timing overrides
+p := pipe.NewProcessPipe(fn, pipe.Config{
+    Pool: pipe.PoolConfig{
+        Workers:           2,
+        MaxWorkers:        16,
+        BufferSize:        100,
+        ScaleUpCooldown:   2 * time.Second,
+        ScaleDownCooldown: 5 * time.Second,
+        ScaleDownAfter:    15 * time.Second,
+        CheckInterval:     500 * time.Millisecond,
+    },
+})
 
 // Future: Ordered processing (phase 2)
 p := pipe.NewProcessPipe(fn, pipe.Config{
@@ -156,7 +172,7 @@ func startProcessing[In, Out any](...) <-chan Out {
 ### Internal Pool (pipe/internal/autoscale/pool.go)
 
 ```go
-type Config struct {
+type PoolConfig struct {
     MinWorkers, MaxWorkers             int
     ScaleDownAfter                     time.Duration
     ScaleUpCooldown, ScaleDownCooldown time.Duration
@@ -164,7 +180,8 @@ type Config struct {
 }
 
 type Pool[In, Out any] struct {
-    cfg           Config
+    cfg           PoolConfig
+    ctx           context.Context // stored for spawning workers during scaling
     fn            func(context.Context, In) ([]Out, error)
     workers       map[int]*worker
     totalWorkers  atomic.Int64
@@ -172,7 +189,7 @@ type Pool[In, Out any] struct {
     // ...
 }
 
-func NewPool[In, Out any](cfg Config, fn func(...), ...) *Pool[In, Out]
+func NewPool[In, Out any](cfg PoolConfig, fn func(...), ...) *Pool[In, Out]
 func (p *Pool) Start(ctx context.Context, in <-chan In, bufferSize int) <-chan Out
 func (p *Pool) Stop()
 func (p *Pool) TotalWorkers() int64
@@ -187,10 +204,27 @@ Note: Internal pool uses `MinWorkers` which maps from `PoolConfig.Workers`.
 |-------|---------|---------------|
 | Workers | use default | 1 |
 | MaxWorkers | use Workers | Workers (static mode) |
+| BufferSize | unbuffered | 0 |
 | ScaleUpCooldown | use default | 5s |
 | ScaleDownCooldown | use default | 10s |
 | ScaleDownAfter | use default | 30s |
 | CheckInterval | use default | 1s |
+
+## Shutdown Behavior
+
+Both static and autoscaled paths have identical shutdown semantics:
+
+| ShutdownTimeout | Behavior |
+|-----------------|----------|
+| <= 0 | Immediate forced shutdown — workers cancel and exit |
+| > 0 | Grace period: wait for natural completion OR timeout, then force |
+
+On forced shutdown:
+- Workers stop forwarding outputs
+- Workers drain remaining input, calling `ErrorHandler` with `ErrShutdownDropped` for each
+- Workers exit when input channel closes
+
+`ProcessTimeout` is enforced independently in both paths. Per-message timeouts fire during grace periods; on forced shutdown all handlers are cancelled immediately.
 
 ## Convention Alignment
 
@@ -209,7 +243,8 @@ The implementation follows repository conventions:
 
 - **Unit tests**: 15+ tests covering min/max enforcement, scale-up triggers, scale-down on idle, cooldowns, goroutine leak detection
 - **Benchmarks**: Comparison between static and autoscale processing under various loads
-- **All tests pass**: `go test ./...` succeeds
+- **Race detector**: `go test -race ./...` passes
+- **Feature parity**: `ProcessTimeout`, `ShutdownTimeout`, `CleanupHandler` work identically in both static and autoscaled modes
 
 ## Future Enhancements
 

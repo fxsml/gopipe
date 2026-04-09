@@ -15,18 +15,9 @@ type ProcessFunc[In, Out any] func(ctx context.Context, in In) ([]Out, error)
 
 // Config configures behavior of a Pipe.
 type Config struct {
-	// Concurrency sets the number of concurrent workers.
-	// Default is 1. Ignored when Autoscale is set.
-	Concurrency int
-
-	// Autoscale enables dynamic worker scaling based on load.
-	// When set, Concurrency is ignored and workers scale between
-	// MinWorkers and MaxWorkers based on backpressure.
-	Autoscale *AutoscaleConfig
-
-	// BufferSize sets the output channel buffer size.
-	// Default is 0 (unbuffered).
-	BufferSize int
+	// Pool configures the worker pool (worker count, autoscaling, and buffer size).
+	// Default: 1 static worker, unbuffered output.
+	Pool PoolConfig
 
 	// ProcessTimeout sets a per-message processing deadline (default: 0, no timeout).
 	// If > 0, each handler invocation is wrapped with a timeout context.
@@ -60,9 +51,7 @@ type Config struct {
 }
 
 func (c Config) parse() Config {
-	if c.Concurrency <= 0 {
-		c.Concurrency = 1
-	}
+	c.Pool = c.Pool.parse()
 	if c.ErrorHandler == nil {
 		c.ErrorHandler = func(in any, err error) {
 			slog.Error("[GOPIPE] Processing failed", slog.Any("input", in), slog.Any("error", err))
@@ -91,7 +80,7 @@ func startProcessing[In, Out any](
 ) <-chan Out {
 	cfg = cfg.parse()
 
-	if cfg.Autoscale != nil {
+	if cfg.Pool.isAutoscale() {
 		return startAutoscaledProcessing(ctx, in, fn, cfg)
 	}
 	return startStaticProcessing(ctx, in, fn, cfg)
@@ -104,7 +93,7 @@ func startStaticProcessing[In, Out any](
 	fn ProcessFunc[In, Out],
 	cfg Config,
 ) <-chan Out {
-	out := make(chan Out, cfg.BufferSize)
+	out := make(chan Out, cfg.Pool.BufferSize)
 	done := make(chan struct{})
 
 	// Create shutdown context that's only cancelled on forced shutdown
@@ -112,8 +101,8 @@ func startStaticProcessing[In, Out any](
 	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 
 	var wg sync.WaitGroup
-	wg.Add(cfg.Concurrency)
-	for range cfg.Concurrency {
+	wg.Add(cfg.Pool.Workers)
+	for range cfg.Pool.Workers {
 		go func() {
 			defer wg.Done()
 			for {
@@ -217,8 +206,6 @@ func startAutoscaledProcessing[In, Out any](
 	fn ProcessFunc[In, Out],
 	cfg Config,
 ) <-chan Out {
-	as := cfg.Autoscale.parse()
-
 	// Create shutdown context that's only cancelled on forced shutdown.
 	// This mirrors the static path: handlers continue during grace period
 	// and are only cancelled when forced shutdown fires.
@@ -237,12 +224,12 @@ func startAutoscaledProcessing[In, Out any](
 
 	pool := autoscale.NewPool(
 		autoscale.PoolConfig{
-			MinWorkers:        as.MinWorkers,
-			MaxWorkers:        as.MaxWorkers,
-			ScaleDownAfter:    as.ScaleDownAfter,
-			ScaleUpCooldown:   as.ScaleUpCooldown,
-			ScaleDownCooldown: as.ScaleDownCooldown,
-			CheckInterval:     as.CheckInterval,
+			MinWorkers:        cfg.Pool.Workers,
+			MaxWorkers:        cfg.Pool.MaxWorkers,
+			ScaleDownAfter:    cfg.Pool.ScaleDownAfter,
+			ScaleUpCooldown:   cfg.Pool.ScaleUpCooldown,
+			ScaleDownCooldown: cfg.Pool.ScaleDownCooldown,
+			CheckInterval:     cfg.Pool.CheckInterval,
 		},
 		wrappedFn,
 		cfg.ErrorHandler,
@@ -250,7 +237,7 @@ func startAutoscaledProcessing[In, Out any](
 	)
 
 	// Pass shutdownCtx so workers continue during grace period
-	poolOut := pool.Start(shutdownCtx, in, cfg.BufferSize)
+	poolOut := pool.Start(shutdownCtx, in, cfg.Pool.BufferSize)
 
 	// Single wrapper channel (unbuffered) — poolOut already has the buffer
 	out := make(chan Out)

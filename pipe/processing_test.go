@@ -16,7 +16,7 @@ func TestProcessing_Basic(t *testing.T) {
 		return []int{v * 2}, nil
 	}
 
-	out := startProcessing(context.Background(), in, process, Config{Concurrency: 2})
+	out := startProcessing(context.Background(), in, process, Config{Pool: PoolConfig{Workers: 2}})
 
 	go func() {
 		in <- 1
@@ -88,7 +88,7 @@ func TestProcessing_ErrorCallsErrorHandler(t *testing.T) {
 	var errorCalls []int
 
 	out := startProcessing(context.Background(), in, process, Config{
-		Concurrency: 1,
+		Pool: PoolConfig{Workers: 1},
 		ErrorHandler: func(in any, err error) {
 			mu.Lock()
 			errorCalls = append(errorCalls, in.(int))
@@ -123,8 +123,7 @@ func TestProcessing_WithBufferAndConcurrency(t *testing.T) {
 	}
 
 	out := startProcessing(context.Background(), in, process, Config{
-		Concurrency: 3,
-		BufferSize:  2,
+		Pool: PoolConfig{Workers: 3, BufferSize: 2},
 	})
 
 	go func() {
@@ -268,7 +267,7 @@ func TestProcessing_MultipleErrors(t *testing.T) {
 	close(in)
 
 	out := startProcessing(ctx, in, process, Config{
-		Concurrency: 1,
+		Pool: PoolConfig{Workers: 1},
 		ErrorHandler: func(val any, err error) {
 			mu.Lock()
 			errorCalls = append(errorCalls, val)
@@ -310,8 +309,8 @@ func TestProcessing_ShutdownTimeout_ForcedExit(t *testing.T) {
 	}
 
 	out := startProcessing(ctx, in, process, Config{
+		Pool:            PoolConfig{BufferSize: 1}, // Small buffer to cause blocking
 		ShutdownTimeout: 50 * time.Millisecond,
-		BufferSize:      1, // Small buffer to cause blocking
 		ErrorHandler: func(in any, err error) {
 			if err == ErrShutdownDropped {
 				mu.Lock()
@@ -402,7 +401,7 @@ func TestProcessing_ShutdownTimeout_BlockedOnOutput(t *testing.T) {
 
 	// Unbuffered output - worker will block on write if nobody reads
 	out := startProcessing(ctx, in, process, Config{
-		BufferSize:      0,
+		Pool:            PoolConfig{BufferSize: 0},
 		ShutdownTimeout: 50 * time.Millisecond,
 		ErrorHandler: func(in any, err error) {
 			if err == ErrShutdownDropped {
@@ -478,8 +477,8 @@ func TestProcessing_ZeroShutdownTimeout_ImmediateShutdown(t *testing.T) {
 	}
 
 	out := startProcessing(ctx, in, process, Config{
+		Pool:            PoolConfig{BufferSize: 10},
 		ShutdownTimeout: 0, // Immediate shutdown, no grace period
-		BufferSize:      10,
 	})
 
 	// Wait for processing to start
@@ -532,8 +531,8 @@ func TestProcessing_ShutdownDrain_ComprehensiveBehavior(t *testing.T) {
 		}
 
 		out := startProcessing(ctx, in, process, Config{
-			ShutdownTimeout: 50 * time.Millisecond, // 50ms grace period
-			BufferSize:      1,                     // Small buffer to cause blocking
+			Pool:            PoolConfig{BufferSize: 1}, // Small buffer to cause blocking
+			ShutdownTimeout: 50 * time.Millisecond,    // 50ms grace period
 			ErrorHandler: func(val any, err error) {
 				if err == ErrShutdownDropped {
 					mu.Lock()
@@ -596,8 +595,8 @@ func TestProcessing_ShutdownDrain_ComprehensiveBehavior(t *testing.T) {
 		}
 
 		out := startProcessing(ctx, in, process, Config{
+			Pool:            PoolConfig{BufferSize: 10},
 			ShutdownTimeout: 0, // No grace period - immediate shutdown
-			BufferSize:      10,
 		})
 
 		// Wait for processing to start (first item is being processed)
@@ -1103,10 +1102,7 @@ func TestProcessing_Autoscale_Basic(t *testing.T) {
 	}
 
 	out := startProcessing(context.Background(), in, process, Config{
-		Autoscale: &AutoscaleConfig{
-			MinWorkers: 2,
-			MaxWorkers: 4,
-		},
+		Pool: PoolConfig{Workers: 2, MaxWorkers: 4},
 	})
 
 	go func() {
@@ -1140,10 +1136,7 @@ func TestProcessing_Autoscale_WithErrorHandler(t *testing.T) {
 	}
 
 	out := startProcessing(context.Background(), in, process, Config{
-		Autoscale: &AutoscaleConfig{
-			MinWorkers: 1,
-			MaxWorkers: 2,
-		},
+		Pool: PoolConfig{Workers: 1, MaxWorkers: 2},
 		ErrorHandler: func(val any, err error) {
 			mu.Lock()
 			errorVals = append(errorVals, val.(int))
@@ -1176,8 +1169,8 @@ func TestProcessing_Autoscale_WithErrorHandler(t *testing.T) {
 	mu.Unlock()
 }
 
-func TestProcessing_Autoscale_BackwardCompatibility(t *testing.T) {
-	// Ensure static concurrency still works when Autoscale is nil
+func TestProcessing_Autoscale_StaticMode(t *testing.T) {
+	// Ensure static mode still works when MaxWorkers <= Workers
 	in := make(chan int)
 
 	process := func(ctx context.Context, v int) ([]int, error) {
@@ -1185,7 +1178,7 @@ func TestProcessing_Autoscale_BackwardCompatibility(t *testing.T) {
 	}
 
 	out := startProcessing(context.Background(), in, process, Config{
-		Concurrency: 3, // Static concurrency, no autoscale
+		Pool: PoolConfig{Workers: 3}, // MaxWorkers defaults to Workers = static mode
 	})
 
 	go func() {
