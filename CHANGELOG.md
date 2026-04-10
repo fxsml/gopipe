@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-04-10
+
 ### Added
 
 - **pipe/middleware:** `RetryConfig.OnExhausted` callback for retry exhaustion events (#101)
