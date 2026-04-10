@@ -34,6 +34,7 @@ func NewUnmarshalPipe(registry InputRegistry, marshaler Marshaler, cfg PipeConfi
 			Data:       instance,
 			Attributes: raw.Attributes,
 			acking:     raw.acking,
+			locals:     raw.locals,
 		}}, nil
 	}, pipe.Config{
 		BufferSize:      cfg.Pool.BufferSize,
@@ -101,6 +102,7 @@ func NewMarshalPipe(marshaler Marshaler, cfg PipeConfig) *MarshalPipe {
 			Data:       data,
 			Attributes: attrs,
 			acking:     msg.acking,
+			locals:     msg.locals,
 		}}, nil
 	}, pipe.Config{
 		BufferSize:      cfg.Pool.BufferSize,

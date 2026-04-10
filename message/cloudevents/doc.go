@@ -36,6 +36,19 @@
 //	outCh, _ := engine.AddRawOutput("kafka-out", nil)
 //	pub.Publish(ctx, outCh)
 //
+// # Resource Cleanup
+//
+// Both [PublisherConfig] and [SubscriberConfig] accept an optional CleanupHandler
+// that is invoked when the publisher or subscriber finishes (input channel closes,
+// context cancels, or receiver returns EOF). Use it to close underlying
+// protocol-layer resources without manual tracking:
+//
+//	pub := cloudevents.NewPublisher(sender, cloudevents.PublisherConfig{
+//	    CleanupHandler: func(ctx context.Context) {
+//	        sender.Close(ctx)
+//	    },
+//	})
+//
 // # Acknowledgment Bridge
 //
 // CloudEvents uses Finish(err) for acknowledgment:

@@ -129,6 +129,8 @@ func (r *Router) AddHandler(name string, matcher Matcher, h Handler) error {
 
 // Use registers middleware to wrap message processing.
 // Middleware is applied in order: first registered wraps outermost.
+// All user middleware runs inside the acking middleware, ensuring
+// post-handler work (e.g. tx.Commit) completes before the broker ack.
 // Must be called before Pipe().
 func (r *Router) Use(m ...Middleware) error {
 	r.mu.Lock()
@@ -148,10 +150,11 @@ func (r *Router) Use(m ...Middleware) error {
 // Pipe routes messages to handlers and returns outputs.
 // Signature matches pipe.Pipe[*Message, *Message] for composability.
 //
-// Built-in middleware applied automatically (innermost, closest to handler):
+// Built-in middleware applied automatically (outermost, wraps everything):
 //   - Acking: handles ack/nack based on AckStrategy (default: AckOnSuccess)
 //
-// User middleware via Use() wraps outside the acking middleware.
+// User middleware via Use() runs inside the acking middleware, ensuring any
+// post-handler work (e.g. tx.Commit) completes before the broker is acked.
 func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message, error) {
 	r.mu.Lock()
 	if r.started {
@@ -160,14 +163,14 @@ func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message,
 	}
 	r.started = true
 
-	// Apply acking strategy as innermost middleware (closest to handler)
-	fn := r.process
-	fn = r.ackingMiddleware()(fn)
-
 	// Apply user middleware: first registered wraps outermost
+	fn := r.process
 	for i := len(r.middleware) - 1; i >= 0; i-- {
 		fn = r.middleware[i](fn)
 	}
+
+	// Apply acking as outermost middleware (wraps everything including user middleware)
+	fn = r.ackingMiddleware()(fn)
 	r.mu.Unlock()
 
 	cfg := pipe.Config{

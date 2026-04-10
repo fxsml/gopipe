@@ -48,7 +48,7 @@ func BenchmarkEngine_Throughput(b *testing.B) {
 		func(ctx context.Context, cmd BenchCommand) ([]BenchFinalEvent, error) {
 			return []BenchFinalEvent{{ID: cmd.ID}}, nil
 		},
-		CommandHandlerConfig{Source: "/bench", Naming: KebabNaming},
+		CommandHandlerConfig{Source: "/bench", Naming: DotNaming},
 	))
 
 	input := make(chan *RawMessage, 1000)

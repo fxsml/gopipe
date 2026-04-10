@@ -17,7 +17,7 @@ type Attributes map[string]any
 const (
 	// AttrID is required by CloudEvents. Unique event identifier.
 	AttrID = "id"
-	// AttrType is required by CloudEvents. Event type (e.g., "order.created").
+	// AttrType is required by CloudEvents. Event type (e.g., "order-created").
 	AttrType = "type"
 	// AttrSource is required by CloudEvents. Event source URI.
 	AttrSource = "source"

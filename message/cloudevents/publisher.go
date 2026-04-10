@@ -3,6 +3,7 @@ package cloudevents
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/cloudevents/sdk-go/v2/binding"
 	"github.com/cloudevents/sdk-go/v2/protocol"
@@ -19,6 +20,11 @@ type PublisherConfig struct {
 	ErrorHandler func(raw *message.RawMessage, err error)
 	// Logger is used for logging (default: slog.Default()).
 	Logger message.Logger
+	// CleanupHandler is called when the publisher finishes (input channel closes or context cancels).
+	// Use it to close underlying protocol-layer resources like AMQP senders.
+	CleanupHandler func(ctx context.Context)
+	// CleanupTimeout sets the timeout for cleanup operations (default: 0, no timeout).
+	CleanupTimeout time.Duration
 }
 
 // Publisher wraps a CloudEvents protocol.Sender as a gopipe output sink.
@@ -44,7 +50,7 @@ func NewPublisher(sender protocol.Sender, cfg PublisherConfig) *Publisher {
 		logger: logger,
 	}
 
-	p.sink = pipe.NewSinkPipe(p.send, pipe.Config{
+	pipeCfg := pipe.Config{
 		Concurrency: cfg.Concurrency,
 		ErrorHandler: func(in any, err error) {
 			raw, _ := in.(*message.RawMessage)
@@ -56,7 +62,11 @@ func NewPublisher(sender protocol.Sender, cfg PublisherConfig) *Publisher {
 				cfg.ErrorHandler(raw, err)
 			}
 		},
-	})
+	}
+	pipeCfg.CleanupHandler = cfg.CleanupHandler
+	pipeCfg.CleanupTimeout = cfg.CleanupTimeout
+
+	p.sink = pipe.NewSinkPipe(p.send, pipeCfg)
 
 	return p
 }

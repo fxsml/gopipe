@@ -13,6 +13,13 @@ import (
 	ce "github.com/fxsml/gopipe/message/cloudevents"
 )
 
+// StatusCoder is an optional interface for errors returned by Validator.
+// If the error implements StatusCoder, the HTTP response uses that status code;
+// otherwise it defaults to 400 Bad Request.
+type StatusCoder interface {
+	StatusCode() int
+}
+
 // SubscriberConfig configures an HTTP CloudEvents Subscriber.
 type SubscriberConfig struct {
 	// BufferSize is the channel buffer size (default: 100).
@@ -20,6 +27,17 @@ type SubscriberConfig struct {
 
 	// AckTimeout is the maximum time to wait for ack/nack (default: 30s).
 	AckTimeout time.Duration
+
+	// Validator is called after message creation and before Enricher.
+	// If it returns a non-nil error, all messages are nacked and the error
+	// is returned as the HTTP response. Errors implementing StatusCoder
+	// control the HTTP status; otherwise 400 is used.
+	Validator func(*http.Request, []*message.RawMessage) error
+
+	// Enricher is called after Validator and before channel delivery.
+	// Use it to bridge HTTP request data into message locals (e.g., auth claims).
+	// Receives the full message slice for the request.
+	Enricher func(*http.Request, []*message.RawMessage)
 }
 
 func (c SubscriberConfig) parse() SubscriberConfig {
@@ -39,8 +57,9 @@ func (c SubscriberConfig) parse() SubscriberConfig {
 // On context cancellation, new requests return 503, in-flight requests complete
 // within AckTimeout, then the channel closes.
 //
-// HTTP request context is not propagated to messages. Use CloudEvents extensions
-// for request-scoped data (tracing, deadlines).
+// HTTP request context is not propagated to messages automatically. Use the
+// Enricher callback to bridge specific request data (e.g., auth claims) into
+// message locals.
 type Subscriber struct {
 	mu         sync.RWMutex
 	ch         chan *message.RawMessage
@@ -151,13 +170,38 @@ func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		len(events),
 	)
 
+	msgs := make([]*message.RawMessage, 0, len(events))
 	for i := range events {
 		msg, err := ce.FromCloudEvent(&events[i], shared)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		msgs = append(msgs, msg)
+	}
 
+	// Validate: on error, nack all and return HTTP error.
+	if s.cfg.Validator != nil {
+		if err := s.cfg.Validator(r, msgs); err != nil {
+			for _, msg := range msgs {
+				msg.Nack(err)
+			}
+			code := http.StatusBadRequest
+			var sc StatusCoder
+			if errors.As(err, &sc) {
+				code = sc.StatusCode()
+			}
+			http.Error(w, err.Error(), code)
+			return
+		}
+	}
+
+	// Enrich before channel delivery.
+	if s.cfg.Enricher != nil {
+		s.cfg.Enricher(r, msgs)
+	}
+
+	for _, msg := range msgs {
 		select {
 		case s.ch <- msg:
 		case <-s.done:

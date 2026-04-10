@@ -36,6 +36,9 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0022](0022-message-package-redesign.md) | Message Package Redesign | Proposed |
 | [0023](0023-engine-simplification.md) | Engine Simplification | Implemented |
 | [0024](0024-http-cloudevents-adapter.md) | HTTP CloudEvents Adapter Design | Implemented |
+| [0025](0025-message-context-values.md) | Message Context for In-Process Values | Proposed |
+| [0027](0027-json-schema-validation.md) | JSON Schema Validation | Implemented |
+| [0026](0026-acking-middleware-outermost.md) | Acking Middleware Outermost | Proposed |
 
 ## History
 

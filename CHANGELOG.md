@@ -5,6 +5,73 @@ All notable changes to gopipe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.18.0] - 2026-04-10
+
+### Added
+
+- **pipe/middleware:** `RetryConfig.OnExhausted` callback for retry exhaustion events (#101)
+  - Called when retries are exhausted via `MaxAttempts` or `Timeout`
+  - Receives the wrapped error containing `RetryState`, extractable via `RetryStateFromError`
+  - Not called for non-retryable errors (`ErrRetryNotRetryable`) or context cancellation
+  - Eliminates need for wrapper middleware to detect retry exhaustion
+- **message/cloudevents:** `CleanupHandler` on `PublisherConfig` and `SubscriberConfig`
+  - `CleanupHandler func(ctx context.Context)` — same signature as `pipe.Config.CleanupHandler`
+  - `CleanupTimeout time.Duration` — same as `pipe.Config.CleanupTimeout`
+  - Called when publisher/subscriber finishes (input channel closes, context cancels, or receiver returns EOF)
+  - Eliminates manual resource tracking for protocol-layer resources (e.g., AMQP senders/receivers)
+- **message:** `DotNaming` strategy for dot-separated event types (`OrderCreated` → `"order.created"`)
+- **message/http:** `SubscriberConfig.Validator` callback for validating parsed messages before delivery
+  - Called after message creation, before Enricher and channel delivery
+  - Receives the full `[]*message.RawMessage` slice and `*http.Request`
+  - On error, all messages are nacked and an HTTP error is returned
+  - Errors implementing `StatusCoder` interface control the HTTP status code; otherwise defaults to 400
+- **message/http:** `SubscriberConfig.Enricher` callback for bridging HTTP request data into message locals
+  - Called after Validator, before channel delivery
+  - Receives the full `[]*message.RawMessage` slice and `*http.Request`
+  - Enables auth claims propagation from HTTP middleware (e.g., sidecar) into messages via `SetLocal`
+  - Optional — nil enricher is a no-op
+- **message:** `SetLocal(key, val)` / `Local(key)` for in-process context propagation
+  - Message-local values via `map[any]any`, never serialized, never crosses broker boundaries
+  - Decoupled from `context.Context`: locals do not appear in `ctx.Value()` lookups
+  - `Copy()` clones locals along with attributes
+  - Unblocks auth middleware, transaction handling, and tracing adapters
+- **message/jsonschema:** JSON Schema validation for CloudEvents messages
+  - `Registry` for managing schemas by CloudEvents type (eventType → schema)
+  - `Register(eventType, schema)` for type-free schema registration (proxy scenarios)
+  - `RegisterType(v, schema)` derives eventType from Go type via naming strategy
+  - Configurable `SchemaURI` function for custom schema URI schemes (defaults to URN)
+  - Implements `InputRegistry` for automatic instance creation in pipes
+  - `Validate(eventType, data)` validates raw bytes against compiled schemas
+  - `Schema(eventType)` and `Schemas()` for HTTP schema serving
+  - Three validation middleware types:
+    - `NewInputValidationMiddleware` - validates before unmarshaling (fail fast)
+    - `NewOutputValidationMiddleware` - validates after marshaling
+    - `NewValidationMiddleware` - validates proxy scenarios (RawMessage → RawMessage)
+  - Thread-safe for shared use across middleware and pipes
+  - Uses JSON Schema Draft 2020-12 via `santhosh-tekuri/jsonschema/v6`
+  - Separation of concerns: validation separate from marshaling
+  - See ADR 0027 and `examples/07-validating-marshaler` for usage
+
+### Fixed
+
+- **message:** `KebabNaming` now produces true kebab-case with hyphens (`OrderCreated` → `"order-created"`) instead of dots; previous dot-separated behavior preserved as `DotNaming`
+- **message:** `UnmarshalPipe` and `MarshalPipe` now propagate locals across the `RawMessage`↔`Message` boundary
+  - Previously, locals set on `RawMessage` (e.g., via Enricher) were silently dropped during unmarshaling
+  - Same fix applied to `MarshalPipe` for the reverse direction
+
+### Changed
+
+- **message:** Default naming in `jsonschema.Registry` changed from `KebabNaming` to `DotNaming`
+- **message:** All existing `KebabNaming` usages migrated to `DotNaming` — no behavior change for current consumers
+- **message:** Rename `Done()` to `Settled()` to avoid collision with `context.Context` semantics
+- **message:** Remove implicit locals propagation from `AckForward` — acking and locals are orthogonal; propagation is the handler's explicit choice via `Copy()` or `SetLocal()`
+
+### Removed
+
+- **message:** `AttributesFromContext()` — use `MessageFromContext(ctx).Attributes` instead
+
 ## [0.17.1] - 2026-02-04
 
 ### Added

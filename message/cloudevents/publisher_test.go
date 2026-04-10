@@ -232,6 +232,133 @@ func TestPublisher(t *testing.T) {
 		}
 	})
 
+	t.Run("calls CleanupHandler when channel closes", func(t *testing.T) {
+		sender := newMockSender(protocol.ResultACK)
+
+		cleaned := make(chan struct{})
+		pub := NewPublisher(sender, PublisherConfig{
+			CleanupHandler: func(context.Context) { close(cleaned) },
+		})
+
+		in := make(chan *message.RawMessage, 1)
+		raw := message.NewRaw(
+			[]byte(`{"key":"value"}`),
+			message.Attributes{"id": "test", "type": "test", "source": "/test"},
+			nil,
+		)
+		in <- raw
+		close(in)
+
+		done, err := pub.Publish(context.Background(), in)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		select {
+		case <-cleaned:
+			// success
+		case <-time.After(time.Second):
+			t.Error("expected Cleanup to be called")
+		}
+
+		<-done
+	})
+
+	t.Run("calls CleanupHandler on context cancellation", func(t *testing.T) {
+		sender := newMockSender()
+
+		cleaned := make(chan struct{})
+		pub := NewPublisher(sender, PublisherConfig{
+			CleanupHandler: func(context.Context) { close(cleaned) },
+		})
+
+		in := make(chan *message.RawMessage)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done, err := pub.Publish(ctx, in)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cancel()
+		close(in)
+
+		select {
+		case <-cleaned:
+			// success
+		case <-time.After(time.Second):
+			t.Error("expected Cleanup to be called on context cancellation")
+		}
+
+		<-done
+	})
+
+	t.Run("CleanupTimeout sets deadline on cleanup context", func(t *testing.T) {
+		sender := newMockSender(protocol.ResultACK)
+
+		cleaned := make(chan struct{})
+		pub := NewPublisher(sender, PublisherConfig{
+			CleanupHandler: func(ctx context.Context) {
+				if _, ok := ctx.Deadline(); !ok {
+					t.Error("expected context to have a deadline")
+				}
+				close(cleaned)
+			},
+			CleanupTimeout: 5 * time.Second,
+		})
+
+		in := make(chan *message.RawMessage, 1)
+		raw := message.NewRaw(
+			[]byte(`{}`),
+			message.Attributes{"id": "test", "type": "test", "source": "/test"},
+			nil,
+		)
+		in <- raw
+		close(in)
+
+		done, err := pub.Publish(context.Background(), in)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		select {
+		case <-cleaned:
+			// success
+		case <-time.After(time.Second):
+			t.Error("expected CleanupHandler to be called")
+		}
+
+		<-done
+	})
+
+	t.Run("nil CleanupHandler does not panic", func(t *testing.T) {
+		sender := newMockSender(protocol.ResultACK)
+		pub := NewPublisher(sender, PublisherConfig{
+			CleanupHandler: nil,
+		})
+
+		in := make(chan *message.RawMessage, 1)
+		raw := message.NewRaw(
+			[]byte(`{}`),
+			message.Attributes{"id": "test", "type": "test", "source": "/test"},
+			nil,
+		)
+		in <- raw
+		close(in)
+
+		done, err := pub.Publish(context.Background(), in)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		select {
+		case <-done:
+			// success — no panic
+		case <-time.After(time.Second):
+			t.Error("expected done channel to close")
+		}
+	})
+
 	t.Run("Use returns error after Publish", func(t *testing.T) {
 		sender := newMockSender()
 		pub := NewPublisher(sender, PublisherConfig{})

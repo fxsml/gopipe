@@ -33,7 +33,7 @@ type NamingStrategy interface {
     TypeName(t reflect.Type) string  // Go type → CE type
 }
 
-var KebabNaming NamingStrategy   // OrderCreated → "order.created"
+var DotNaming NamingStrategy   // OrderCreated → "order.created"
 var SnakeNaming NamingStrategy   // OrderCreated → "order_created"
 ```
 
@@ -56,7 +56,7 @@ type Handler interface {
 ### Handler Construction
 
 ```go
-handler := message.NewHandler(processOrder, message.KebabNaming)
+handler := message.NewHandler(processOrder, message.DotNaming)
 // handler.EventType() returns "order.created"
 // handler.NewInput() returns *OrderCreated for unmarshaling
 ```

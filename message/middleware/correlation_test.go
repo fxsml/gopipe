@@ -44,7 +44,7 @@ func TestCorrelationID(t *testing.T) {
 				{Data: &TestEvent{Value: cmd.Input * 2}, Attributes: message.Attributes{"type": "test.event"}},
 				{Data: &TestEvent{Value: cmd.Input * 3}, Attributes: message.Attributes{"type": "test.event"}},
 			}, nil
-		}, message.KebabNaming)
+		}, message.DotNaming)
 
 		if err := engine.AddHandler("test", nil, handler); err != nil {
 			t.Fatalf("AddHandler failed: %v", err)
@@ -115,7 +115,7 @@ func TestCorrelationID(t *testing.T) {
 			return []*message.Message{
 				{Data: &TestEvent{Value: cmd.Input}, Attributes: message.Attributes{"type": "test.event"}},
 			}, nil
-		}, message.KebabNaming)
+		}, message.DotNaming)
 
 		if err := engine.AddHandler("test", nil, handler); err != nil {
 			t.Fatalf("AddHandler failed: %v", err)
@@ -169,7 +169,7 @@ func TestUse_AfterStart(t *testing.T) {
 
 	handler := message.NewHandler[TestCommand](func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		return nil, nil
-	}, message.KebabNaming)
+	}, message.DotNaming)
 	_ = engine.AddHandler("test", nil, handler)
 
 	input := make(chan *message.Message)
