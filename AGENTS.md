@@ -17,6 +17,40 @@ make vet    # Run linters
 3. **Document before push** — Features, ADRs, CHANGELOG
 4. **Test before push** — `make test && make build && make vet`
 
+## Claude Code Integration
+
+See `.claude/CLAUDE.md` for the full Claude Code configuration.
+
+### Auto-Applied Skills
+
+Domain expertise loaded automatically from `.claude/skills/`:
+
+| Skill | Expertise Area |
+|-------|----------------|
+| `managing-git-workflow` | Git flow, branch naming, multi-module tagging, approval gates |
+| `developing-go-code` | Go standards, testing, common anti-patterns |
+| `building-message-pipelines` | Message package architecture, Engine, Router, Handler |
+
+### Slash Commands
+
+| Command | Purpose |
+|---------|---------|
+| `/release-feature BRANCH` | Merge feature branch to develop (history cleanup → PR → verify) |
+| `/release VERSION` | Release develop to main with multi-module tags |
+| `/hotfix NAME` | Create and release a hotfix from main |
+| `/create-feature NAME` | Create feature branch from develop |
+| `/verify` | Run `make test && make build && make vet` |
+| `/docs-lint` | Check documentation quality and index consistency |
+| `/create-adr TITLE` | Create new Architecture Decision Record |
+| `/create-plan TITLE` | Create implementation plan |
+| `/changelog TYPE DESC` | Add entry to CHANGELOG under [Unreleased] |
+| `/review-pr [NUMBER]` | Review PR against project standards |
+
+### Hooks
+
+- **PostToolUse**: `gofmt -w` runs automatically after editing any `.go` file
+- **PreToolUse**: `make test && make build && make vet` runs before `git commit` or `git push`
+
 ## Package Overview
 
 | Package | Purpose | Key Types |
