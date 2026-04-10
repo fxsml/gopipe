@@ -64,6 +64,12 @@ After PR is approved and merged:
 git checkout main
 git pull origin main
 
+# Check for changes in channel and pipe since last release
+git diff vOLD..HEAD -- channel/
+git diff vOLD..HEAD -- pipe/
+# Empty output → tag all modules at once (see below)
+# Any output → follow sequential tagging + go.mod update procedure in "Multi-Module Tagging"
+
 # Tag all modules (see "Multi-Module Tagging" section for details)
 git tag channel/vX.Y.Z
 git tag pipe/vX.Y.Z
@@ -76,12 +82,13 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 gh release create vX.Y.Z --title "vX.Y.Z" --notes "Release notes..."
 
-# Merge back to develop
+# Merge back to develop (prepare locally, then ask user to push)
 git checkout develop
 git merge main
-git push origin develop
+# Agent stops here — ask user to run:
+# ! git push origin develop
 
-# Delete release branch
+# Delete release branch (local and remote)
 git branch -d release/vX.Y.Z
 git push origin --delete release/vX.Y.Z
 ```
@@ -187,13 +194,14 @@ https://github.com/fxsml/gopipe/compare/vX.Y.Z-1...vX.Y.Z
 EOF
 )"
 
-# Merge main back to develop
+# Merge main back to develop (prepare locally, then ask user to push)
 git checkout develop
 git merge main
 # Resolve any conflicts (typically in CHANGELOG.md)
-git push origin develop
+# Agent stops here — ask user to run:
+# ! git push origin develop
 
-# Delete hotfix branch
+# Delete hotfix branch (local and remote)
 git branch -d hotfix/<descriptive-name>
 git push origin --delete hotfix/<descriptive-name>
 ```
@@ -300,72 +308,75 @@ Internal go.mod files (e.g., `pipe/go.mod` requiring `channel`) reference specif
 
 When `pipe/go.mod` contains `require github.com/fxsml/gopipe/channel v0.11.0`:
 - If we update to `v0.12.0` before tagging → CI fails (tag doesn't exist yet)
-- If we keep `v0.11.0` after tagging → users get mixed versions
+- If we keep `v0.11.0` after tagging → consumers get mixed versions and miss new features
 
-**When Mixed Versions Are Safe:**
+**The Rule:**
 
-If the release has **no cross-module API changes** (e.g., only doc changes in channel/pipe), keeping old refs is safe:
-- `pipe@v0.12.0` + `channel@v0.11.0` works because the API is identical
-- Go's MVS resolves correctly
+If a dependency module has **any changes** in this release (`.go`, `.md`, or otherwise), update all downstream go.mod files to reference the new version before tagging those downstream modules. This ensures consumers always get the latest code via Go's MVS without needing explicit upgrades, and removes any ambiguity about what "counts" as a relevant change.
 
-**When You MUST Update Refs:**
+- `channel` has any changes → update `pipe/go.mod` and `message/go.mod`
+- `pipe` has any changes → update `message/go.mod`
+- `channel` and `pipe` have zero diff → no go.mod updates needed
 
-If a module uses **new features from a dependency**, you must update refs. For example, if `message@v0.12.0` uses a new `channel.NewFeature()` function:
+**Procedure When Updates Are Required:**
 
 ```bash
 # 1. Merge release PR to main
 gh pr merge <PR> --merge
 
-# 2. Tag channel first (no dependencies)
+# 2. Pull main and check which modules changed
 git checkout main && git pull origin main
+git diff vOLD..HEAD -- channel/   # any output → update pipe/go.mod and message/go.mod
+git diff vOLD..HEAD -- pipe/      # any output → update message/go.mod
+
+# 3. Tag channel first (no dependencies)
 git tag channel/vX.Y.Z
 git push origin channel/vX.Y.Z
 
-# 3. Update pipe/go.mod to reference new channel version
-# (create commit directly on main)
-sed -i 's/channel v0.11.0/channel vX.Y.Z/' pipe/go.mod
+# 4. If channel had any changes: update pipe/go.mod
+sed -i 's/channel vOLD/channel vX.Y.Z/' pipe/go.mod
 git add pipe/go.mod
 git commit -m "chore(pipe): update channel dependency to vX.Y.Z"
 git push origin main
 
-# 4. Tag pipe
+# 5. Tag pipe
 git tag pipe/vX.Y.Z
 git push origin pipe/vX.Y.Z
 
-# 5. Update message/go.mod
-sed -i 's/channel v0.11.0/channel vX.Y.Z/' message/go.mod
-sed -i 's/pipe v0.11.0/pipe vX.Y.Z/' message/go.mod
+# 6. If channel or pipe had any changes: update message/go.mod
+sed -i 's/channel vOLD/channel vX.Y.Z/' message/go.mod
+sed -i 's/pipe vOLD/pipe vX.Y.Z/' message/go.mod
 git add message/go.mod
 git commit -m "chore(message): update dependencies to vX.Y.Z"
 git push origin main
 
-# 6. Tag message
+# 7. Tag message
 git tag message/vX.Y.Z
 git push origin message/vX.Y.Z
 
-# 7. Create release tag and GitHub release
+# 8. Create release tag and GitHub release
 git tag vX.Y.Z
 git push origin vX.Y.Z
 gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."
 
-# 8. Merge back to develop
+# 9. Merge back to develop (prepare locally, then ask user to push)
 git checkout develop
 git merge main
-git push origin develop
+# Agent stops here — ask user to run:
+# ! git push origin develop
+
+# 10. Delete release branch (local and remote)
+git branch -d release/vX.Y.Z
+git push origin --delete release/vX.Y.Z
 ```
 
-**Determining If Updates Are Needed:**
+**Checking for Changes Before Release:**
 
-Before release, check for cross-module changes:
+Run these immediately after pulling main (step 2 above). Empty output means no go.mod updates needed; any output means follow the sequential tagging procedure.
+
 ```bash
-# Check channel changes
-git diff vOLD..HEAD -- channel/
-
-# Check pipe changes
-git diff vOLD..HEAD -- pipe/
-
-# If only doc.go or no changes → safe to keep old refs
-# If API changes → must update refs as described above
+git diff vOLD..HEAD -- channel/   # empty → skip; any output → update pipe/go.mod + message/go.mod
+git diff vOLD..HEAD -- pipe/      # empty → skip; any output → update message/go.mod
 ```
 
 ### Verifying Tags

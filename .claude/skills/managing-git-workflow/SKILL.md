@@ -22,13 +22,28 @@ user-invocable: false
 
 Conventional commits required: `<type>(<scope>): <description>`
 
-Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `ci`
+
+The type reflects the **content** of the change, not who made it.
+
+| Content | Type | Examples |
+|---------|------|---------|
+| New user-facing feature | `feat` | new API, new skill/hook infrastructure |
+| Bug fix | `fix` | correct wrong behavior |
+| User-facing docs | `docs` | CHANGELOG, ADRs, godoc, README, architecture docs |
+| Internal tooling & config | `chore` | `.claude/` skills, hooks, CLAUDE.md, AGENTS.md, Makefile |
+| CI/CD pipeline changes | `ci` | GitHub Actions workflows, CI configuration |
+| Code restructure, no behavior change | `refactor` | — |
+| Tests only | `test` | — |
 
 Examples:
 ```
 feat(message): add CloudEvents validation
 fix(router): handle nil handler gracefully
 docs: update architecture roadmap
+docs(procedures): tighten release procedure go.mod rules
+chore: add Claude Code skills, hooks, and CLAUDE.md integration
+ci: update Go version requirement to 1.24
 ```
 
 ## Multi-Module Tagging
@@ -41,6 +56,8 @@ Tag in dependency order — Go proxy resolves from published tags:
 4. `examples/vX.Y.Z` — optional
 
 Push all at once: `git push origin channel/vX.Y.Z pipe/vX.Y.Z message/vX.Y.Z`
+
+**go.mod refs:** If a dependency module has **any changes** (`.go`, `.md`, anything), update all downstream go.mod files to the new version before tagging those modules. Tag each module, push, update the next module's go.mod, then tag that module. Only skip updates if `git diff vOLD..HEAD -- <module>/` produces empty output.
 
 ## Approval Gates
 
@@ -61,6 +78,8 @@ Push all at once: `git push origin channel/vX.Y.Z pipe/vX.Y.Z message/vX.Y.Z`
 ## Common Mistakes
 
 - Tagging out of order (channel must precede pipe, pipe must precede message)
+- Skipping go.mod updates when a dependency had any changes — consumers won't get fixes or features via MVS
+- Attempting to push develop directly — the deny list blocks it; instead prepare the merge locally and ask the user to run `! git push origin develop`
 - Forgetting to sync develop after release (`git merge main` → develop)
 - Force pushing without lease (`--force` instead of `--force-with-lease`)
 
