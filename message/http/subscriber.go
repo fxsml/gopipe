@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -38,6 +39,11 @@ type SubscriberConfig struct {
 	// Use it to bridge HTTP request data into message locals (e.g., auth claims).
 	// Receives the full message slice for the request.
 	Enricher func(*http.Request, []*message.RawMessage)
+
+	// ErrorHandler is called when a message is nacked after delivery.
+	// It has full control over the HTTP response written to w.
+	// If nil, DefaultNackHandler is used.
+	ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 }
 
 func (c SubscriberConfig) parse() SubscriberConfig {
@@ -47,7 +53,33 @@ func (c SubscriberConfig) parse() SubscriberConfig {
 	if c.AckTimeout <= 0 {
 		c.AckTimeout = 30 * time.Second
 	}
+	if c.ErrorHandler == nil {
+		c.ErrorHandler = DefaultNackHandler
+	}
 	return c
+}
+
+// DefaultNackHandler is the ErrorHandler used when none is configured.
+// It derives the HTTP status code from the error if it implements StatusCoder,
+// falling back to 500. For status codes >= 500 the response body is the generic
+// status text (e.g. "Internal Server Error") to avoid leaking infrastructure
+// details. For status codes < 500 the error message is used directly, as the
+// caller opted into a non-server-error and the message is considered safe to
+// expose. The response body is always JSON: {"error":"<message>"}.
+func DefaultNackHandler(w http.ResponseWriter, r *http.Request, err error) {
+	code := http.StatusInternalServerError
+	var sc StatusCoder
+	if errors.As(err, &sc) {
+		code = sc.StatusCode()
+	}
+	msg := err.Error()
+	if code >= http.StatusInternalServerError {
+		msg = http.StatusText(code)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	b, _ := json.Marshal(map[string]string{"error": msg})
+	w.Write(b) //nolint:errcheck
 }
 
 // Subscriber receives CloudEvents over HTTP and delivers to a channel.
@@ -103,9 +135,9 @@ func (s *Subscriber) Subscribe(ctx context.Context) (<-chan *message.RawMessage,
 		s.subscribed = false
 		s.mu.Unlock()
 
-		close(s.done)  // Signal shutdown to in-flight requests
-		s.wg.Wait()    // Wait for in-flight requests to complete
-		close(s.ch)    // Safe to close now
+		close(s.done) // Signal shutdown to in-flight requests
+		s.wg.Wait()   // Wait for in-flight requests to complete
+		close(s.ch)   // Safe to close now
 	}()
 
 	return s.ch, nil
@@ -217,7 +249,7 @@ func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	select {
 	case err := <-result:
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			s.cfg.ErrorHandler(w, r, err)
 			return
 		}
 	case <-s.done:

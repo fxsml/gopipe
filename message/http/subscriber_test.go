@@ -119,16 +119,16 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 		}
 	})
 
-	t.Run("returns 500 on nack", func(t *testing.T) {
+	t.Run("returns 500 with generic body on nack", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		ch, _ := sub.Subscribe(ctx)
 
-		// Nack the message
+		// Nack the message with an internal error that must not leak.
 		go func() {
 			msg := <-ch
-			msg.Nack(errors.New("processing failed"))
+			msg.Nack(errors.New("sb://my-namespace.servicebus.windows.net/my-topic: not found"))
 		}()
 
 		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
@@ -140,6 +140,12 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 
 		if w.Code != http.StatusInternalServerError {
 			t.Errorf("expected %d, got %d", http.StatusInternalServerError, w.Code)
+		}
+		if got := w.Body.String(); got != `{"error":"Internal Server Error"}` {
+			t.Errorf("expected generic body, got %q", got)
+		}
+		if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+			t.Errorf("expected Content-Type application/json, got %q", ct)
 		}
 	})
 
@@ -486,8 +492,8 @@ type statusError struct {
 	msg  string
 }
 
-func (e *statusError) Error() string    { return e.msg }
-func (e *statusError) StatusCode() int  { return e.code }
+func (e *statusError) Error() string   { return e.msg }
+func (e *statusError) StatusCode() int { return e.code }
 
 func TestSubscriber_Validator(t *testing.T) {
 	t.Run("nil validator is no-op", func(t *testing.T) {
@@ -704,6 +710,137 @@ func TestSubscriber_Validator(t *testing.T) {
 		}
 		if enricherCalled {
 			t.Error("enricher should not be called when validator fails")
+		}
+	})
+}
+
+func TestSubscriber_ErrorHandler(t *testing.T) {
+	sendEvent := func(sub *Subscriber) *httptest.ResponseRecorder {
+		body := []byte(`{"specversion":"1.0","id":"1","type":"test","source":"/test","data":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentTypeCloudEventsJSON)
+		w := httptest.NewRecorder()
+		sub.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("default handler returns 500 with generic status text", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
+
+		go func() { (<-ch).Nack(errors.New("sb://secret-namespace/topic: not found")) }()
+
+		w := sendEvent(sub)
+
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("expected %d, got %d", http.StatusInternalServerError, w.Code)
+		}
+		if got := w.Body.String(); got != `{"error":"Internal Server Error"}` {
+			t.Errorf("expected generic body, got %q", got)
+		}
+		if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+			t.Errorf("expected Content-Type application/json, got %q", ct)
+		}
+	})
+
+	t.Run("default handler exposes error message for sub-500 StatusCoder", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
+
+		go func() {
+			(<-ch).Nack(&statusError{code: http.StatusUnprocessableEntity, msg: "schema mismatch"})
+		}()
+
+		w := sendEvent(sub)
+
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("expected %d, got %d", http.StatusUnprocessableEntity, w.Code)
+		}
+		if got := w.Body.String(); got != `{"error":"schema mismatch"}` {
+			t.Errorf("expected error message in body, got %q", got)
+		}
+	})
+
+	t.Run("default handler suppresses message for 5xx StatusCoder", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{AckTimeout: time.Second})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
+
+		go func() {
+			(<-ch).Nack(&statusError{code: http.StatusBadGateway, msg: "upstream: connection refused"})
+		}()
+
+		w := sendEvent(sub)
+
+		if w.Code != http.StatusBadGateway {
+			t.Errorf("expected %d, got %d", http.StatusBadGateway, w.Code)
+		}
+		if got := w.Body.String(); got != `{"error":"Bad Gateway"}` {
+			t.Errorf("expected generic status text, got %q", got)
+		}
+	})
+
+	t.Run("custom ErrorHandler has full response control", func(t *testing.T) {
+		sub := NewSubscriber(SubscriberConfig{
+			AckTimeout: time.Second,
+			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				fmt.Fprint(w, "try again later")
+			},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
+
+		go func() { (<-ch).Nack(errors.New("queue full")) }()
+
+		w := sendEvent(sub)
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected %d, got %d", http.StatusServiceUnavailable, w.Code)
+		}
+		if got := w.Body.String(); got != "try again later" {
+			t.Errorf("expected custom body, got %q", got)
+		}
+		if ct := w.Header().Get("Content-Type"); ct != "text/plain" {
+			t.Errorf("expected Content-Type text/plain, got %q", ct)
+		}
+	})
+
+	t.Run("custom ErrorHandler receives nack error and request", func(t *testing.T) {
+		nackErr := errors.New("nack reason")
+		var (
+			gotErr error
+			gotReq *http.Request
+		)
+
+		sub := NewSubscriber(SubscriberConfig{
+			AckTimeout: time.Second,
+			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+				gotErr = err
+				gotReq = r
+				w.WriteHeader(http.StatusInternalServerError)
+			},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ch, _ := sub.Subscribe(ctx)
+
+		go func() { (<-ch).Nack(nackErr) }()
+
+		sendEvent(sub)
+
+		if gotErr != nackErr {
+			t.Errorf("ErrorHandler got err %v, want %v", gotErr, nackErr)
+		}
+		if gotReq == nil {
+			t.Error("ErrorHandler did not receive request")
 		}
 	})
 }

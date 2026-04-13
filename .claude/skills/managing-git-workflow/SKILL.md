@@ -46,6 +46,18 @@ chore: add Claude Code skills, hooks, and CLAUDE.md integration
 ci: update Go version requirement to 1.24
 ```
 
+When a commit closes a GitHub issue, add a `Closes #NNN` line in the footer:
+
+```
+feat(message/http): add ErrorHandler to SubscriberConfig (#140)
+
+Longer description of what was done and why.
+
+Closes #140
+```
+
+The `Closes` keyword causes GitHub to automatically close the referenced issue when the PR is merged.
+
 ## Multi-Module Tagging
 
 Tag in dependency order — Go proxy resolves from published tags:

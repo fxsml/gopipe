@@ -35,6 +35,16 @@ fix(router): handle nil handler gracefully
 docs: update architecture roadmap
 ```
 
+When a commit closes a GitHub issue, add a `Closes #NNN` footer:
+
+```
+feat(message/http): add ErrorHandler to SubscriberConfig (#140)
+
+Longer description.
+
+Closes #140
+```
+
 ## Version Management
 
 Uses [semantic versioning](https://semver.org/) with [git-semver](https://pkg.go.dev/github.com/mdomke/git-semver/v6@v6.10.0).
