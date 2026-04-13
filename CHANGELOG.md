@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **message/http:** `SubscriberConfig.ErrorHandler` for full control over nack HTTP responses (#140)
+  - `ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)`
+  - Has full control over status code, headers, and body; set in `parse()` so it is always non-nil
+  - `DefaultNackHandler` is used when nil: derives status via `StatusCoder` (falls back to 500);
+    for `>= 500` writes generic `http.StatusText` to avoid leaking internals, for `< 500` writes `err.Error()`
+  - All default responses are JSON: `{"error":"<message>"}` with `Content-Type: application/json`
+
 ## [0.18.0] - 2026-04-10
 
 ### Added

@@ -46,6 +46,20 @@ chore: add Claude Code skills, hooks, and CLAUDE.md integration
 ci: update Go version requirement to 1.24
 ```
 
+When a commit closes a GitHub issue, add `Closes #NNN` in the footer — not the subject:
+
+```
+feat(message/http): add ErrorHandler to SubscriberConfig
+
+Longer description of what was done and why.
+
+Closes #140
+```
+
+The `Closes` keyword in the footer is what GitHub parses to auto-close the issue on merge.
+The `(#NNN)` parenthetical you see on GitHub is the **PR number**, added automatically on
+squash-merge — putting an issue number there manually conflates the two.
+
 ## Multi-Module Tagging
 
 Tag in dependency order — Go proxy resolves from published tags:
