@@ -35,15 +35,18 @@ fix(router): handle nil handler gracefully
 docs: update architecture roadmap
 ```
 
-When a commit closes a GitHub issue, add a `Closes #NNN` footer:
+When a commit closes a GitHub issue, add `Closes #NNN` in the footer — not the subject:
 
 ```
-feat(message/http): add ErrorHandler to SubscriberConfig (#140)
+feat(message/http): add ErrorHandler to SubscriberConfig
 
 Longer description.
 
 Closes #140
 ```
+
+The `(#NNN)` parenthetical on GitHub is the PR number, added automatically on squash-merge.
+Keep the subject clean; `Closes` in the footer is what GitHub parses to close the issue.
 
 ## Version Management
 

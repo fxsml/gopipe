@@ -46,17 +46,19 @@ chore: add Claude Code skills, hooks, and CLAUDE.md integration
 ci: update Go version requirement to 1.24
 ```
 
-When a commit closes a GitHub issue, add a `Closes #NNN` line in the footer:
+When a commit closes a GitHub issue, add `Closes #NNN` in the footer — not the subject:
 
 ```
-feat(message/http): add ErrorHandler to SubscriberConfig (#140)
+feat(message/http): add ErrorHandler to SubscriberConfig
 
 Longer description of what was done and why.
 
 Closes #140
 ```
 
-The `Closes` keyword causes GitHub to automatically close the referenced issue when the PR is merged.
+The `Closes` keyword in the footer is what GitHub parses to auto-close the issue on merge.
+The `(#NNN)` parenthetical you see on GitHub is the **PR number**, added automatically on
+squash-merge — putting an issue number there manually conflates the two.
 
 ## Multi-Module Tagging
 
