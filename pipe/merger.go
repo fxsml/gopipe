@@ -42,7 +42,7 @@ type MergerConfig struct {
 func (c MergerConfig) parse() MergerConfig {
 	if c.ErrorHandler == nil {
 		c.ErrorHandler = func(in any, err error) {
-			slog.Error("[GOPIPE] Merger error", slog.Any("input", in), slog.Any("error", err))
+			slog.Error("Merger error", "component", "merger", "error", err, "input", in)
 		}
 	}
 	return c

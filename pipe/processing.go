@@ -58,7 +58,7 @@ func (c Config) parse() Config {
 	}
 	if c.ErrorHandler == nil {
 		c.ErrorHandler = func(in any, err error) {
-			slog.Error("[GOPIPE] Processing failed", slog.Any("input", in), slog.Any("error", err))
+			slog.Error("Processing failed", "component", "pipe", "error", err, "input", in)
 		}
 	}
 	return c

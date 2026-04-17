@@ -49,7 +49,7 @@ type DistributorConfig[T any] struct {
 func (c DistributorConfig[T]) parse() DistributorConfig[T] {
 	if c.ErrorHandler == nil {
 		c.ErrorHandler = func(in any, err error) {
-			slog.Error("[GOPIPE] Distributor error", slog.Any("input", in), slog.Any("error", err))
+			slog.Error("Distributor error", "component", "distributor", "error", err, "input", in)
 		}
 	}
 	return c
