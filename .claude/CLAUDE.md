@@ -10,6 +10,7 @@ Load these on demand when the relevant task arises:
 
 | Task | Procedure |
 |------|-----------|
+| Coding behavior, simplicity, scope discipline | @../docs/procedures/coding.md |
 | Git workflow, branch naming, commits | @../docs/procedures/git.md |
 | Go standards, godoc, testing | @../docs/procedures/go.md |
 | Documentation, CHANGELOG, doc linting | @../docs/procedures/documentation.md |

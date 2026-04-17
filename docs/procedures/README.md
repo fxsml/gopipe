@@ -6,6 +6,7 @@ Modular procedure library for gopipe development. Reusable across projects.
 
 | File | Topic | Description |
 |------|-------|-------------|
+| [coding.md](coding.md) | Coding | Behavioral rules: simplicity, scope discipline, TDD |
 | [git.md](git.md) | Git | Workflow, branching, commits |
 | [go.md](go.md) | Go | Standards, godoc, testing |
 | [documentation.md](documentation.md) | Docs | Structure, templates, ADRs |

@@ -113,5 +113,6 @@ return &Message{Attributes: maps.Clone(msg.Attributes)}
 
 ## Reference Procedures
 
+- @../docs/procedures/coding.md — behavioral rules: simplicity, surgical changes, scope discipline
 - @../docs/procedures/go.md — full Go standards, deprecation, error handling
 - @../AGENTS.md — architecture decisions, common mistakes, naming decisions
