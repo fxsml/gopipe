@@ -44,6 +44,19 @@ type DistributorConfig[T any] struct {
 	// Called with ErrShutdownDropped when dropped due to shutdown.
 	// Default logs via slog.Error.
 	ErrorHandler func(in any, err error)
+
+	// Metrics receives observability events (optional, nil = no overhead).
+	Metrics Metrics
+
+	// Labels provides static identifiers attached to every metrics event.
+	// Common keys: "stage", "pipeline", "handler", "service"
+	Labels map[string]string
+
+	// LabelFunc extracts dynamic labels from each routed value.
+	// Called before RecordWait (WaitOpSend). Returned labels are merged with Labels,
+	// with LabelFunc values taking precedence on conflicts.
+	// Only called when Metrics is non-nil. Nil means no dynamic labels.
+	LabelFunc func(val any) map[string]string
 }
 
 func (c DistributorConfig[T]) parse() DistributorConfig[T] {
@@ -159,6 +172,44 @@ func (d *Distributor[T]) Distribute(ctx context.Context, input <-chan T) (<-chan
 	return d.allDone, nil
 }
 
+// Stats returns an aggregate point-in-time snapshot across all outputs.
+// Depth is the sum of all output buffer depths; Capacity is the per-output
+// buffer size (all outputs share the same capacity set in DistributorConfig.Buffer).
+// Use with a pull-based metrics backend (e.g. OTel observable gauge) to avoid
+// recording on every send. For per-output detail use [Distributor.OutputStats].
+func (d *Distributor[T]) Stats() Stats {
+	d.mu.RLock()
+	outputs := d.outputs
+	d.mu.RUnlock()
+	var totalDepth int
+	for _, out := range outputs {
+		totalDepth += len(out.ch)
+	}
+	return Stats{
+		Depth:    totalDepth,
+		Capacity: d.cfg.Buffer,
+		Labels:   d.cfg.Labels,
+	}
+}
+
+// OutputStats returns a point-in-time snapshot for each output buffer,
+// in the order outputs were registered via AddOutput.
+// Use with a pull-based metrics backend (e.g. OTel observable gauge) to avoid
+// recording on every send. For an aggregate view use [Distributor.Stats].
+func (d *Distributor[T]) OutputStats() []Stats {
+	d.mu.RLock()
+	outputs := d.outputs
+	d.mu.RUnlock()
+	stats := make([]Stats, len(outputs))
+	for i, out := range outputs {
+		stats[i] = Stats{
+			Depth:    len(out.ch),
+			Capacity: cap(out.ch),
+		}
+	}
+	return stats
+}
+
 func (d *Distributor[T]) route(in T) {
 	d.mu.RLock()
 	outputs := d.outputs
@@ -166,8 +217,22 @@ func (d *Distributor[T]) route(in T) {
 
 	for _, out := range outputs {
 		if out.matcher == nil || out.matcher(in) {
+			var sendStart time.Time
+			if d.cfg.Metrics != nil {
+				sendStart = time.Now()
+			}
+
+			labels := mergeLabels(d.cfg.Labels, d.cfg.LabelFunc, in)
+
 			select {
 			case out.ch <- in:
+				if d.cfg.Metrics != nil {
+					d.cfg.Metrics.RecordWait(context.Background(), WaitInfo{
+						Labels:    labels,
+						Operation: WaitOpSend,
+						Duration:  time.Since(sendStart),
+					})
+				}
 			case <-d.done:
 				d.cfg.ErrorHandler(in, ErrShutdownDropped)
 			}
