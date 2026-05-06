@@ -929,3 +929,66 @@ func TestRouter_ProcessTimeout(t *testing.T) {
 		}
 	})
 }
+
+func TestRouter_Stats_BeforeStart(t *testing.T) {
+	t.Parallel()
+	r := NewRouter(PipeConfig{})
+	s := r.Stats()
+	if s.Depth != 0 || s.Capacity != 0 {
+		t.Errorf("pre-start: want zero Stats, got %+v", s)
+	}
+}
+
+func TestRouter_Stats_AfterStart(t *testing.T) {
+	t.Parallel()
+	r := NewRouter(PipeConfig{Pool: PoolConfig{BufferSize: 8}})
+	_ = r.AddHandler("", nil, NewHandler[TestCommand](func(_ context.Context, _ *Message) ([]*Message, error) {
+		return nil, nil
+	}, DotNaming))
+
+	in := make(chan *Message)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, err := r.Pipe(ctx, in)
+	if err != nil {
+		t.Fatalf("Pipe: %v", err)
+	}
+
+	s := r.Stats()
+	if s.Capacity != 8 {
+		t.Errorf("want Capacity=8, got %d", s.Capacity)
+	}
+}
+
+func TestRouter_Stats_ConcurrentWithPipe(t *testing.T) {
+	// Run with -race to detect concurrent read/write on r.inner.
+	r := NewRouter(PipeConfig{Pool: PoolConfig{BufferSize: 4}})
+	_ = r.AddHandler("", nil, NewHandler[TestCommand](func(_ context.Context, _ *Message) ([]*Message, error) {
+		return nil, nil
+	}, DotNaming))
+
+	in := make(chan *Message)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Call Stats() concurrently with Pipe() to expose any data race.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 100 {
+			_ = r.Stats()
+		}
+	}()
+
+	_, err := r.Pipe(ctx, in)
+	if err != nil {
+		t.Fatalf("Pipe: %v", err)
+	}
+	<-done
+
+	s := r.Stats()
+	if s.Capacity != 4 {
+		t.Errorf("want Capacity=4, got %d", s.Capacity)
+	}
+}

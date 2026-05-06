@@ -41,6 +41,8 @@ func NewUnmarshalPipe(registry InputRegistry, marshaler Marshaler, cfg PipeConfi
 		Concurrency:     cfg.Pool.Workers,
 		ProcessTimeout:  cfg.ProcessTimeout,
 		ShutdownTimeout: cfg.ShutdownTimeout,
+		Metrics:         cfg.Metrics,
+		Labels:          cfg.Labels,
 		ErrorHandler: func(in any, err error) {
 			raw := in.(*RawMessage)
 			raw.Nack(err)
@@ -64,6 +66,12 @@ func NewUnmarshalPipe(registry InputRegistry, marshaler Marshaler, cfg PipeConfi
 // Pipe starts the unmarshal pipeline.
 func (p *UnmarshalPipe) Pipe(ctx context.Context, in <-chan *RawMessage) (<-chan *Message, error) {
 	return p.inner.Pipe(ctx, in)
+}
+
+// Stats returns a point-in-time snapshot of the output buffer depth and capacity.
+// Use with a pull-based metrics backend (e.g. OTel observable gauge).
+func (p *UnmarshalPipe) Stats() pipe.Stats {
+	return p.inner.Stats()
 }
 
 // Use adds middleware to the unmarshal processing chain.
@@ -109,6 +117,8 @@ func NewMarshalPipe(marshaler Marshaler, cfg PipeConfig) *MarshalPipe {
 		Concurrency:     cfg.Pool.Workers,
 		ProcessTimeout:  cfg.ProcessTimeout,
 		ShutdownTimeout: cfg.ShutdownTimeout,
+		Metrics:         cfg.Metrics,
+		Labels:          cfg.Labels,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			msg.Nack(err)
@@ -127,6 +137,12 @@ func NewMarshalPipe(marshaler Marshaler, cfg PipeConfig) *MarshalPipe {
 // Pipe starts the marshal pipeline.
 func (p *MarshalPipe) Pipe(ctx context.Context, in <-chan *Message) (<-chan *RawMessage, error) {
 	return p.inner.Pipe(ctx, in)
+}
+
+// Stats returns a point-in-time snapshot of the output buffer depth and capacity.
+// Use with a pull-based metrics backend (e.g. OTel observable gauge).
+func (p *MarshalPipe) Stats() pipe.Stats {
+	return p.inner.Stats()
 }
 
 // Use adds middleware to the marshal processing chain.
