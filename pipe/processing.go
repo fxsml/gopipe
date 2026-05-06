@@ -46,10 +46,24 @@ type Config struct {
 	// If <= 0, forces immediate shutdown (no grace period).
 	// If > 0, waits up to this duration for natural completion, then forces shutdown.
 	// On forced shutdown:
-	//   - Workers stop forwarding (escape blocked sends)
-	//   - Workers drain remaining input, calling ErrorHandler for each
-	//   - Workers exit when input closes
+	//   - Active handler contexts are canceled immediately
+	//   - Workers blocked sending output call ErrorHandler with ErrShutdownDropped
+	//   - Workers waiting for input exit immediately (remaining buffered input is abandoned)
 	ShutdownTimeout time.Duration
+
+	// Metrics receives observability events (optional, nil = no overhead).
+	Metrics Metrics
+
+	// Labels provides static identifiers attached to every metrics event.
+	// Set once at configuration time, same for all operations.
+	// Common keys: "stage", "pipeline", "handler", "service"
+	Labels map[string]string
+
+	// LabelFunc extracts dynamic labels from each processed value.
+	// Called after a value is received, before RecordProcessing and RecordWait (WaitOpSend).
+	// Returned labels are merged with Labels, with LabelFunc values taking precedence on conflicts.
+	// Only called when Metrics is non-nil. Nil means no dynamic labels.
+	LabelFunc func(val any) map[string]string
 }
 
 func (c Config) parse() Config {
@@ -70,9 +84,9 @@ func (c Config) parse() Config {
 //
 // Processing continues until the input channel is closed or the context is canceled.
 // On context cancellation, ShutdownTimeout controls the grace period before forced shutdown.
-// On forced shutdown, workers stop forwarding and drain remaining input, calling
-// ErrorHandler with ErrShutdownDropped for each drained message.
-// Workers exit when input closes. The output channel is closed when processing is complete.
+// On forced shutdown, active handler contexts are canceled, workers blocked on output sends
+// call ErrorHandler with ErrShutdownDropped, and workers waiting for input exit immediately
+// (remaining buffered input is abandoned). The output channel is closed when all workers exit.
 //
 // This function does not apply middleware. Users should call Use
 // on the pipe before calling Start to add middleware like retry, logging, etc.
@@ -96,6 +110,12 @@ func startProcessing[In, Out any](
 		go func() {
 			defer wg.Done()
 			for {
+				// Track time blocked waiting for input.
+				var receiveStart time.Time
+				if cfg.Metrics != nil {
+					receiveStart = time.Now()
+				}
+
 				select {
 				case <-done:
 					// Forced shutdown - exit immediately without draining
@@ -105,6 +125,17 @@ func startProcessing[In, Out any](
 					if !ok {
 						return
 					}
+					if cfg.Metrics != nil {
+						cfg.Metrics.RecordWait(ctx, WaitInfo{
+							Labels:    cfg.Labels,
+							Operation: WaitOpReceive,
+							Duration:  time.Since(receiveStart),
+						})
+					}
+
+					// Compute dynamic labels once per value, before RecordProcessing and send waits.
+					// Receive waits use static cfg.Labels only (no value available yet).
+					labels := mergeLabels(cfg.Labels, cfg.LabelFunc, val)
 
 					// Process message in anonymous function to ensure defer executes per-message
 					func() {
@@ -118,14 +149,40 @@ func startProcessing[In, Out any](
 							defer cancel()
 						}
 
+						var processStart time.Time
+						if cfg.Metrics != nil {
+							processStart = time.Now()
+						}
+
 						res, err := fn(handlerCtx, val)
+
+						if cfg.Metrics != nil {
+							cfg.Metrics.RecordProcessing(ctx, ProcessingInfo{
+								Labels:      labels,
+								Duration:    time.Since(processStart),
+								Error:       err,
+								OutputCount: len(res),
+							})
+						}
 
 						if err != nil {
 							cfg.ErrorHandler(val, err)
 						} else {
 							for _, r := range res {
+								var sendStart time.Time
+								if cfg.Metrics != nil {
+									sendStart = time.Now()
+								}
+
 								select {
 								case out <- r:
+									if cfg.Metrics != nil {
+										cfg.Metrics.RecordWait(ctx, WaitInfo{
+											Labels:    labels,
+											Operation: WaitOpSend,
+											Duration:  time.Since(sendStart),
+										})
+									}
 								case <-done:
 									// Forced shutdown - report current input and exit
 									cfg.ErrorHandler(val, ErrShutdownDropped)

@@ -3,6 +3,7 @@ package pipe
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fxsml/gopipe/channel"
@@ -112,8 +113,10 @@ type ProcessPipe[In, Out any] struct {
 	cfg    Config
 	mw     []middleware.Middleware[In, Out]
 
-	mu      sync.Mutex
-	started bool
+	mu       sync.Mutex
+	started  bool
+	outCh    <-chan Out
+	inflight atomic.Int64
 }
 
 // Pipe begins processing items from the input channel.
@@ -126,7 +129,33 @@ func (p *ProcessPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan O
 	}
 	p.started = true
 	handle := applyMiddleware(p.handle, p.mw)
-	return startProcessing(ctx, in, handle, p.cfg), nil
+	wrapped := func(ctx context.Context, in In) ([]Out, error) {
+		p.inflight.Add(1)
+		defer p.inflight.Add(-1)
+		return handle(ctx, in)
+	}
+	out := startProcessing(ctx, in, wrapped, p.cfg)
+	p.outCh = out
+	return out, nil
+}
+
+// Stats returns a point-in-time snapshot of the output buffer depth and capacity.
+// Returns a zero BufferStats if the pipe has not been started.
+// Use with a pull-based metrics backend (e.g. OTel observable gauge) to avoid
+// recording on every send.
+func (p *ProcessPipe[In, Out]) Stats() Stats {
+	p.mu.Lock()
+	ch := p.outCh
+	p.mu.Unlock()
+	if ch == nil {
+		return Stats{}
+	}
+	return Stats{
+		Depth:    len(ch),
+		Capacity: cap(ch),
+		Inflight: int(p.inflight.Load()),
+		Labels:   p.cfg.Labels,
+	}
 }
 
 // Use adds middleware to the processing chain.
@@ -178,8 +207,10 @@ type BatchPipe[In, Out any] struct {
 	cfg    BatchConfig
 	mw     []middleware.Middleware[[]In, Out]
 
-	mu      sync.Mutex
-	started bool
+	mu       sync.Mutex
+	started  bool
+	outCh    <-chan Out
+	inflight atomic.Int64
 }
 
 // Pipe begins collecting items into batches and processing them.
@@ -199,7 +230,33 @@ func (p *BatchPipe[In, Out]) Pipe(ctx context.Context, in <-chan In) (<-chan Out
 	}
 	batchChan := channel.Collect(in, p.cfg.MaxSize, p.cfg.MaxDuration)
 	handle := applyMiddleware(p.handle, p.mw)
-	return startProcessing(ctx, batchChan, handle, p.cfg.Config), nil
+	wrapped := func(ctx context.Context, batch []In) ([]Out, error) {
+		p.inflight.Add(1)
+		defer p.inflight.Add(-1)
+		return handle(ctx, batch)
+	}
+	out := startProcessing(ctx, batchChan, wrapped, p.cfg.Config)
+	p.outCh = out
+	return out, nil
+}
+
+// Stats returns a point-in-time snapshot of the output buffer depth and capacity.
+// Returns a zero Stats if the pipe has not been started.
+// Use with a pull-based metrics backend (e.g. OTel observable gauge) to avoid
+// recording on every send.
+func (p *BatchPipe[In, Out]) Stats() Stats {
+	p.mu.Lock()
+	ch := p.outCh
+	p.mu.Unlock()
+	if ch == nil {
+		return Stats{}
+	}
+	return Stats{
+		Depth:    len(ch),
+		Capacity: cap(ch),
+		Inflight: int(p.inflight.Load()),
+		Labels:   p.cfg.Config.Labels,
+	}
 }
 
 // Use adds middleware to the processing chain.

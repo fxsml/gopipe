@@ -20,6 +20,14 @@ type DistributorConfig struct {
 	Logger Logger
 	// ErrorHandler is called on distribution errors after auto-nack (optional).
 	ErrorHandler ErrorHandler
+	// Metrics receives observability events from the underlying pipe (optional).
+	Metrics pipe.Metrics
+	// Labels provides static identifiers attached to every metrics event.
+	Labels map[string]string
+	// LabelFunc extracts dynamic labels from each routed message.
+	// Default: extracts "cloudevents.type" from *Message when Metrics is set.
+	// Set to nil to disable dynamic label extraction.
+	LabelFunc func(val any) map[string]string
 }
 
 func (c DistributorConfig) parse() DistributorConfig {
@@ -28,6 +36,9 @@ func (c DistributorConfig) parse() DistributorConfig {
 	}
 	if c.Logger == nil {
 		c.Logger = slog.Default()
+	}
+	if c.LabelFunc == nil {
+		c.LabelFunc = messageLabelFunc
 	}
 	return c
 }
@@ -48,6 +59,9 @@ func NewDistributor(cfg DistributorConfig) *Distributor {
 	d.inner = pipe.NewDistributor(pipe.DistributorConfig[*Message]{
 		Buffer:          cfg.BufferSize,
 		ShutdownTimeout: cfg.ShutdownTimeout,
+		Metrics:         cfg.Metrics,
+		Labels:          cfg.Labels,
+		LabelFunc:       cfg.LabelFunc,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			msg.Nack(err)
@@ -76,4 +90,17 @@ func (d *Distributor) AddOutput(matcher Matcher) (<-chan *Message, error) {
 // Returns a done channel that closes when distribution is complete.
 func (d *Distributor) Distribute(ctx context.Context, in <-chan *Message) (<-chan struct{}, error) {
 	return d.inner.Distribute(ctx, in)
+}
+
+// Stats returns an aggregate point-in-time snapshot across all outputs.
+// Use with a pull-based metrics backend (e.g. OTel observable gauge).
+// For per-output detail use [Distributor.OutputStats].
+func (d *Distributor) Stats() pipe.Stats {
+	return d.inner.Stats()
+}
+
+// OutputStats returns a point-in-time snapshot for each output buffer,
+// in the order outputs were registered via AddOutput.
+func (d *Distributor) OutputStats() []pipe.Stats {
+	return d.inner.OutputStats()
 }

@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fxsml/gopipe/pipe"
@@ -66,6 +67,29 @@ type PipeConfig struct {
 	Logger Logger
 	// ErrorHandler is called on processing errors (default: no-op, errors logged via Logger).
 	ErrorHandler ErrorHandler
+	// Metrics receives observability events from the underlying pipe (optional).
+	Metrics pipe.Metrics
+	// Labels provides static identifiers attached to every metrics event.
+	Labels map[string]string
+	// LabelFunc extracts dynamic labels from each processed message.
+	// Default: extracts "cloudevents.type" from *Message when Metrics is set.
+	// Set to nil to disable dynamic label extraction.
+	LabelFunc func(val any) map[string]string
+}
+
+// messageLabelFunc is the default LabelFunc for all message-layer components.
+// It extracts the CloudEvents event type so process duration and error metrics carry
+// a type dimension without any explicit configuration.
+var messageLabelFunc = func(val any) map[string]string {
+	msg, ok := val.(*Message)
+	if !ok {
+		return nil
+	}
+	t, _ := msg.Attributes[AttrType].(string)
+	if t == "" {
+		return nil
+	}
+	return map[string]string{"cloudevents.type": t}
 }
 
 func (c PipeConfig) parse() PipeConfig {
@@ -75,6 +99,9 @@ func (c PipeConfig) parse() PipeConfig {
 	}
 	if c.ErrorHandler == nil {
 		c.ErrorHandler = func(msg *Message, err error) {}
+	}
+	if c.LabelFunc == nil {
+		c.LabelFunc = messageLabelFunc
 	}
 	return c
 }
@@ -89,6 +116,7 @@ type Router struct {
 	handlers   map[string]handlerEntry
 	middleware []Middleware
 	started    bool
+	inner      atomic.Pointer[pipe.ProcessPipe[*Message, *Message]]
 }
 
 // NewRouter creates a new message router.
@@ -178,6 +206,9 @@ func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message,
 		Concurrency:     r.cfg.Pool.Workers,
 		ProcessTimeout:  r.cfg.ProcessTimeout,
 		ShutdownTimeout: r.cfg.ShutdownTimeout,
+		Metrics:         r.cfg.Metrics,
+		Labels:          r.cfg.Labels,
+		LabelFunc:       r.cfg.LabelFunc,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			msg.Nack(err)
@@ -185,7 +216,17 @@ func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message,
 		},
 	}
 	p := pipe.NewProcessPipe(fn, cfg)
+	r.inner.Store(p)
 	return p.Pipe(ctx, in)
+}
+
+// Stats returns a point-in-time snapshot of the router's output buffer depth and capacity.
+// Use with a pull-based metrics backend (e.g. OTel observable gauge).
+func (r *Router) Stats() pipe.Stats {
+	if p := r.inner.Load(); p != nil {
+		return p.Stats()
+	}
+	return pipe.Stats{}
 }
 
 // handler returns the handler entry for the given CE type.
