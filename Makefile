@@ -4,7 +4,7 @@
 GO := go
 
 # Modules in the workspace
-MODULES := ./channel/... ./pipe/... ./message/...
+MODULES := ./channel/... ./pipe/... ./message/... ./message/otel/...
 
 # Coverage output file
 COVERAGE_FILE := coverage.out
