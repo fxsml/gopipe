@@ -6,6 +6,7 @@
 **Related Plans:** [archive/0008-marshal-unmarshal-pipes.decisions.md](archive/0008-marshal-unmarshal-pipes.decisions.md), [validation-marshaling-separation.decisions.md](validation-marshaling-separation.decisions.md)
 **Depends On:** [engine-removal.md](engine-removal.md) — must complete before this plan's Phase 1 (dropping `TypedMessage[T]`/`RawMessage` would otherwise break `Engine`'s compile)
 **Tracking Issues:** Phase 1 — [fxsml/gopipe#148](https://github.com/fxsml/gopipe/issues/148); Phase 2 — [fxsml/gopipe#149](https://github.com/fxsml/gopipe/issues/149)
+**Related Bug (independent, not part of this plan):** [fxsml/gopipe#151](https://github.com/fxsml/gopipe/issues/151) — `Router` errors from `Use()` middleware are silently swallowed; see Final Design §6
 
 ## Overview
 
@@ -234,6 +235,45 @@ So the finding is a single root cause with a single concrete instance today (`Su
 
 **Resolution — no new API, per "don't scope creep":** `Subject()` requires `DisableMarshaler: true`. On a `Router` with the built-in conversion disabled, `Data` stays typed all the way through `Use()` middleware (in and out), so `Subject()` works exactly as it does today — marshaling, if needed, happens downstream as an explicit step (e.g. the ported `MarshalPipe` from §2, composed after `Router`), which recreates the seam `Subject()` needs via explicit pipe composition instead of implicit middleware ordering. This needs a godoc update in **two places**, not one: `Subject()` itself, and `Router`'s `DisableMarshaler` field (§3) stating the general rule so future middleware authors find it without already knowing `Subject()` is affected. No Router redesign, no second middleware hook.
 
+### 6. Error logging: move to the real boundary, not just add more inline calls
+
+While reviewing where `MarshalMiddleware`'s new `ErrDataNotRaw`/`ErrDataNotTyped` errors should be logged, a pre-existing gap surfaced in `Router` itself — **tracked as its own bug, independent of this plan: [fxsml/gopipe#151](https://github.com/fxsml/gopipe/issues/151).** Not fixing it here would mean the new errors inherit the same gap.
+
+The gap: `pipe.Config.ErrorHandler`'s own godoc says "Default logs via slog.Error" — the `pipe` package would log every error centrally if left alone. But `Router.Pipe()` overrides it:
+
+```go
+ErrorHandler: func(in any, err error) {
+    msg := in.(*Message)
+    msg.Nack(err)
+    r.cfg.ErrorHandler(msg, err) // defaults to a no-op
+},
+```
+
+This suppresses the pipe package's default logging and replaces it with Nack-only. Meanwhile `process()` separately hand-rolls logging, but only inline at its own three failure sites (`ErrNoHandler`, `ErrHandlerRejected`, handler execution failure). Any error returned by a `Use()`-registered middleware (`ValidateRequired`, `Deadline`, `jsonschema`'s validation middleware, `Subject()`) never reaches `process()` at all — middleware short-circuits before calling `next()` — so it hits the overridden `ErrorHandler`, which doesn't log. **By default, those errors are completely silent today:** Nacked, no log line, unless the caller supplies their own `ErrorHandler` that happens to log.
+
+**Decision for this plan:** rather than adding a fourth inline `Logger.Error` call inside `MarshalMiddleware` (which would still leave the underlying gap in place for every other middleware), move logging to the actual boundary — the `pipe.Config.ErrorHandler` closure in `Router.Pipe()`, which structurally sees every error from the whole chain (middleware, `MarshalMiddleware`, and `process()` alike) exactly once:
+
+```go
+cfg := pipe.Config{
+    ...
+    ErrorHandler: func(in any, err error) {
+        msg := in.(*Message)
+        msg.Nack(err)
+        r.cfg.Logger.Error("Processing failed",
+            "component", "router",
+            "error", err,
+            "attributes", msg.Attributes)
+        r.cfg.ErrorHandler(msg, err)
+    },
+}
+```
+
+`process()`'s three inline `Logger.Error` calls come out entirely — it just returns errors. `MarshalMiddleware` needs no `Logger` dependency of its own; its errors are covered by this same central point, for free, keeping it minimal.
+
+**Trade-off:** loses the differentiated message text per failure site ("Routing message failed" vs. "Matching handler failed" vs. "Executing handler failed") in favor of one generic line — though the sentinel errors' own text (`"no handler for message type"`, `"message rejected by handler matcher"`) is descriptive enough to grep on. Since `Router` is in production, if anyone's alerting matches the old specific outer message strings rather than the error text, that's a real behavior change worth calling out in the CHANGELOG, not just folding in silently.
+
+This fix is filed and land-able independently of this plan (it's a `Router` bug today, with or without the marshaling redesign) but is a prerequisite in practice for §3's new errors to be observable by default — sequence it alongside or before Phase 2.
+
 ## Design Evolution — Rejected Intermediate Options
 
 Recorded here because they were seriously considered before landing on the Final Design above.
@@ -275,6 +315,7 @@ Considered alongside the no-op sentinel attempts, to let each direction be confi
 | `InputRegistry` / `Router.NewInput()` | Unchanged — still how `MarshalMiddleware` gets an instance to unmarshal into. |
 | Error handling | Unmarshal/marshal errors flow through the same auto-nack + `ErrorHandler` path as today. New sentinel errors (`ErrExpectedRawData`, `ErrUnexpectedRawData`) are added, but the path they flow through is unchanged. |
 | `ErrExpectedRawData` / `ErrUnexpectedRawData` (new) | Default-mode `Router` (`MarshalMiddleware`) and `UnmarshalPipe`/`MarshalPipe` now fail loudly instead of silently accepting whatever state `Data` is in: input must be raw, output-to-marshal must not already be raw. Closes a real bug in the untested prior sketch — `MarshalMiddleware` never checked `Raw()` on output at all, so a handler returning `[]byte` directly would have been silently base64-encoded by `JSONMarshaler`. Also removes the implicit "mix raw and typed messages on one channel" pattern `Engine` used to support (see Final Design §3). |
+| `Router` error logging (independent bug, [#151](https://github.com/fxsml/gopipe/issues/151)) | `process()`'s three inline `Logger.Error` calls are removed; logging moves to the `pipe.Config.ErrorHandler` closure in `Router.Pipe()`, the actual boundary that sees every error (middleware + `MarshalMiddleware` + `process()`). Fixes a pre-existing gap — `Use()`-middleware errors were previously silent by default. Filed and fixable independently of this plan, but a practical prerequisite for the new errors above to be observable (see Final Design §6). |
 | `DisableMarshaler` mode | No new checks added here — `Router` doesn't inspect `Data` at all in this mode by design. Mis-shaped `Data` reaching a `commandHandler`-based handler is already caught by the existing `ErrCommandDataMismatch` (fixes #145, already on `develop`); `NewHandler`-based handlers remain the caller's own responsibility, consistent with "Handler is self-describing." |
 | `message/jsonschema` middleware | Mechanical retype only (`message.Middleware` / `*message.Message` / `msg.Raw()`). No logic or API shape change — see Final Design §5. |
 | `message/middleware.Subject()` | **Breaking behavior change.** Silently stops setting `AttrSubject` when used on a `Router` with the default (marshal-enabled) `MarshalMiddleware` installed. Requires `DisableMarshaler: true` going forward. Needs a godoc update on `Subject()` *and* on `Router.DisableMarshaler` (general rule, not a `Subject()`-specific caveat). |
@@ -308,6 +349,7 @@ Metrics: ns/op, B/op, allocs/op (`testing.B`), plus `DisableMarshaler` on/off co
 - [ ] Update CHANGELOG (breaking change to these two pipes' signatures *and* behavior — new fail-loud checks, not just a retype)
 
 **Phase 2 — Router built-in default (later):**
+- [ ] Fix [#151](https://github.com/fxsml/gopipe/issues/151) (move error logging to the `pipe.Config.ErrorHandler` boundary) — independent bug, sequence alongside or before the rest of Phase 2 so the new errors below are observable by default (Final Design §6)
 - [ ] Implement public `MarshalMiddleware(registry, marshaler) Middleware` with fail-loud input/output checks (Final Design §3)
 - [ ] Implement `Router` changes (`Marshaler`/`DisableMarshaler` config, install `MarshalMiddleware` by default, simplify `process()`)
 - [ ] Retype `message/jsonschema`'s three middleware constructors (mechanical only — Final Design §5)
