@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     for `>= 500` writes generic `http.StatusText` to avoid leaking internals, for `< 500` writes `err.Error()`
   - All default responses are JSON: `{"error":"<message>"}` with `Content-Type: application/json`
 
+### Fixed
+
+- **message:** `commandHandler.Handle` now returns `ErrCommandDataMismatch` instead
+  of silently falling back to a zero-value command when `msg.Data` is `nil` or does
+  not type-assert to `*C`/`C` (#145)
+
 ## [0.18.0] - 2026-04-10
 
 ### Added

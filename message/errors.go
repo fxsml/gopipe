@@ -20,4 +20,8 @@ var (
 
 	// ErrHandlerExists is returned when registering a handler for an event type that already has one.
 	ErrHandlerExists = errors.New("handler already registered for event type")
+
+	// ErrCommandDataMismatch is returned when a commandHandler's message data is nil
+	// or does not type-assert to the expected command type.
+	ErrCommandDataMismatch = errors.New("command data type mismatch")
 )

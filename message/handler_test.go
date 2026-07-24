@@ -155,6 +155,42 @@ func TestNewCommandHandler(t *testing.T) {
 		}
 	})
 
+	t.Run("returns error for nil data", func(t *testing.T) {
+		h := NewCommandHandler(
+			func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+				return nil, nil
+			},
+			CommandHandlerConfig{
+				Source: "/test",
+				Naming: DotNaming,
+			},
+		)
+
+		msg := &Message{Data: nil}
+		_, err := h.Handle(context.Background(), msg)
+		if !errors.Is(err, ErrCommandDataMismatch) {
+			t.Fatalf("expected ErrCommandDataMismatch, got %v", err)
+		}
+	})
+
+	t.Run("returns error for mismatched data type", func(t *testing.T) {
+		h := NewCommandHandler(
+			func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+				return nil, nil
+			},
+			CommandHandlerConfig{
+				Source: "/test",
+				Naming: DotNaming,
+			},
+		)
+
+		msg := &Message{Data: &TestEvent{ID: "wrong-type"}}
+		_, err := h.Handle(context.Background(), msg)
+		if !errors.Is(err, ErrCommandDataMismatch) {
+			t.Fatalf("expected ErrCommandDataMismatch, got %v", err)
+		}
+	})
+
 	t.Run("attributes available via message in context", func(t *testing.T) {
 		var ctxMsg *Message
 		h := NewCommandHandler(
