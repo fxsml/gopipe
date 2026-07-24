@@ -2,6 +2,7 @@ package message
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"reflect"
 	"time"
@@ -103,12 +104,13 @@ func (h *commandHandler[C, E]) NewInput() any {
 
 func (h *commandHandler[C, E]) Handle(ctx context.Context, msg *Message) ([]*Message, error) {
 	var cmd C
-	if msg.Data != nil {
-		if v, ok := msg.Data.(*C); ok {
-			cmd = *v
-		} else if v, ok := msg.Data.(C); ok {
-			cmd = v
-		}
+	switch v := msg.Data.(type) {
+	case *C:
+		cmd = *v
+	case C:
+		cmd = v
+	default:
+		return nil, fmt.Errorf("%w: got %T, want %T", ErrCommandDataMismatch, msg.Data, cmd)
 	}
 
 	events, err := h.fn(ctx, cmd)
