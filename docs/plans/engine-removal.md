@@ -21,7 +21,14 @@ This plan pays off directly: `Engine` currently depends on `RawMessage`/`TypedMe
 
 ## Tasks
 
-### Task 1: Delete Engine core
+### Task 1: Write the ADR (before any deletion)
+
+Write ADR (next available number) — "Remove Message Engine", superseding ADR 0020, `Status: Proposed`/`Accepted`. Documents the decision and gives it a real review point before irreversible deletion happens, rather than writing it after the fact to describe a change that's already landed. Mark `Status: Implemented` once Tasks 2–6 are done (see Acceptance Criteria).
+
+**Acceptance Criteria:**
+- [ ] ADR written and accepted before Task 2 starts
+
+### Task 2: Delete Engine core
 
 **Files to delete:**
 - `message/engine.go`
@@ -32,7 +39,7 @@ This plan pays off directly: `Engine` currently depends on `RawMessage`/`TypedMe
 - [ ] Files removed
 - [ ] `message` package compiles with no remaining reference to `Engine`, `EngineConfig`, or `Plugin`
 
-### Task 2: Delete Engine-dependent CloudEvents plugin wiring
+### Task 3: Delete Engine-dependent CloudEvents plugin wiring
 
 **Files to delete:**
 - `message/cloudevents/plugin.go` (`SubscriberPlugin`, `PublisherPlugin` — pure `Engine`-wiring sugar around `e.AddRawInput`/`e.AddRawOutput`)
@@ -45,7 +52,7 @@ This plan pays off directly: `Engine` currently depends on `RawMessage`/`TypedMe
 - [ ] `message/cloudevents` compiles with no reference to `message.Engine` or `message.Plugin`
 - [ ] `message/cloudevents/doc.go` updated to drop plugin-based usage examples
 
-### Task 3: Rewrite tests that wire through Engine
+### Task 4: Rewrite tests that wire through Engine
 
 **File:** `message/middleware/correlation_test.go`
 
@@ -55,7 +62,7 @@ Tests `CorrelationID()` via four separate `message.NewEngine(...)` constructions
 - [ ] All `CorrelationID()` test cases pass using `Router` directly
 - [ ] No `message.NewEngine` reference remains in the file
 
-### Task 4: Rewrite package docs
+### Task 5: Rewrite package docs
 
 **Files:**
 - `message/doc.go` — "Quick Start" example is `Engine`-based; rewrite to a `Router`-based quick start (handler registration + `Router.Pipe()` over a channel).
@@ -65,7 +72,7 @@ Tests `CorrelationID()` via four separate `message.NewEngine(...)` constructions
 - [ ] No `message.NewEngine`/`Engine` reference remains in either file
 - [ ] Examples in both files compile (verified by doc-testable examples or manual check)
 
-### Task 5: Rewrite example programs
+### Task 6: Rewrite example programs
 
 **Files:**
 - `examples/04-message/main.go`
@@ -77,20 +84,21 @@ Both currently demonstrate `Engine` end-to-end. Rewrite to demonstrate `Router` 
 - [ ] Both examples run (`go run ./04-message/`, `go run ./06-http-cloudevents/`)
 - [ ] Neither references `message.Engine`
 
-### Task 6: ADR and CHANGELOG
+### Task 7: Close out — ADR status and CHANGELOG
 
-- [ ] Write ADR 0028 (next available number) — "Remove Message Engine", superseding ADR 0020, with an `## Updates` note added to ADR 0022 recording that the `Engine` it introduced has since been removed
+- [ ] Mark the Task 1 ADR `Status: Implemented`; add an `## Updates` note to ADR 0022 recording that the `Engine` it introduced has since been removed
 - [ ] CHANGELOG entry under `[Unreleased]` — Removed: `message.Engine`, `message.EngineConfig`, `message.Plugin`, `message/cloudevents.SubscriberPlugin`/`PublisherPlugin` (breaking, pre-v1)
 
 ## Implementation Order
 
 ```
-Task 1 (delete engine.go + tests)
-  → Task 2 (delete cloudevents/plugin.go, depends on Task 1's Plugin type being gone)
-  → Task 3 (rewrite correlation_test.go)
-  → Task 4 (rewrite doc.go, README.md)
-  → Task 5 (rewrite examples)
-  → Task 6 (ADR + CHANGELOG, last — documents the completed change)
+Task 1 (write + accept ADR, before any deletion)
+  → Task 2 (delete engine.go + tests)
+  → Task 3 (delete cloudevents/plugin.go, depends on Task 2's Plugin type being gone)
+  → Task 4 (rewrite correlation_test.go)
+  → Task 5 (rewrite doc.go, README.md)
+  → Task 6 (rewrite examples)
+  → Task 7 (ADR status + CHANGELOG, last — documents the completed change)
 ```
 
 This whole plan must complete before `marshaling-strategy.md`'s Phase 1 (dropping `TypedMessage[T]`/`RawMessage`) starts.
@@ -99,6 +107,6 @@ This whole plan must complete before `marshaling-strategy.md`'s Phase 1 (droppin
 
 - [ ] `make test && make build && make vet` pass with zero references to `Engine`/`EngineConfig`/`Plugin` anywhere in the repository
 - [ ] `Router`, `Merger`, `Distributor` confirmed still independently usable and tested without `Engine`
-- [ ] ADR 0020 marked Superseded; ADR 0022 has an `## Updates` note
+- [ ] ADR written before deletion, marked Implemented after; ADR 0020 marked Superseded; ADR 0022 has an `## Updates` note
 - [ ] CHANGELOG updated
 - [ ] This plan's status updated to Complete

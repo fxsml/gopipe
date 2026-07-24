@@ -81,7 +81,7 @@ func NewUnmarshalPipe(registry InputRegistry, marshaler Marshaler, cfg PipeConfi
     p.inner = pipe.NewProcessPipe(func(ctx context.Context, msg *Message) ([]*Message, error) {
         raw, ok := msg.Raw()
         if !ok {
-            return nil, fmt.Errorf("%w: got %T", ErrExpectedRawData, msg.Data)
+            return nil, fmt.Errorf("%w: got %T", ErrDataNotRaw, msg.Data)
         }
         instance := registry.NewInput(msg.Type())
         if instance == nil {
@@ -101,7 +101,7 @@ func (p *UnmarshalPipe) Pipe(ctx context.Context, in <-chan *Message) (<-chan *M
 }
 ```
 
-`MarshalPipe` is symmetric: `*Message` in, `*Message` out, and fails with `ErrUnexpectedRawData` if `Data` is *already* `[]byte` instead of silently passing it through — a message reaching `MarshalPipe` already raw is a wiring bug (something upstream marshaled it, or the wrong channel feeds this stage), not a legitimate shortcut. Behavior (unmarshal/marshal semantics, error handling, logging) is otherwise preserved from today — what changes is the channel type (`<-chan *RawMessage` → `<-chan *Message`), the new fail-loud checks, and, as a result, the middleware type they accept: both pipes can now use the same `message.Middleware` type `Router` uses, instead of needing generic `pipe/middleware.Middleware[In, Out]` at all. **This is a breaking change to these two pipes' public signatures** (not just their behavior, now — the fail-loud checks are new/stricter behavior too) — it's the one deliberate break this plan makes to production-used API, done once, up front, so everything downstream (including opting out of `Router`'s default) speaks the same `*Message` type.
+`MarshalPipe` is symmetric: `*Message` in, `*Message` out, and fails with `ErrDataNotTyped` if `Data` is *already* `[]byte` instead of silently passing it through — a message reaching `MarshalPipe` already raw is a wiring bug (something upstream marshaled it, or the wrong channel feeds this stage), not a legitimate shortcut. Behavior (unmarshal/marshal semantics, error handling, logging) is otherwise preserved from today — what changes is the channel type (`<-chan *RawMessage` → `<-chan *Message`), the new fail-loud checks, and, as a result, the middleware type they accept: both pipes can now use the same `message.Middleware` type `Router` uses, instead of needing generic `pipe/middleware.Middleware[In, Out]` at all. **This is a breaking change to these two pipes' public signatures** (not just their behavior, now — the fail-loud checks are new/stricter behavior too) — it's the one deliberate break this plan makes to production-used API, done once, up front, so everything downstream (including opting out of `Router`'s default) speaks the same `*Message` type.
 
 With this in place, opting out of `Router`'s built-in default (Phase 2 below) is simply: don't rely on it — compose `UnmarshalPipe`/`Router`/`MarshalPipe` explicitly as separate stages instead, same as today's pattern, just uniformly typed.
 
@@ -111,15 +111,15 @@ The built-in conversion is **not** baked directly into `Router.process()`. It's 
 
 ```go
 var (
-    // ErrExpectedRawData is returned when a message reaches a conversion stage
+    // ErrDataNotRaw is returned when a message reaches a conversion stage
     // (default-mode Router, UnmarshalPipe) with Data that isn't raw []byte.
-    ErrExpectedRawData = errors.New("expected raw []byte data")
+    ErrDataNotRaw = errors.New("expected raw []byte data")
 
-    // ErrUnexpectedRawData is returned when handler/next output already holds
+    // ErrDataNotTyped is returned when handler/next output already holds
     // raw []byte Data at a point where marshaling is about to be applied
     // (default-mode Router, MarshalPipe) — marshaling it again would silently
     // double-encode.
-    ErrUnexpectedRawData = errors.New("unexpected raw []byte data, want typed")
+    ErrDataNotTyped = errors.New("unexpected raw []byte data, want typed")
 )
 
 // MarshalMiddleware returns middleware that unmarshals raw Data into a typed
@@ -127,15 +127,15 @@ var (
 // Data returned by next back into raw bytes.
 //
 // This asserts the expected state rather than tolerating either: input must
-// be raw (ErrExpectedRawData otherwise), and output must not already be raw
-// (ErrUnexpectedRawData otherwise) — a mismatch means something upstream
+// be raw (ErrDataNotRaw otherwise), and output must not already be raw
+// (ErrDataNotTyped otherwise) — a mismatch means something upstream
 // already converted the message, or the wrong channel/handler is wired in.
 func MarshalMiddleware(registry InputRegistry, marshaler Marshaler) Middleware {
     return func(next ProcessFunc) ProcessFunc {
         return func(ctx context.Context, msg *Message) ([]*Message, error) {
             raw, ok := msg.Raw()
             if !ok {
-                return nil, fmt.Errorf("%w: got %T", ErrExpectedRawData, msg.Data)
+                return nil, fmt.Errorf("%w: got %T", ErrDataNotRaw, msg.Data)
             }
             instance := registry.NewInput(msg.Type())
             if instance == nil {
@@ -153,7 +153,7 @@ func MarshalMiddleware(registry InputRegistry, marshaler Marshaler) Middleware {
 
             for _, out := range outputs {
                 if _, ok := out.Raw(); ok {
-                    return nil, ErrUnexpectedRawData
+                    return nil, ErrDataNotTyped
                 }
                 data, err := marshaler.Marshal(out.Data)
                 if err != nil {
@@ -310,11 +310,11 @@ Considered alongside the no-op sentinel attempts, to let each direction be confi
 | Generic `Copy[In, Out any]` | Becomes `Copy(msg *Message, data any) *Message`. |
 | `ADR 0010` (Dual Message Types) | Needs a new ADR marking it Superseded. |
 | `ParseRaw`/`parseRawBytes` | Return `*Message` with `Data []byte` instead of `*RawMessage`. Public API change. |
-| `message/pipes.go` (`UnmarshalPipe`/`MarshalPipe`) | **Kept, ported first.** Signature changes from `*RawMessage`↔`*Message` to uniform `*Message`→`*Message`, plus new fail-loud checks (behavior is *not* fully preserved — see `ErrExpectedRawData`/`ErrUnexpectedRawData` row below). This is the first implementation step, ahead of `Router`'s own inline behavior, and becomes the supported way to opt out of `Router`'s default. |
+| `message/pipes.go` (`UnmarshalPipe`/`MarshalPipe`) | **Kept, ported first.** Signature changes from `*RawMessage`↔`*Message` to uniform `*Message`→`*Message`, plus new fail-loud checks (behavior is *not* fully preserved — see `ErrDataNotRaw`/`ErrDataNotTyped` row below). This is the first implementation step, ahead of `Router`'s own inline behavior, and becomes the supported way to opt out of `Router`'s default. |
 | `Handler` interface | Unchanged. |
 | `InputRegistry` / `Router.NewInput()` | Unchanged — still how `MarshalMiddleware` gets an instance to unmarshal into. |
-| Error handling | Unmarshal/marshal errors flow through the same auto-nack + `ErrorHandler` path as today. New sentinel errors (`ErrExpectedRawData`, `ErrUnexpectedRawData`) are added, but the path they flow through is unchanged. |
-| `ErrExpectedRawData` / `ErrUnexpectedRawData` (new) | Default-mode `Router` (`MarshalMiddleware`) and `UnmarshalPipe`/`MarshalPipe` now fail loudly instead of silently accepting whatever state `Data` is in: input must be raw, output-to-marshal must not already be raw. Closes a real bug in the untested prior sketch — `MarshalMiddleware` never checked `Raw()` on output at all, so a handler returning `[]byte` directly would have been silently base64-encoded by `JSONMarshaler`. Also removes the implicit "mix raw and typed messages on one channel" pattern `Engine` used to support (see Final Design §3). |
+| Error handling | Unmarshal/marshal errors flow through the same auto-nack + `ErrorHandler` path as today. New sentinel errors (`ErrDataNotRaw`, `ErrDataNotTyped`) are added, but the path they flow through is unchanged. |
+| `ErrDataNotRaw` / `ErrDataNotTyped` (new) | Default-mode `Router` (`MarshalMiddleware`) and `UnmarshalPipe`/`MarshalPipe` now fail loudly instead of silently accepting whatever state `Data` is in: input must be raw, output-to-marshal must not already be raw. Closes a real bug in the untested prior sketch — `MarshalMiddleware` never checked `Raw()` on output at all, so a handler returning `[]byte` directly would have been silently base64-encoded by `JSONMarshaler`. Also removes the implicit "mix raw and typed messages on one channel" pattern `Engine` used to support (see Final Design §3). |
 | `Router` error logging (independent bug, [#151](https://github.com/fxsml/gopipe/issues/151)) | `process()`'s three inline `Logger.Error` calls are removed; logging moves to the `pipe.Config.ErrorHandler` closure in `Router.Pipe()`, the actual boundary that sees every error (middleware + `MarshalMiddleware` + `process()`). Fixes a pre-existing gap — `Use()`-middleware errors were previously silent by default. Filed and fixable independently of this plan, but a practical prerequisite for the new errors above to be observable (see Final Design §6). |
 | `DisableMarshaler` mode | No new checks added here — `Router` doesn't inspect `Data` at all in this mode by design. Mis-shaped `Data` reaching a `commandHandler`-based handler is already caught by the existing `ErrCommandDataMismatch` (fixes #145, already on `develop`); `NewHandler`-based handlers remain the caller's own responsibility, consistent with "Handler is self-describing." |
 | `message/jsonschema` middleware | Mechanical retype only (`message.Middleware` / `*message.Message` / `msg.Raw()`). No logic or API shape change — see Final Design §5. |
@@ -343,7 +343,7 @@ Metrics: ns/op, B/op, allocs/op (`testing.B`), plus `DisableMarshaler` on/off co
 - [ ] Implement `Message` struct simplification (drop generic, add `Raw()`)
 
 **Phase 1 — port existing pipes (do this first):**
-- [ ] Add `ErrExpectedRawData`/`ErrUnexpectedRawData` to `message/errors.go`
+- [ ] Add `ErrDataNotRaw`/`ErrDataNotTyped` to `message/errors.go`
 - [ ] Port `UnmarshalPipe`/`MarshalPipe` to `*Message` → `*Message`, failing loudly on mismatch rather than silently passing through (Final Design §2)
 - [ ] Update pipe middleware usage to `message.Middleware`
 - [ ] Update CHANGELOG (breaking change to these two pipes' signatures *and* behavior — new fail-loud checks, not just a retype)
