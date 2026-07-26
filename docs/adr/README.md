@@ -37,8 +37,9 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0023](0023-engine-simplification.md) | Engine Simplification | Implemented |
 | [0024](0024-http-cloudevents-adapter.md) | HTTP CloudEvents Adapter Design | Implemented |
 | [0025](0025-message-context-values.md) | Message Context for In-Process Values | Proposed |
-| [0027](0027-json-schema-validation.md) | JSON Schema Validation | Implemented |
+| [0027](0027-json-schema-validation.md) | JSON Schema Validation | Superseded by ADR 0028 |
 | [0026](0026-acking-middleware-outermost.md) | Acking Middleware Outermost | Proposed |
+| [0028](0028-external-dependency-policy.md) | External Dependency Policy | Proposed |
 
 ## History
 

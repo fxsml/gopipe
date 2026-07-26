@@ -12,6 +12,7 @@ Modular procedure library for gopipe development. Reusable across projects.
 | [documentation.md](documentation.md) | Docs | Structure, templates, ADRs |
 | [planning.md](planning.md) | Planning | Plan files and structure |
 | [adr.md](adr.md) | ADRs | Architecture Decision Records |
+| [dependencies.md](dependencies.md) | Dependencies | External dependency and package boundary rules |
 | [release.md](release.md) | Releases | Release and hotfix procedures |
 | [feature-release.md](feature-release.md) | Feature Release | Merge feature branches with history cleanup |
 

@@ -6,6 +6,8 @@
 |------|-------|--------|
 | [pipe-metrics](pipe-metrics.md) | Pipeline Metrics | Complete |
 | [locals](locals.md) | Message Locals | Implemented |
+| [engine-removal](engine-removal.md) | Remove Message Engine | Proposed |
+| [marshaling-strategy](marshaling-strategy.md) | Raw-by-Default Message Contract (Router) | Proposed |
 | [0007](0007-cesql-pattern-matching.md) | CESQL Pattern Matching | Proposed |
 | [autoscale-worker-pool](autoscale-worker-pool.md) | Autoscale Worker Pool | Proposed |
 | [transaction-handling](transaction-handling.md) | Transaction Handling | Proposed |
