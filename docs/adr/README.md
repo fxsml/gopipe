@@ -40,6 +40,7 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0027](0027-json-schema-validation.md) | JSON Schema Validation | Superseded by ADR 0028 |
 | [0026](0026-acking-middleware-outermost.md) | Acking Middleware Outermost | Proposed |
 | [0028](0028-external-dependency-policy.md) | External Dependency Policy | Proposed |
+| [0029](0029-channel-pipe-interface-boundaries.md) | Channel/Pipe Interface and Naming Boundaries | Proposed |
 
 ## History
 
