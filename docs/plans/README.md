@@ -15,6 +15,7 @@
 | [redis-transactions](redis-transactions.md) | Redis Integration | Proposed |
 | [oauth2-cloudevents](oauth2-cloudevents.md) | OAuth2 CloudEvents Integration | Proposed |
 | [webhook-abuse-protection](webhook-abuse-protection.md) | Webhook Abuse Protection Handshake | Proposed |
+| [channel-pipe-interface-consolidation](channel-pipe-interface-consolidation.md) | Channel/Pipe Interface Consolidation | In Progress |
 
 ## Agent Guidance
 

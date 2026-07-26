@@ -232,6 +232,53 @@ engine.AddSubscriber("orders", subscriber)
 
 **Why:** Doesn't handle leader election, dynamic scaling. External concern.
 
+### Semantic Interfaces (Filter/Mapper/Expander/Source/Processor/Sink) + `*Pipe` Suffix Rename
+
+```go
+// REJECTED
+type Mapper[In, Out any] interface { Map(in In) Out }
+type MapperPipe[In, Out any] struct{ /* sole implementation */ }
+func (m *MapperPipe[In, Out]) Map(in In) Out          { ... }
+func (m *MapperPipe[In, Out]) Pipe() Pipe[In, Out]    { ... }
+```
+
+**Why:** Violates documented Go convention — interfaces belong in the package that *uses* them, not beside their only implementation (go.dev Code Review Comments: "do not define interfaces before they are used"). The "direct invocation for testing" rationale is also moot: constructors already take the raw handler function, so callers already hold it. See [ADR 0029](docs/adr/0029-channel-pipe-interface-boundaries.md).
+
+### Producer/Trigger Separation
+
+```go
+// REJECTED
+type TriggerFunc func(ctx context.Context, trigger func()) error
+func NewProducer[Out any](source Source[Out], trigger TriggerFunc) *Producer[Out]
+package trigger // Interval, Cron, Immediate, OnDemand
+```
+
+**Why:** No proven real-world need — the one real periodic-generation use case found rolled entirely bespoke scheduling logic instead of using `pipe.Generator`. See [ADR 0029](docs/adr/0029-channel-pipe-interface-boundaries.md).
+
+### Unified Process() Method via Type Embedding
+
+```go
+// REJECTED
+func (f *FilterPipe[T]) Process(ctx context.Context, in T) ([]T, error) {
+    if f.Filter(in) {
+        return []T{in}, nil
+    }
+    return nil, nil
+}
+```
+
+**Why:** Wraps every pure operation's single value in a slice just to satisfy a common `Processor` interface, and blurs the pure/impure distinction. No clear benefit over explicit composition. See [ADR 0029](docs/adr/0029-channel-pipe-interface-boundaries.md).
+
+## Deferred Ideas (No Proven Need Yet)
+
+Surfaced during design exploration, not built — no real usage evidence, unlike the Rejected Alternatives above which have a specific reason *against* them. Revisit only if a concrete need appears.
+
+- **Router `PreMap`/`PostMap`** — optional type-conversion hooks on `RouterConfig` so handlers work with domain-specific types while `Router` converts at the boundary. Middleware may already cover this.
+- **Conditional/branching pipes** — `pipe.NewBranch(predicate, truePipe, falsePipe)`, route to one of two pipes by predicate.
+- **Error-recovery pipes** — `pipe.NewRecover(mainPipe, fallbackFunc)`, call a fallback on error instead of failing the pipeline. Distinct from `middleware.Recover` (panics, not errors).
+
+See [ADR 0029](docs/adr/0029-channel-pipe-interface-boundaries.md) for full context.
+
 ## Naming Decisions
 
 | Chosen | Rejected | Reason |
@@ -241,6 +288,8 @@ engine.AddSubscriber("orders", subscriber)
 | `Use()` | `ApplyMiddleware()` | Standard Go pattern (gin, echo, etc.) |
 | `DotNaming` | `KebabNaming` | Correctly describes output format: `order.created` (dots) |
 | `KebabNaming` | — | Fixed: now produces true kebab-case: `order-created` (hyphens) |
+| `channel.Transform`/`Process`/`Sink` (kept) | `Map`/`Expand`/`Drain` (channel-only rename) | Would break existing `pipe.NewTransformPipe`/`NewProcessPipe`/`NewSinkPipe` symmetry — see ADR 0029 |
+| `channel.Switch` (replaces `Route`, planned) | — | Avoids clash with `message.Router` — see ADR 0029 |
 
 ## File Organization
 
