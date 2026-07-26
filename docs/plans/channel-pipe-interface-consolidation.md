@@ -19,7 +19,7 @@ This plan re-evaluates that proposal end to end against the current codebase and
 
 ### 1. Preserve `channel`/`pipe` verb symmetry — reject the `channel`-only renaming pass
 
-`pipe/pipe.go` already exposes `NewTransformPipe`, `NewProcessPipe`, and `NewSinkPipe` — the same verbs as `channel.Transform`, `channel.Process`, `channel.Sink`. This mirrors `Merge`/`Merger`: the same word names the same operation at both purity tiers (pure/stateless in `channel`, impure/stateful in `pipe`). The old branch's renames (`Transform`→`Map`, `Process`→`Expand`, `Sink`→`Drain`, `Drain`→`Drop`) only touched `channel`'s side, which would have broken that symmetry; renaming both sides would double the churn for names that are already clear. **Kept as-is.**
+`pipe/pipe.go` already exposes `NewTransformPipe`, `NewProcessPipe`, and `NewSinkPipe` — the same verbs as `channel.Transform`, `channel.Process`, `channel.Sink`: the same word names the same operation at both purity tiers (pure/stateless in `channel`, impure/stateful in `pipe`). The old branch's renames (`Transform`→`Map`, `Process`→`Expand`, `Sink`→`Drain`, `Drain`→`Drop`) only touched `channel`'s side, which would have broken that symmetry; renaming both sides would double the churn for names that are already clear. **Kept as-is.** (`Merge`/`Merger` was originally cited here as another instance of the same pattern; `pipe.Merger` is now dropped per #153, so this argument rests on `Transform`/`Process`/`Sink` alone — still sufficient on its own.)
 
 ### 2. Reject formal semantic interfaces and the `*Pipe`-suffix rename
 
@@ -31,7 +31,9 @@ No proven real-world need. The one production periodic-generation use case ident
 
 ### 4. Adopt `channel.Route` → `channel.Switch`
 
-Real naming collision: `channel.Route` (a function) and `message.Router` (a type) coexist across the module family and are conceptually unrelated (index-based fan-out vs. event-type routing with handlers). `Switch` reads unambiguously as "select one output by index," matching Go's own `switch` statement. No symmetry is broken — `pipe`'s fan-out counterpart is already named differently (`Distributor`, matcher-based selection, a distinct concept). This completes a three-way fan-out vocabulary: `Broadcast` (copy to all), `Switch` (select one by index), `pipe.Distributor` (select one by matcher). Tracked in #165.
+Real naming collision: `channel.Route` (a function) and `message.Router` (a type) coexist across the module family and are conceptually unrelated (index-based fan-out vs. event-type routing with handlers). `Switch` reads unambiguously as "select one output by index," matching Go's own `switch` statement. Tracked in #165.
+
+**Updated:** this decision originally framed `Switch` as completing a three-way fan-out vocabulary alongside `Broadcast` and `pipe.Distributor` ("select one by matcher"). `pipe.Distributor` (and `message.Distributor`, `message.Merger`, `pipe.Merger`, and `Matcher`/`message/match`) are now dropped entirely — decided in #153, zero evidence anywhere for matcher-based fan-out or dynamic add-after-start merging once checked properly (see #153 for the full reasoning, including why `pipe.Merger`'s one apparent example didn't actually hold up). The fan-out vocabulary is now two-way: `Broadcast` (copy to all) and `Switch` (select one by index) — both covered by real, evidenced usage.
 
 ### 5. `GroupBy` relocates to `pipe`, existing constructor pattern, no new interface
 
@@ -74,6 +76,7 @@ One related idea from the same source was already rejected by its own authors, a
 - [ ] #162 — Relocate `channel.GroupBy` to `pipe`
 - [ ] #163 — Fix `channel.ToSlice`
 - [ ] #165 — Rename `channel.Route` to `channel.Switch`
+- [ ] #153 — Drop `message.Merger`/`Distributor`, `pipe.Merger`/`Distributor`, `Matcher`/`message/match`
 - [ ] Close #120, superseded by this plan and #164
 - [ ] File a tracking issue for the `message/middleware` rule-4 evaluation gating decision 6's consolidation question (not yet filed)
 
