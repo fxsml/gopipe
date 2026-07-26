@@ -16,6 +16,7 @@ Load these on demand when the relevant task arises:
 | Documentation, CHANGELOG, doc linting | @../docs/procedures/documentation.md |
 | Planning and plan documents | @../docs/procedures/planning.md |
 | ADR creation and lifecycle | @../docs/procedures/adr.md |
+| Dependency and package boundary decisions | @../docs/procedures/dependencies.md |
 | Feature branch merge (history cleanup) | @../docs/procedures/feature-release.md |
 | Release and multi-module tagging | @../docs/procedures/release.md |
 
