@@ -86,7 +86,7 @@ Report:
 
 - Never implement more than what the issue describes
 - Every change must have a test that would have caught the bug or validates the feature
-- Do not add dependencies without discussing first
+- Do not add dependencies without discussing first — see dependencies.md for the checklist
 - If the issue touches public API or inter-package contracts, flag it before proceeding
 
 ## Reference Procedures
@@ -94,3 +94,4 @@ Report:
 - @../docs/procedures/coding.md — behavioral rules: simplicity, scope discipline, TDD
 - @../docs/procedures/go.md — Go standards, godoc, testing patterns
 - @../docs/procedures/git.md — branch naming, commit format, approval gates
+- @../docs/procedures/dependencies.md — external dependency and package boundary rules
