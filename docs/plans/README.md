@@ -9,7 +9,6 @@
 | [engine-removal](engine-removal.md) | Remove Message Engine | Proposed |
 | [marshaling-strategy](marshaling-strategy.md) | Raw-by-Default Message Contract (Router) | Proposed |
 | [0007](0007-cesql-pattern-matching.md) | CESQL Pattern Matching | Proposed |
-| [autoscale-worker-pool](autoscale-worker-pool.md) | Autoscale Worker Pool | Proposed |
 | [transaction-handling](transaction-handling.md) | Transaction Handling | Proposed |
 | [inbox-outbox](inbox-outbox.md) | Inbox/Outbox Pattern | Proposed |
 | [redis-transactions](redis-transactions.md) | Redis Integration | Proposed |
