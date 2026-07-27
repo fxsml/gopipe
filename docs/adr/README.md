@@ -42,6 +42,7 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0028](0028-external-dependency-policy.md) | External Dependency Policy | Proposed |
 | [0029](0029-channel-pipe-interface-boundaries.md) | Channel/Pipe Interface and Naming Boundaries | Proposed |
 | [0030](0030-drop-merger-distributor-matcher.md) | Drop Merger, Distributor, and Matcher | Proposed |
+| [0031](0031-handler-level-marshaling.md) | Marshaling Lives in CommandHandler, Not Router | Proposed |
 
 ## History
 
