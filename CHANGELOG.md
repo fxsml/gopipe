@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **channel:** Renamed `Route` → `Switch` (breaking, pre-v1) — avoids naming collision with `message.Router`, which does event-type-based routing (a different mechanism). Behavior is unchanged. (#165)
+- **channel:** `ToSlice` now returns `<-chan []T` instead of blocking synchronously and returning `[]T` (breaking, pre-v1) — matches the rest of the package's "launch goroutine, return channel" convention. The returned channel is closed after the slice is sent, so both `slice := <-channel.ToSlice(in)` and `for slice := range channel.ToSlice(in)` work. (#163)
 
 ### Removed
 
