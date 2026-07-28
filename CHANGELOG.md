@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **channel:** `ToSlice` now returns `<-chan []T` instead of `[]T` (#163)
+  - Matches the package-wide convention of spawning a goroutine and returning a channel
+  - Breaking change (pre-v1): callers must receive from the channel, e.g. `slice := <-channel.ToSlice(in)`
+
 ## [0.18.0] - 2026-04-10
 
 ### Added
