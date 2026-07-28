@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **channel:** Renamed `Route` → `Switch` (breaking, pre-v1) — avoids naming collision with `message.Router`, which does event-type-based routing (a different mechanism). Behavior is unchanged. (#165)
 
+### Removed
+
+- **channel:** `FromRange` (Python-style variadic-overload range constructor; the only function in `channel` with argument-count-dependent dispatch/panic-based validation). Breaking change, pre-v1. Use `FromValues` or `FromSlice` with a local loop instead. (#160)
+
 ## [0.18.0] - 2026-04-10
 
 ### Added

@@ -6,7 +6,7 @@ Learn gopipe step-by-step.
 
 | # | Example | Concepts |
 |---|---------|----------|
-| 1 | [channel](01-channel/) | Filter, Transform, Sink, FromRange |
+| 1 | [channel](01-channel/) | Filter, Transform, Sink, FromValues |
 | 2 | [pipe](02-pipe/) | ProcessPipe, Config, Middleware |
 | 3 | [merger](03-merger/) | Dynamic inputs, shutdown timeout |
 | 4 | [message](04-message/) | CloudEvents engine, handlers, routing |
