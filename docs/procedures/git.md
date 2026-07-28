@@ -48,6 +48,14 @@ Closes #140
 The `(#NNN)` parenthetical on GitHub is the PR number, added automatically on squash-merge.
 Keep the subject clean; `Closes` in the footer is what GitHub parses to close the issue.
 
+## Issue Linking
+
+If a GitHub issue exists for the work, comment on it noting that you implemented or
+worked on it, linking the commit(s) or PR. Do this in addition to the `Closes #NNN`
+commit/PR footer — `Closes` auto-closes the issue on merge, but doesn't leave a
+record for issues that get partial work, discussion, or a PR that doesn't merge
+cleanly. This applies whether the issue is closed automatically or not.
+
 ## Version Management
 
 Uses [semantic versioning](https://semver.org/) with [git-semver](https://pkg.go.dev/github.com/mdomke/git-semver/v6@v6.10.0).
@@ -99,3 +107,4 @@ make release VERSION=v0.11.0           # Release develop to main
 - Never merge to main directly
 - Never force push to main/develop
 - Always run tests before push
+- Comment on the linked GitHub issue when you implement or work on it
