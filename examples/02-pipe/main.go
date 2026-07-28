@@ -16,7 +16,11 @@ func main() {
 	defer cancel()
 
 	// Create input channel with string representations of integers
-	in := channel.Transform(channel.FromRange(20), func(i int) string {
+	ints := make([]int, 20)
+	for i := range ints {
+		ints[i] = i
+	}
+	in := channel.Transform(channel.FromSlice(ints), func(i int) string {
 		return strconv.Itoa(i)
 	})
 

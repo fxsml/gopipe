@@ -14,14 +14,14 @@
 // # Quick Start
 //
 //	// Generate, filter, transform, consume
-//	in := channel.FromRange(10)
+//	in := channel.FromValues(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
 //	filtered := channel.Filter(in, func(i int) bool { return i%2 == 0 })
 //	transformed := channel.Transform(filtered, func(i int) string { return fmt.Sprint(i) })
 //	<-channel.Sink(transformed, func(s string) { fmt.Println(s) })
 //
 // # Categories
 //
-// Sources: [FromSlice], [FromRange], [FromValues], [FromFunc]
+// Sources: [FromSlice], [FromValues], [FromFunc]
 //
 // Transforms: [Filter], [Transform], [Process], [Flatten], [Buffer]
 //
