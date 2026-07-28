@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of silently falling back to a zero-value command when `msg.Data` is `nil` or does
   not type-assert to `*C`/`C` (#145)
 
+### Changed
+
+- **channel:** Renamed `Route` → `Switch` (breaking, pre-v1) — avoids naming collision with `message.Router`, which does event-type-based routing (a different mechanism). Behavior is unchanged. (#165)
+
 ## [0.18.0] - 2026-04-10
 
 ### Added
