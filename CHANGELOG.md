@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - **channel:** `FromRange` (Python-style variadic-overload range constructor; the only function in `channel` with argument-count-dependent dispatch/panic-based validation). Breaking change, pre-v1. Use `FromValues` or `FromSlice` with a local loop instead. (#160)
+- **channel:** `Cancel` (zero real-world usage across gopipe's own `pipe`/`message`/`examples`, the production reference repo, and the `gopipe-azservicebus` broker adapter; only exercised by its own unit test). Breaking change, pre-v1. Use `ctx.Done()` handling inside `Filter`/`Process` instead. (#161)
 
 ## [0.18.0] - 2026-04-10
 
