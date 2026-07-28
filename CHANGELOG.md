@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **pipe:** `Metrics` interface for backend-agnostic pipe-layer observability
+  - `RecordProcessing` — handler duration, output count, and error rate per item
+  - `RecordWait` — time blocked on receive and send channel operations
+  - `WaitOpReceive` / `WaitOpSend` exported constants for `WaitInfo.Operation`
+  - `Stats` snapshot struct (`Depth`, `Capacity`, `Inflight`, `Labels`) returned by `Stats()` on `ProcessPipe`, `BatchPipe`, `Merger`, and `Distributor`
+  - `Metrics`, `Labels`, and `LabelFunc` fields added to `pipe.Config`, `pipe.MergerConfig`, and `pipe.DistributorConfig`; zero overhead when `Metrics` is nil
+- **message:** propagate `Metrics`, `Labels`, and `LabelFunc` through `PipeConfig`, `MergerConfig`, and `DistributorConfig`; default `LabelFunc` automatically adds `cloudevents.type` dimension to all metrics events; `Stats()` method on `Router`, `UnmarshalPipe`, `MarshalPipe`, `Merger`, and `Distributor`
+- **message/otel:** new opt-in Go module (`github.com/fxsml/gopipe/message/otel`) providing OTel instrumentation
+  - `PipeMetrics` — implements `pipe.Metrics`; push instruments: `gopipe.receive.wait.duration`, `gopipe.send.wait.duration`, `gopipe.process.duration`, `gopipe.process.output`, `gopipe.process.total` (with `error.type=""` on success, Go error type on failure)
+  - `PipeMetrics.ObserveStats` — registers pull-based observable gauges for `gopipe.buffer.depth`, `gopipe.buffer.capacity`, and `gopipe.inflight`; OTel polls once per collection cycle via a single `RegisterCallback`
+  - `StatsProvider` interface satisfied by all gopipe components with a `Stats()` method
+- **message/http:** `SubscriberConfig.ErrorHandler` for full control over nack HTTP responses (#140)
+  - `ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)`
+  - Has full control over status code, headers, and body; set in `parse()` so it is always non-nil
+  - `DefaultNackHandler` is used when nil: derives status via `StatusCoder` (falls back to 500);
+    for `>= 500` writes generic `http.StatusText` to avoid leaking internals, for `< 500` writes `err.Error()`
+  - All default responses are JSON: `{"error":"<message>"}` with `Content-Type: application/json`
+
+### Fixed
+
+- **message:** `commandHandler.Handle` now returns `ErrCommandDataMismatch` instead
+  of silently falling back to a zero-value command when `msg.Data` is `nil` or does
+  not type-assert to `*C`/`C` (#145)
+
+### Removed
+
+- **channel:** `Cancel` — zero real-world usage across gopipe's own consumers; use
+  `ctx.Done()` handling inside `Filter`/`Process` instead (breaking, pre-v1)
+
 ## [0.18.0] - 2026-04-10
 
 ### Added
