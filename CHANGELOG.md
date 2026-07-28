@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **channel:** `ToSlice` now returns `<-chan []T` instead of `[]T`, matching the
+  goroutine-plus-channel convention used by the rest of the package (breaking, pre-v1)
+
 ## [0.18.0] - 2026-04-10
 
 ### Added
