@@ -11,12 +11,12 @@
 
 This plan pays off directly: `Engine` currently depends on `RawMessage`/`TypedMessage[T]`, which [marshaling-strategy.md](marshaling-strategy.md) drops. Rather than spending effort mechanically retyping `Engine` just to keep something already out of scope compiling, this plan removes it outright — which is also why it must land **before** that plan's Phase 1 (dropping `TypedMessage[T]`/`RawMessage` would otherwise break `Engine`'s compile).
 
-`Router`, `Merger`, and `Distributor` are not going anywhere — they're kept as independent, general-purpose components usable without `Engine`. Only the orchestration layer that wired them together automatically is removed.
+`Router` is not going anywhere — it's kept as an independent, general-purpose component usable without `Engine`. `Merger`/`Distributor` were also expected to survive this plan unmodified when it was first written, but their fate is decided separately by [ADR 0030](../adr/0030-drop-merger-distributor-matcher.md)/#153: both are removed entirely for v1 (zero-evidence standalone usage), along with `Matcher`/`message/match`. This plan's own job is unaffected either way — it only removes the orchestration layer that wired everything together automatically.
 
 ## Goals
 
 1. Delete `Engine` and its `Plugin` abstraction entirely — no deprecation period, no compatibility shim (pre-v1, single consumer base, consistent with the project's existing "pre-v1, breaking changes acceptable" posture).
-2. Confirm `Merger`/`Distributor` survive unmodified as standalone components (already verified: zero `RawMessage`/`TypedMessage` dependency in either).
+2. Confirm `Router` survives unmodified as a standalone component (already verified: zero `RawMessage`/`TypedMessage` dependency). `Merger`/`Distributor`'s fate is out of scope for this plan — see [ADR 0030](../adr/0030-drop-merger-distributor-matcher.md)/#153, which removes both.
 3. Leave no dangling references — every test, example, and doc that wires through `Engine` gets rewritten to use `Router` (+ `Merger`/`Distributor` directly where fan-in/fan-out is actually needed), not just deleted.
 
 ## Tasks
@@ -66,7 +66,7 @@ Tests `CorrelationID()` via four separate `message.NewEngine(...)` constructions
 
 **Files:**
 - `message/doc.go` — "Quick Start" example is `Engine`-based; rewrite to a `Router`-based quick start (handler registration + `Router.Pipe()` over a channel).
-- `message/README.md` — has a full "Engine Architecture" section (diagram + three `Engine` code examples: raw I/O, typed I/O, dynamic input/output). Needs a real rewrite, not a trim: describe `Router` (+ `Merger`/`Distributor` as optional standalone fan-in/fan-out) as the supported composition pattern.
+- `message/README.md` — has a full "Engine Architecture" section (diagram + three `Engine` code examples: raw I/O, typed I/O, dynamic input/output). Needs a real rewrite, not a trim: describe `Router` (+ `channel.Merge`/`channel.Switch` for fan-in/fan-out where needed, per ADR 0030 — not `Merger`/`Distributor`, which are removed) as the supported composition pattern.
 
 **Acceptance Criteria:**
 - [ ] No `message.NewEngine`/`Engine` reference remains in either file
@@ -106,7 +106,7 @@ This whole plan must complete before `marshaling-strategy.md`'s Phase 1 (droppin
 ## Acceptance Criteria
 
 - [ ] `make test && make build && make vet` pass with zero references to `Engine`/`EngineConfig`/`Plugin` anywhere in the repository
-- [ ] `Router`, `Merger`, `Distributor` confirmed still independently usable and tested without `Engine`
+- [ ] `Router` confirmed still independently usable and tested without `Engine` (`Merger`/`Distributor` are out of scope here — see [ADR 0030](../adr/0030-drop-merger-distributor-matcher.md)/#153 for their removal)
 - [ ] ADR written before deletion, marked Implemented after; ADR 0020 marked Superseded; ADR 0022 has an `## Updates` note
 - [ ] CHANGELOG updated
 - [ ] This plan's status updated to Complete
