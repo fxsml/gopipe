@@ -11,11 +11,6 @@
 // batching, and more. All functions are pure and create new channels without
 // modifying inputs.
 //
-// [gopipe]: https://github.com/fxsml/gopipe
-// [channel]: https://pkg.go.dev/github.com/fxsml/gopipe/channel
-// [pipe]: https://pkg.go.dev/github.com/fxsml/gopipe/pipe
-// [message]: https://pkg.go.dev/github.com/fxsml/gopipe/message
-//
 // # Quick Start
 //
 //	// Generate, filter, transform, consume
@@ -30,7 +25,7 @@
 //
 // Transforms: [Filter], [Transform], [Process], [Flatten], [Buffer]
 //
-// Fan-out: [Broadcast], [Route]
+// Fan-out: [Broadcast], [Switch]
 //
 // Fan-in: [Merge]
 //
@@ -39,4 +34,9 @@
 // Batching: [Batch], [Collect], [GroupBy]
 //
 // For stateful components with lifecycle management, see the pipe package.
+//
+// [gopipe]: https://github.com/fxsml/gopipe
+// [channel]: https://pkg.go.dev/github.com/fxsml/gopipe/channel
+// [pipe]: https://pkg.go.dev/github.com/fxsml/gopipe/pipe
+// [message]: https://pkg.go.dev/github.com/fxsml/gopipe/message
 package channel
