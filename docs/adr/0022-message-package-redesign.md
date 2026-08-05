@@ -144,3 +144,7 @@ See:
 - Incorporates: ADR 0020 (Message Engine Architecture)
 - Incorporates: ADR 0021 (Codec/Marshaling Pattern)
 - Related: ADR 0018 (Interface Naming Conventions)
+
+## Updates
+
+**2026-08-05:** The `Engine` this ADR introduced has been removed — see [ADR 0032](0032-remove-message-engine.md). `Router` (also introduced here) is unaffected and remains the supported way to dispatch messages to handlers.

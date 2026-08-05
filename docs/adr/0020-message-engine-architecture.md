@@ -1,7 +1,7 @@
 # ADR 0020: Message Engine Architecture
 
 **Date:** 2025-12-22
-**Status:** Implemented (v0.11.0) — see [ADR 0022](0022-message-package-redesign.md)
+**Status:** Superseded by [ADR 0032](0032-remove-message-engine.md) — see [ADR 0022](0022-message-package-redesign.md)
 
 ## Context
 

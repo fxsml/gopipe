@@ -2,30 +2,27 @@
 name: building-message-pipelines
 description: |
   Provides expertise in the message package architecture for building CloudEvents-based
-  pipelines in gopipe. Apply when working with the message package, Engine, Router,
+  pipelines in gopipe. Apply when working with the message package, Router,
   Handler, Matcher, or designing event-driven systems.
 user-invocable: false
 ---
 
 # Building Message Pipelines
 
-## Architecture: Single Merger
+## Architecture: Router Composition
 
 ```
-RawInputs → Unmarshal ─┐
-                       ├→ Merger → Router → Distributor
-TypedInputs ───────────┘                          │
-                                       ┌──────────┴──────────┐
-                                 TypedOutput            RawOutput
+RawInput → UnmarshalPipe → Router → MarshalPipe → RawOutput
 ```
 
-Each raw input has its own unmarshal pipe feeding into a single shared merger.
+`Router` is a standalone component — compose it directly with
+[`NewUnmarshalPipe`]/[`NewMarshalPipe`] at the boundary where raw ([]byte) messages
+meet typed ones. Use `channel.Merge`/`channel.Switch` for fan-in/fan-out.
 
-## Engine Configuration
+## Router Configuration
 
 ```go
-engine := message.NewEngine(message.EngineConfig{
-    Marshaler:       message.NewJSONMarshaler(),
+router := message.NewRouter(message.PipeConfig{
     ShutdownTimeout: 5 * time.Second,
 })
 ```
@@ -33,7 +30,7 @@ engine := message.NewEngine(message.EngineConfig{
 ## Adding Handlers
 
 ```go
-engine.AddHandler("handler-name", matcher, message.NewCommandHandler(
+router.AddHandler("handler-name", matcher, message.NewCommandHandler(
     func(ctx context.Context, cmd InputType) ([]OutputType, error) {
         return []OutputType{{...}}, nil
     },
@@ -64,30 +61,22 @@ type Matcher interface {
 
 Operates on Attributes only (not `*Message`) to avoid wrapper allocation for raw messages.
 
-## Inputs and Outputs
+## Raw and Typed I/O
 
 ```go
-// Raw input ([]byte data)
-input := make(chan *message.RawMessage, 10)
-engine.AddRawInput("name", matcher, input)
+// Raw input ([]byte data) → typed, via unmarshal pipe
+rawInput := make(chan *message.RawMessage, 10)
+unmarshal := message.NewUnmarshalPipe(router, message.NewJSONMarshaler(), message.PipeConfig{})
+typedInput, _ := unmarshal.Pipe(ctx, rawInput)
 
-// Raw output
-output, _ := engine.AddRawOutput("name", matcher)
+// Or feed the router directly with an already-typed channel, no marshaling:
+// typedInput := make(chan *message.Message, 10)
 
-// Typed input
-typedInput := make(chan *message.Message, 10)
-engine.AddInput("name", matcher, typedInput)
+typedOutput, _ := router.Pipe(ctx, typedInput)
 
-// Typed output
-typedOutput, _ := engine.AddOutput("name", matcher)
-```
-
-## Loopback is a Plugin
-
-Loopback is NOT built into Engine. Use `plugin.Loopback`:
-
-```go
-engine.AddPlugin(plugin.Loopback("step1-loop", &typeMatcher{"step1.completed"}))
+// Typed output → raw, via marshal pipe
+marshal := message.NewMarshalPipe(message.NewJSONMarshaler(), message.PipeConfig{})
+rawOutput, _ := marshal.Pipe(ctx, typedOutput)
 ```
 
 ## Event Type Naming
@@ -102,11 +91,11 @@ engine.AddPlugin(plugin.Loopback("step1-loop", &typeMatcher{"step1.completed"}))
 
 ```go
 ctx, cancel := context.WithCancel(context.Background())
-done, _ := engine.Start(ctx)
+out, _ := router.Pipe(ctx, input)
 
-close(input)  // Close inputs first
+close(input)  // Close input first
 cancel()      // Then cancel context
-<-done        // Wait for shutdown
+for range out {}  // Drain until closed
 ```
 
 ## Rejected Alternatives

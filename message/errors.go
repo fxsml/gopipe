@@ -2,12 +2,12 @@ package message
 
 import "errors"
 
-var (
-	// ErrAlreadyStarted is returned when Start() is called on a running engine.
-	ErrAlreadyStarted = errors.New("engine already started")
+// ErrorHandler processes errors from Router, Merger, and Distributor.
+type ErrorHandler func(msg *Message, err error)
 
-	// ErrInputRejected is returned when a message is rejected by input matcher.
-	ErrInputRejected = errors.New("message rejected by input matcher")
+var (
+	// ErrAlreadyStarted is returned when Pipe() is called on a router that has already started.
+	ErrAlreadyStarted = errors.New("router already started")
 
 	// ErrNoHandler is returned when no handler exists for a message type.
 	ErrNoHandler = errors.New("no handler for message type")

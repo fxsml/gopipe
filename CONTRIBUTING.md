@@ -44,7 +44,7 @@ Stateless channel operations: `Merge`, `Filter`, `Transform`, `Broadcast`, `Grou
 Stateful components with lifecycle: `ProcessPipe`, `Merger`, `Distributor`, `Generator`.
 
 ### Message Package
-CloudEvents message handling: `Engine`, `Router`, `Handler`, with type-based routing.
+CloudEvents message handling: `Router`, `Handler`, with type-based routing.
 
 See [README.md](README.md) for quick start examples and package overview.
 

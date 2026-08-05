@@ -1,10 +1,11 @@
 // Example: HTTP service with JSON Schema validation using middleware.
 //
-// Demonstrates manual pipeline composition with jsonschema validation middleware.
-// This example shows the low-level pipe primitives instead of using the Engine.
+// Demonstrates manual pipeline composition with jsonschema validation middleware,
+// using the low-level pipe primitives directly.
 //
 // Pipeline:
-//   HTTP → UnmarshalPipe+ValidationMW → Router → MarshalPipe+ValidationMW → stdout
+//
+//	HTTP → UnmarshalPipe+ValidationMW → Router → MarshalPipe+ValidationMW → stdout
 //
 // CloudEvents defines the envelope contract (type, source, id).
 // JSON Schema defines the payload data contract (what's inside "data").

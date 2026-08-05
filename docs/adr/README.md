@@ -31,7 +31,7 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0017](0017-middleware-for-processfunc.md) | Middleware for ProcessFunc | Accepted |
 | [0018](0018-interface-naming-conventions.md) | Interface Naming Conventions | Implemented |
 | [0019](0019-remove-sender-receiver.md) | Remove Sender and Receiver | Proposed |
-| [0020](0020-message-engine-architecture.md) | Message Engine Architecture | Proposed |
+| [0020](0020-message-engine-architecture.md) | Message Engine Architecture | Superseded by ADR 0032 |
 | [0021](0021-codec-marshaling-pattern.md) | Codec/Marshaling Pattern | Proposed |
 | [0022](0022-message-package-redesign.md) | Message Package Redesign | Proposed |
 | [0023](0023-engine-simplification.md) | Engine Simplification | Implemented |
@@ -43,6 +43,7 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0029](0029-channel-pipe-interface-boundaries.md) | Channel/Pipe Interface and Naming Boundaries | Proposed |
 | [0030](0030-drop-merger-distributor-matcher.md) | Drop Merger, Distributor, and Matcher | Proposed |
 | [0031](0031-handler-level-marshaling.md) | Marshaling Lives in CommandHandler, Not Router | Proposed |
+| [0032](0032-remove-message-engine.md) | Remove Message Engine | Implemented |
 
 ## History
 
