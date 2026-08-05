@@ -7,37 +7,32 @@ CloudEvents message handling with type-based routing.
 The `message` package provides:
 
 - **Message** - CloudEvents-aligned message with typed data and attributes
-- **Engine** - Orchestrates message flow between inputs, handlers, and outputs
+- **Router** - Dispatches messages to handlers by CE type
 - **Handler** - Type-safe command/event handlers with automatic marshaling
 
-## Engine Architecture
+## Router Composition
+
+`Router` is a standalone component: it takes a channel of typed `*Message`
+values and returns a channel of typed `*Message` values.
 
 ```
-RawInput₁ → Unmarshal ─┐
-RawInput₂ → Unmarshal ─┼─→ Merger → Router → Distributor
-TypedInput ────────────┘                            │
-                                         ┌──────────┴──────────┐
-                                   TypedOutput            Marshal
-                                                             ↓
-                                                         RawOutput
+RawInput → UnmarshalPipe → Router → MarshalPipe → RawOutput
 ```
 
-The Engine uses a single merger for all message flows:
-
-- **Merger** combines typed inputs and unmarshaled raw inputs
 - **Router** routes messages to handlers by CE type
-- **Distributor** routes output to consumers using first-match-wins semantics
-- **TypedOutput** bypasses marshaling (for internal use)
-- **RawOutput** marshals to bytes (for broker integration)
+- **UnmarshalPipe**/**MarshalPipe** convert `[]byte` ↔ typed data at the boundary
+  (skip them entirely for internal/typed-only messaging)
+
+For fan-in/fan-out across multiple inputs/outputs, compose with
+[`channel.Merge`](https://pkg.go.dev/github.com/fxsml/gopipe/channel#Merge) and
+[`channel.Switch`](https://pkg.go.dev/github.com/fxsml/gopipe/channel#Switch).
 
 ## Usage
 
 ### Raw I/O (Broker Integration)
 
 ```go
-engine := message.NewEngine(message.EngineConfig{
-    Marshaler: message.NewJSONMarshaler(),
-})
+router := message.NewRouter(message.PipeConfig{})
 
 // Register handlers
 handler := message.NewCommandHandler(
@@ -49,17 +44,22 @@ handler := message.NewCommandHandler(
         Naming: message.DotNaming,
     },
 )
-engine.AddHandler("orders", nil, handler)
+router.AddHandler("orders", nil, handler)
 
-// Add raw inputs and outputs (for broker integration)
-input := make(chan *message.RawMessage, 100)
-engine.AddRawInput("orders-in", nil, input)
-output, _ := engine.AddRawOutput("orders-out", nil)
-
-// Start engine
 ctx, cancel := context.WithCancel(context.Background())
 defer cancel()
-done, _ := engine.Start(ctx)
+
+// Raw input → typed, via unmarshal pipe
+input := make(chan *message.RawMessage, 100)
+marshaler := message.NewJSONMarshaler()
+unmarshal := message.NewUnmarshalPipe(router, marshaler, message.PipeConfig{})
+typedIn, _ := unmarshal.Pipe(ctx, input)
+
+typedOut, _ := router.Pipe(ctx, typedIn)
+
+// Typed output → raw, via marshal pipe
+marshal := message.NewMarshalPipe(marshaler, message.PipeConfig{})
+output, _ := marshal.Pipe(ctx, typedOut)
 
 // Send/receive raw messages (bytes)
 input <- &message.RawMessage{
@@ -74,9 +74,7 @@ out := <-output
 ### Typed I/O (Internal Use / Testing)
 
 ```go
-engine := message.NewEngine(message.EngineConfig{
-    Marshaler: message.NewJSONMarshaler(),
-})
+router := message.NewRouter(message.PipeConfig{})
 
 // Register handlers
 handler := message.NewCommandHandler(
@@ -88,17 +86,14 @@ handler := message.NewCommandHandler(
         Naming: message.DotNaming,
     },
 )
-engine.AddHandler("orders", nil, handler)
+router.AddHandler("orders", nil, handler)
 
-// Add typed inputs and outputs (no marshal/unmarshal)
+// Typed input/output, no marshal/unmarshal
 input := make(chan *message.Message, 100)
-engine.AddInput("orders-in", nil, input)
-output, _ := engine.AddOutput("orders-out", nil)
 
-// Start engine
 ctx, cancel := context.WithCancel(context.Background())
 defer cancel()
-done, _ := engine.Start(ctx)
+output, _ := router.Pipe(ctx, input)
 
 // Send/receive typed messages directly
 input <- &message.Message{
@@ -109,26 +104,6 @@ input <- &message.Message{
 out := <-output
 // out.Data contains OrderEvent as typed struct (any)
 event := out.Data.(OrderEvent)
-```
-
-## Dynamic Input/Output
-
-Inputs and outputs can be added after Start():
-
-```go
-engine.Start(ctx)
-
-// Add new raw input dynamically (broker integration)
-newRawInput := make(chan *message.RawMessage, 100)
-engine.AddRawInput("new-raw-input", nil, newRawInput)
-
-// Add new typed input dynamically (internal use)
-newTypedInput := make(chan *message.Message, 100)
-engine.AddInput("new-typed-input", nil, newTypedInput)
-
-// Add new outputs dynamically
-newRawOutput, _ := engine.AddRawOutput("orders-out", match.Types("order.%"))
-newTypedOutput, _ := engine.AddOutput("internal-out", match.Types("internal.%"))
 ```
 
 ## Message Types

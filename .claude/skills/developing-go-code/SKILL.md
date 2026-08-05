@@ -22,7 +22,7 @@ make check  # All of the above
 
 | Context | Pattern | Example |
 |---------|---------|---------|
-| Constructors | Config struct | `NewEngine(EngineConfig{})` |
+| Constructors | Config struct | `NewRouter(PipeConfig{})` |
 | Methods | Direct parameters | `AddHandler("name", matcher, h)` |
 | Optional filtering | `nil` = match all | `AddOutput("out", nil)` |
 
@@ -75,17 +75,18 @@ channel.Filter(in, func(msg) bool {
 })
 ```
 
-### Creating components in Start()
+### Lazy-initializing state in Pipe()
 
 ```go
-// WRONG - creates forwarding complexity
-func (e *Engine) Start() {
-    e.distributor = NewDistributor()
+// WRONG - AddHandler panics/no-ops until Pipe() has run once
+func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message, error) {
+    r.handlers = make(map[string]handlerEntry) // Too late
+    ...
 }
 
-// CORRECT - create upfront so Add* works before Start
-func NewEngine() *Engine {
-    return &Engine{distributor: NewDistributor()}
+// CORRECT - create upfront so AddHandler works before Pipe() runs
+func NewRouter(cfg PipeConfig) *Router {
+    return &Router{handlers: make(map[string]handlerEntry)}
 }
 ```
 
@@ -98,7 +99,7 @@ Handler should NOT own its name — name is a wiring concern:
 type Handler interface { Name() string }
 
 // CORRECT - name is parameter to AddHandler
-engine.AddHandler("process-orders", matcher, handler)
+router.AddHandler("process-orders", matcher, handler)
 ```
 
 ### Copy() sharing Attributes map

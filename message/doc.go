@@ -7,20 +7,13 @@
 //   - [pipe] — Stateful components with lifecycle management
 //   - [message] (this package) — CloudEvents message routing with type-based handlers
 //
-// The package centers around the [Engine], which orchestrates message flow between
-// inputs, handlers, and outputs. Messages follow the CloudEvents specification
+// The package centers around the [Router], which dispatches messages to
+// handlers by CloudEvents type. Messages follow the CloudEvents specification
 // with typed data payloads and context attributes.
-//
-// [gopipe]: https://github.com/fxsml/gopipe
-// [channel]: https://pkg.go.dev/github.com/fxsml/gopipe/channel
-// [pipe]: https://pkg.go.dev/github.com/fxsml/gopipe/pipe
-// [message]: https://pkg.go.dev/github.com/fxsml/gopipe/message
 //
 // # Quick Start
 //
-//	engine := message.NewEngine(message.EngineConfig{
-//		Marshaler: message.NewJSONMarshaler(),
-//	})
+//	router := message.NewRouter(message.PipeConfig{})
 //
 //	handler := message.NewCommandHandler(
 //		func(ctx context.Context, cmd OrderCmd) ([]OrderEvent, error) {
@@ -28,26 +21,27 @@
 //		},
 //		message.CommandHandlerConfig{Source: "/orders", Naming: message.DotNaming},
 //	)
-//	engine.AddHandler("orders", nil, handler)
+//	router.AddHandler("orders", nil, handler)
 //
-//	engine.AddRawInput("in", nil, inputCh)
-//	output, _ := engine.AddRawOutput("out", nil)
-//
-//	done, _ := engine.Start(ctx)
+//	output, _ := router.Pipe(ctx, inputCh)
 //
 // # Architecture
 //
-// The engine uses a single merger for all inputs. Each raw input has its own
-// unmarshal pipe that feeds typed messages into the shared merger. Typed inputs
-// feed directly into the merger, then route to handlers via the router.
+// [Router] is a standalone component: it takes a channel of typed [Message]
+// values and returns a channel of typed [Message] values. For raw ([]byte)
+// I/O — broker integration, HTTP — compose [NewUnmarshalPipe] and
+// [NewMarshalPipe] at the boundary:
 //
-// See README.md in this package for detailed architecture diagrams.
+//	rawIn → NewUnmarshalPipe → Router → NewMarshalPipe → rawOut
+//
+// See README.md in this package for a worked example.
 //
 // # Design Notes
 //
 // Handler is self-describing via [Handler.EventType] and [Handler.NewInput],
-// eliminating the need for a central type registry. The engine reads these
-// methods to route messages and create instances for unmarshaling.
+// eliminating the need for a central type registry. [Router] and
+// [UnmarshalPipe] read these methods to route messages and create instances
+// for unmarshaling.
 //
 // [Matcher.Match] uses [Attributes] instead of *Message because all matchers
 // only access attributes, avoiding allocation when matching raw messages.
@@ -82,7 +76,7 @@
 //
 // For automatic ack-on-handler-success, use [middleware.AutoAck]:
 //
-//	engine.Use(middleware.AutoAck())
+//	router.Use(middleware.AutoAck())
 //
 // # Batch Processing
 //
@@ -120,10 +114,12 @@
 //   - [cloudevents]: Integration with CloudEvents SDK protocol bindings
 //   - [match]: Matchers for filtering messages by attributes
 //   - [middleware]: Cross-cutting concerns (correlation ID, logging)
-//   - [plugin]: Reusable engine plugins
 //
+// [gopipe]: https://github.com/fxsml/gopipe
+// [channel]: https://pkg.go.dev/github.com/fxsml/gopipe/channel
+// [pipe]: https://pkg.go.dev/github.com/fxsml/gopipe/pipe
+// [message]: https://pkg.go.dev/github.com/fxsml/gopipe/message
 // [cloudevents]: https://pkg.go.dev/github.com/fxsml/gopipe/message/cloudevents
 // [match]: https://pkg.go.dev/github.com/fxsml/gopipe/message/match
 // [middleware]: https://pkg.go.dev/github.com/fxsml/gopipe/message/middleware
-// [plugin]: https://pkg.go.dev/github.com/fxsml/gopipe/message/plugin
 package message

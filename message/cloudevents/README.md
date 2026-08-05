@@ -1,18 +1,18 @@
 # CloudEvents Integration
 
-This package integrates gopipe's message engine with [CloudEvents SDK](https://github.com/cloudevents/sdk-go) protocol bindings.
+This package integrates gopipe's [message] package with [CloudEvents SDK](https://github.com/cloudevents/sdk-go) protocol bindings.
 
 ## Features
 
 - Wrap any CloudEvents `protocol.Receiver` as a gopipe input source
 - Wrap any CloudEvents `protocol.Sender` as a gopipe output sink
 - Bridge CloudEvents `Finish()` acknowledgment to gopipe's `Acking` callbacks
-- Plugin API for simplified engine registration
 
 ## Quick Start
 
 ```go
 import (
+    "github.com/fxsml/gopipe/message"
     cloudevents "github.com/fxsml/gopipe/message/cloudevents"
     cejetstream "github.com/cloudevents/sdk-go/protocol/nats_jetstream/v2"
 )
@@ -21,52 +21,30 @@ import (
 receiver, _ := cejetstream.NewConsumerFromConn(conn, stream, subject, jsOpts, subOpts)
 sender, _ := cejetstream.NewSenderFromConn(conn, stream, subject, jsOpts)
 
-// Register with engine using plugins
-engine.AddPlugin(
-    cloudevents.SubscriberPlugin(
-        ctx, "input", nil,
-        receiver, cloudevents.SubscriberConfig{},
-    ),
-    cloudevents.PublisherPlugin(
-        ctx, "output", nil,
-        sender, cloudevents.PublisherConfig{},
-    ),
-)
+// Create adapters
+sub := cloudevents.NewSubscriber(receiver, cloudevents.SubscriberConfig{})
+pub := cloudevents.NewPublisher(sender, cloudevents.PublisherConfig{})
+
+// Wire raw input through Router via unmarshal/marshal pipes
+router := message.NewRouter(message.PipeConfig{})
+router.AddHandler("orders", nil, handler)
+
+rawIn, _ := sub.Subscribe(ctx)
+unmarshal := message.NewUnmarshalPipe(router, message.NewJSONMarshaler(), message.PipeConfig{})
+typedIn, _ := unmarshal.Pipe(ctx, rawIn)
+typedOut, _ := router.Pipe(ctx, typedIn)
+marshal := message.NewMarshalPipe(message.NewJSONMarshaler(), message.PipeConfig{})
+rawOut, _ := marshal.Pipe(ctx, typedOut)
+
+pub.Publish(ctx, rawOut)
 
 // Start the external protocol loop (SDK-specific)
 go receiver.OpenInbound(ctx)
-
-// Start engine
-engine.Start(ctx)
 ```
+
+[message]: https://pkg.go.dev/github.com/fxsml/gopipe/message
 
 ## API
-
-### Plugins (Recommended)
-
-```go
-// SubscriberPlugin wraps a CloudEvents Receiver as an engine input
-cloudevents.SubscriberPlugin(
-    ctx context.Context,
-    name string,
-    matcher message.Matcher,
-    receiver protocol.Receiver,
-    cfg SubscriberConfig,
-) message.Plugin
-
-// PublisherPlugin wraps a CloudEvents Sender as an engine output
-cloudevents.PublisherPlugin(
-    ctx context.Context,
-    name string,
-    matcher message.Matcher,
-    sender protocol.Sender,
-    cfg PublisherConfig,
-) message.Plugin
-```
-
-### Direct Usage
-
-For more control over the wiring:
 
 ```go
 // Create adapters
@@ -78,11 +56,8 @@ pub := cloudevents.NewPublisher(sender, cloudevents.PublisherConfig{
     Concurrency: 1,    // send goroutines
 })
 
-// Wire to engine
+// Produces/consumes raw channels directly
 inCh, _ := sub.Subscribe(ctx)
-engine.AddRawInput("input", nil, inCh)
-
-outCh, _ := engine.AddRawOutput("output", nil)
 pub.Publish(ctx, outCh)
 ```
 

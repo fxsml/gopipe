@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **channel:** `FromRange` (Python-style variadic-overload range constructor; the only function in `channel` with argument-count-dependent dispatch/panic-based validation). Breaking change, pre-v1. Use `FromValues` or `FromSlice` with a local loop instead. (#160)
 - **channel:** `Cancel` (zero real-world usage across gopipe's own `pipe`/`message`/`examples`, the production reference repo, and the `gopipe-azservicebus` broker adapter; only exercised by its own unit test). Breaking change, pre-v1. Use `ctx.Done()` handling inside `Filter`/`Process` instead. (#161)
+- **message:** `Engine`, `EngineConfig`, `Plugin` (zero real-world usage across a production reference repository and the `gopipe-azservicebus` broker adapter). Breaking change, pre-v1. Compose `Router` directly with `NewUnmarshalPipe`/`NewMarshalPipe` at the raw/typed boundary instead — see `message/README.md`. (#147)
+- **message:** `ErrInputRejected` (only used by `Engine`'s input matcher). Breaking change, pre-v1. (#147)
+- **message/cloudevents:** `SubscriberPlugin`, `PublisherPlugin` (pure `Engine`-wiring sugar). Breaking change, pre-v1. Use `Subscriber`/`Publisher` directly. (#147)
 
 ## [0.18.0] - 2026-04-10
 

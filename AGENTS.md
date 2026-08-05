@@ -29,7 +29,7 @@ Domain expertise loaded automatically from `.claude/skills/`:
 |-------|----------------|
 | `managing-git-workflow` | Git flow, branch naming, multi-module tagging, approval gates |
 | `developing-go-code` | Go standards, testing, common anti-patterns |
-| `building-message-pipelines` | Message package architecture, Engine, Router, Handler |
+| `building-message-pipelines` | Message package architecture, Router, Handler |
 
 ### Slash Commands
 
@@ -57,7 +57,7 @@ Domain expertise loaded automatically from `.claude/skills/`:
 |---------|---------|-----------|
 | `channel/` | Stateless channel operations | Filter, Transform, Merge, Broadcast |
 | `pipe/` | Stateful components with lifecycle | ProcessPipe, Merger, Distributor |
-| `message/` | CloudEvents message handling | Engine, Router, Handler |
+| `message/` | CloudEvents message handling | Router, Handler |
 
 ## Project Structure
 
@@ -95,7 +95,7 @@ TypedInputs ───────────┘                          │
 
 | Context | Pattern | Example |
 |---------|---------|---------|
-| Constructors | Config struct | `NewEngine(EngineConfig{})` |
+| Constructors | Config struct | `NewRouter(PipeConfig{})` |
 | Methods | Direct parameters | `AddHandler("name", matcher, h)` |
 | Optional filtering | `nil` = match all | `AddOutput("out", nil)` |
 
@@ -144,13 +144,13 @@ channel.Filter(in, func(msg) bool {
 
 ```go
 // WRONG - creates forwarding complexity
-func (e *Engine) Start() {
-    e.distributor = NewDistributor()  // Too late
+func (o *Orchestrator) Start() {
+    o.distributor = NewDistributor()  // Too late
 }
 
 // CORRECT - create upfront, Add* calls component directly
-func NewEngine() *Engine {
-    return &Engine{
+func NewOrchestrator() *Orchestrator {
+    return &Orchestrator{
         distributor: NewDistributor(),  // Ready for AddOutput()
     }
 }
@@ -160,7 +160,7 @@ func NewEngine() *Engine {
 
 ### ❌ Handler.Name() method
 
-Handler should NOT own its name. Name is a wiring concern handled by Engine:
+Handler should NOT own its name. Name is a wiring concern handled by Router:
 
 ```go
 // WRONG
@@ -298,7 +298,6 @@ See [ADR 0029](docs/adr/0029-channel-pipe-interface-boundaries.md) for full cont
 ```
 message/
 ├── doc.go          # Package docs with Design Notes
-├── engine.go       # Engine orchestrator
 ├── router.go       # Handler routing with middleware
 ├── handler.go      # Handler interface, NewHandler, NewCommandHandler
 ├── message.go      # Message types, Copy, Acking
@@ -308,8 +307,7 @@ message/
 ├── matcher.go      # Matcher interface
 ├── errors.go       # Error types
 ├── match/          # Matcher implementations
-├── middleware/     # CorrelationID, AutoAck, etc.
-└── plugin/         # Engine plugins
+└── middleware/     # CorrelationID, AutoAck, etc.
 ```
 
 ## Deprecation Procedure

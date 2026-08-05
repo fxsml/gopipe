@@ -51,9 +51,7 @@ merged, _ := merger.Merge(ctx)
 ```go
 import "github.com/fxsml/gopipe/message"
 
-engine := message.NewEngine(message.EngineConfig{
-    Marshaler: message.NewJSONMarshaler(),
-})
+router := message.NewRouter(message.PipeConfig{})
 
 handler := message.NewCommandHandler(
     func(ctx context.Context, cmd CreateOrder) ([]OrderCreated, error) {
@@ -61,11 +59,9 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{Source: "/orders"},
 )
-engine.AddHandler("orders", nil, handler)
-engine.AddRawInput("input", nil, inputCh)
-output, _ := engine.AddRawOutput("output", nil)
+router.AddHandler("orders", nil, handler)
 
-engine.Start(ctx)
+output, _ := router.Pipe(ctx, input)
 ```
 
 ## Packages
@@ -88,8 +84,7 @@ pipe.Merger        →  Add inputs at runtime
 pipe.Distributor   →  Route by matcher, first-match wins
 pipe.ProcessPipe   →  Stateful processing with lifecycle
 
-message.Engine     →  Full message bus with routing
-message.Router     →  Just the handler dispatch part
+message.Router     →  Handler dispatch by CE type
 message.Handler    →  Type-safe command/event handlers
 ```
 

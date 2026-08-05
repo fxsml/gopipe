@@ -62,21 +62,23 @@ handler := message.NewHandler[OrderCreated](
 )
 ```
 
-### Engine Integration
+### Router Integration
 
 ```go
-engine := message.NewEngine(message.EngineConfig{
-    Marshaler: message.NewJSONMarshaler(),
-})
+router := message.NewRouter(message.PipeConfig{})
 
-engine.AddHandler("create-order", nil, createOrderHandler)
-engine.AddHandler("order-projection", nil, orderCreatedHandler)
+router.AddHandler("create-order", nil, createOrderHandler)
+router.AddHandler("order-projection", nil, orderCreatedHandler)
 
 input := make(chan *message.RawMessage)
-engine.AddRawInput("commands", nil, input)
-output, _ := engine.AddRawOutput("events", nil)
+marshaler := message.NewJSONMarshaler()
+unmarshal := message.NewUnmarshalPipe(router, marshaler, message.PipeConfig{})
+typedIn, _ := unmarshal.Pipe(ctx, input)
 
-done, _ := engine.Start(ctx)
+typedOut, _ := router.Pipe(ctx, typedIn)
+
+marshal := message.NewMarshalPipe(marshaler, message.PipeConfig{})
+output, _ := marshal.Pipe(ctx, typedOut)
 ```
 
 ## Naming Conventions
@@ -89,7 +91,7 @@ done, _ := engine.Start(ctx)
 ## Related ADRs
 
 - [ADR 0011: CQRS Implementation](../adr/0011-cqrs-implementation.md)
-- [ADR 0020: Message Engine Architecture](../adr/0020-message-engine-architecture.md)
+- [ADR 0032: Remove Message Engine](../adr/0032-remove-message-engine.md)
 
 ## Further Reading
 

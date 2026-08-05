@@ -2,7 +2,7 @@
 //
 // Demonstrates HTTP pub/sub using the message/http adapter:
 // - Receive CloudEvents via HTTP (binary or structured mode)
-// - Process with typed handlers
+// - Process with typed handlers via Router
 // - Publish results via HTTP (batched for efficiency)
 //
 // Run:
@@ -54,9 +54,9 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	// Setup engine with handler: OrderCreated → OrderConfirmed
-	engine := message.NewEngine(message.EngineConfig{})
-	engine.AddHandler("process-order", nil, message.NewCommandHandler(
+	// Setup router with handler: OrderCreated → OrderConfirmed
+	router := message.NewRouter(message.PipeConfig{})
+	router.AddHandler("process-order", nil, message.NewCommandHandler(
 		func(ctx context.Context, order OrderCreated) ([]OrderConfirmed, error) {
 			fmt.Printf("Processing: %s ($%d)\n", order.OrderID, order.Amount)
 			return []OrderConfirmed{{
@@ -74,10 +74,19 @@ func main() {
 	// HTTP Subscriber: receive orders
 	orders := cehttp.NewSubscriber(cehttp.SubscriberConfig{BufferSize: 100})
 	ordersCh, _ := orders.Subscribe(ctx)
-	engine.AddRawInput("orders", nil, ordersCh)
+
+	// Raw input → typed, via unmarshal pipe
+	marshaler := message.NewJSONMarshaler()
+	unmarshal := message.NewUnmarshalPipe(router, marshaler, message.PipeConfig{})
+	typedIn, _ := unmarshal.Pipe(ctx, ordersCh)
+
+	typedOut, _ := router.Pipe(ctx, typedIn)
+
+	// Typed output → raw, via marshal pipe
+	marshal := message.NewMarshalPipe(marshaler, message.PipeConfig{})
+	confirmationsCh, _ := marshal.Pipe(ctx, typedOut)
 
 	// HTTP Publisher: send confirmations (batched)
-	confirmationsCh, _ := engine.AddRawOutput("confirmations", nil)
 	publisher := cehttp.NewPublisher(cehttp.PublisherConfig{
 		TargetURL:     "http://localhost:9000/confirmations", // External service
 		BatchSize:     10,
@@ -86,10 +95,7 @@ func main() {
 			log.Printf("Send failed (id=%v): %v", msg.ID(), err)
 		},
 	})
-	publisher.Publish(ctx, confirmationsCh)
-
-	// Start engine
-	engineDone, _ := engine.Start(ctx)
+	publishDone, _ := publisher.Publish(ctx, confirmationsCh)
 
 	// HTTP Server (receives orders)
 	mux := http.NewServeMux()
@@ -130,6 +136,6 @@ func main() {
 		log.Fatalf("Server error: %v", err)
 	}
 
-	<-engineDone
+	<-publishDone
 	fmt.Println("Shutdown complete")
 }
