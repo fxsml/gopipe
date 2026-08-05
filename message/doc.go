@@ -62,7 +62,7 @@
 // Basic pattern - ack after output delivery:
 //
 //	// Input source sets up acking
-//	raw := message.NewRaw(data, attrs, message.NewAcking(
+//	raw := message.New(data, attrs, message.NewAcking(
 //		func() { broker.Ack(msgID) },
 //		func(err error) { broker.Nack(msgID) },
 //	))
@@ -106,8 +106,9 @@
 //
 // # Message Types
 //
-// [TypedMessage] is the generic base type. [Message] (any data) and [RawMessage]
-// ([]byte data) are type aliases for common use cases.
+// [Message] is a single concrete type: Data holds either raw []byte (broker
+// boundary) or a typed Go value, depending on where the message is in a
+// pipeline. Use [Message.Raw] to check which state Data is currently in.
 //
 // # Subpackages
 //

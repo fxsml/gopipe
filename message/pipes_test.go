@@ -2,11 +2,9 @@ package message
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
-
-	"github.com/fxsml/gopipe/pipe"
-	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
 type PipeTestData struct {
@@ -26,8 +24,8 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		in := make(chan *RawMessage, 1)
-		in <- &RawMessage{
+		in := make(chan *Message, 1)
+		in <- &Message{
 			Data:       []byte(`{"name":"test","value":42}`),
 			Attributes: Attributes{"type": "test.data"},
 		}
@@ -65,13 +63,13 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		defer cancel()
 
 		type keyType struct{}
-		raw := &RawMessage{
+		raw := &Message{
 			Data:       []byte(`{"name":"test","value":1}`),
 			Attributes: Attributes{"type": "test.data"},
 		}
 		raw.SetLocal(keyType{}, "principal-123")
 
-		in := make(chan *RawMessage, 1)
+		in := make(chan *Message, 1)
 		in <- raw
 		close(in)
 
@@ -105,8 +103,8 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		in := make(chan *RawMessage, 1)
-		in <- &RawMessage{
+		in := make(chan *Message, 1)
+		in <- &Message{
 			Data:       []byte(`{}`),
 			Attributes: Attributes{"type": "unknown.type"},
 		}
@@ -123,6 +121,38 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		}
 	})
 
+	t.Run("returns ErrDataNotRaw when Data is not []byte", func(t *testing.T) {
+		registry := FactoryMap{
+			"test.data": func() any { return &PipeTestData{} },
+		}
+		marshaler := NewJSONMarshaler()
+
+		var lastErr error
+		p := NewUnmarshalPipe(registry, marshaler, PipeConfig{
+			ErrorHandler: func(msg *Message, err error) {
+				lastErr = err
+			},
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       &PipeTestData{Name: "already-typed"},
+			Attributes: Attributes{"type": "test.data"},
+		}
+		close(in)
+
+		out, _ := p.Pipe(ctx, in)
+		for range out {
+		}
+
+		if !errors.Is(lastErr, ErrDataNotRaw) {
+			t.Errorf("error = %v, want %v", lastErr, ErrDataNotRaw)
+		}
+	})
+
 	t.Run("auto-nacks on error", func(t *testing.T) {
 		registry := FactoryMap{}
 		marshaler := NewJSONMarshaler()
@@ -135,8 +165,8 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		in := make(chan *RawMessage, 1)
-		in <- &RawMessage{
+		in := make(chan *Message, 1)
+		in <- &Message{
 			Data:       []byte(`{}`),
 			Attributes: Attributes{"type": "unknown.type"},
 			acking:     acking,
@@ -163,8 +193,8 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		in := make(chan *RawMessage, 1)
-		in <- &RawMessage{
+		in := make(chan *Message, 1)
+		in <- &Message{
 			Data: []byte(`{}`),
 			Attributes: Attributes{
 				"type":   "test.data",
@@ -212,9 +242,43 @@ func TestNewMarshalPipe(t *testing.T) {
 			t.Fatal("expected message, got nil")
 		}
 
+		data, ok := raw.Raw()
+		if !ok {
+			t.Fatalf("Data type = %T, want []byte", raw.Data)
+		}
+
 		expected := `{"name":"test","value":42}`
-		if string(raw.Data) != expected {
-			t.Errorf("Data = %s, want %s", raw.Data, expected)
+		if string(data) != expected {
+			t.Errorf("Data = %s, want %s", data, expected)
+		}
+	})
+
+	t.Run("returns ErrDataNotTyped when Data is already raw", func(t *testing.T) {
+		marshaler := NewJSONMarshaler()
+
+		var lastErr error
+		p := NewMarshalPipe(marshaler, PipeConfig{
+			ErrorHandler: func(msg *Message, err error) {
+				lastErr = err
+			},
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		in := make(chan *Message, 1)
+		in <- &Message{
+			Data:       []byte(`{"already":"raw"}`),
+			Attributes: Attributes{"type": "test.data"},
+		}
+		close(in)
+
+		out, _ := p.Pipe(ctx, in)
+		for range out {
+		}
+
+		if !errors.Is(lastErr, ErrDataNotTyped) {
+			t.Errorf("error = %v, want %v", lastErr, ErrDataNotTyped)
 		}
 	})
 
@@ -369,8 +433,8 @@ func TestPipeRoundtrip(t *testing.T) {
 		defer cancel()
 
 		// Start with raw message
-		rawIn := make(chan *RawMessage, 1)
-		rawIn <- &RawMessage{
+		rawIn := make(chan *Message, 1)
+		rawIn <- &Message{
 			Data:       []byte(`{"name":"roundtrip","value":99}`),
 			Attributes: Attributes{"type": "test.data", "source": "/test"},
 		}
@@ -385,9 +449,14 @@ func TestPipeRoundtrip(t *testing.T) {
 		// Verify result
 		result := <-rawOut
 
+		data, ok := result.Raw()
+		if !ok {
+			t.Fatalf("Data type = %T, want []byte", result.Data)
+		}
+
 		expected := `{"name":"roundtrip","value":99}`
-		if string(result.Data) != expected {
-			t.Errorf("Data = %s, want %s", result.Data, expected)
+		if string(data) != expected {
+			t.Errorf("Data = %s, want %s", data, expected)
 		}
 		if result.Type() != "test.data" {
 			t.Errorf("type = %v, want test.data", result.Type())
@@ -440,8 +509,8 @@ func TestUnmarshalPipe_Use(t *testing.T) {
 		p := NewUnmarshalPipe(registry, marshaler, PipeConfig{})
 
 		// Add middleware that modifies value
-		mw := func(next middleware.ProcessFunc[*RawMessage, *Message]) middleware.ProcessFunc[*RawMessage, *Message] {
-			return func(ctx context.Context, in *RawMessage) ([]*Message, error) {
+		mw := func(next ProcessFunc) ProcessFunc {
+			return func(ctx context.Context, in *Message) ([]*Message, error) {
 				msgs, err := next(ctx, in)
 				if err == nil && len(msgs) > 0 {
 					data := msgs[0].Data.(*PipeTestData)
@@ -459,8 +528,8 @@ func TestUnmarshalPipe_Use(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		in := make(chan *RawMessage, 1)
-		in <- &RawMessage{
+		in := make(chan *Message, 1)
+		in <- &Message{
 			Data:       []byte(`{"name":"test","value":21}`),
 			Attributes: Attributes{"type": "test.data"},
 		}
@@ -485,18 +554,18 @@ func TestUnmarshalPipe_Use(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		in := make(chan *RawMessage)
+		in := make(chan *Message)
 		close(in)
 
 		_, _ = p.Pipe(ctx, in)
 
 		// Try to add middleware after start
-		err := p.Use(func(next middleware.ProcessFunc[*RawMessage, *Message]) middleware.ProcessFunc[*RawMessage, *Message] {
+		err := p.Use(func(next ProcessFunc) ProcessFunc {
 			return next
 		})
 
-		if err != pipe.ErrAlreadyStarted {
-			t.Errorf("Use() after start error = %v, want %v", err, pipe.ErrAlreadyStarted)
+		if err != ErrAlreadyStarted {
+			t.Errorf("Use() after start error = %v, want %v", err, ErrAlreadyStarted)
 		}
 	})
 }
@@ -507,8 +576,8 @@ func TestMarshalPipe_Use(t *testing.T) {
 		p := NewMarshalPipe(marshaler, PipeConfig{})
 
 		// Add middleware that modifies value
-		mw := func(next middleware.ProcessFunc[*Message, *RawMessage]) middleware.ProcessFunc[*Message, *RawMessage] {
-			return func(ctx context.Context, in *Message) ([]*RawMessage, error) {
+		mw := func(next ProcessFunc) ProcessFunc {
+			return func(ctx context.Context, in *Message) ([]*Message, error) {
 				data := in.Data.(*PipeTestData)
 				data.Value = data.Value * 2
 				return next(ctx, in)
@@ -533,9 +602,14 @@ func TestMarshalPipe_Use(t *testing.T) {
 		out, _ := p.Pipe(ctx, in)
 		raw := <-out
 
+		data, ok := raw.Raw()
+		if !ok {
+			t.Fatalf("Data type = %T, want []byte", raw.Data)
+		}
+
 		expected := `{"name":"test","value":42}`
-		if string(raw.Data) != expected {
-			t.Errorf("middleware not applied: Data = %s, want %s", raw.Data, expected)
+		if string(data) != expected {
+			t.Errorf("middleware not applied: Data = %s, want %s", data, expected)
 		}
 	})
 
@@ -552,12 +626,12 @@ func TestMarshalPipe_Use(t *testing.T) {
 		_, _ = p.Pipe(ctx, in)
 
 		// Try to add middleware after start
-		err := p.Use(func(next middleware.ProcessFunc[*Message, *RawMessage]) middleware.ProcessFunc[*Message, *RawMessage] {
+		err := p.Use(func(next ProcessFunc) ProcessFunc {
 			return next
 		})
 
-		if err != pipe.ErrAlreadyStarted {
-			t.Errorf("Use() after start error = %v, want %v", err, pipe.ErrAlreadyStarted)
+		if err != ErrAlreadyStarted {
+			t.Errorf("Use() after start error = %v, want %v", err, ErrAlreadyStarted)
 		}
 	})
 }

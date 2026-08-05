@@ -24,4 +24,13 @@ var (
 	// ErrCommandDataMismatch is returned when a commandHandler's message data is nil
 	// or does not type-assert to the expected command type.
 	ErrCommandDataMismatch = errors.New("command data type mismatch")
+
+	// ErrDataNotRaw is returned when a message reaches UnmarshalPipe with
+	// Data that isn't raw []byte.
+	ErrDataNotRaw = errors.New("expected raw []byte data")
+
+	// ErrDataNotTyped is returned when a message reaches MarshalPipe with
+	// Data that is already raw []byte — marshaling it again would silently
+	// double-encode.
+	ErrDataNotTyped = errors.New("unexpected raw []byte data, want typed")
 )

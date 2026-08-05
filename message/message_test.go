@@ -53,40 +53,35 @@ func TestNew(t *testing.T) {
 	})
 }
 
-func TestNewTyped(t *testing.T) {
-	t.Run("creates typed message", func(t *testing.T) {
-		msg := NewTyped("hello", Attributes{"key": "value"}, nil)
-		if msg.Data != "hello" {
-			t.Errorf("expected data hello, got %v", msg.Data)
-		}
-		if msg.Attributes["key"] != "value" {
-			t.Errorf("expected attribute key=value, got %v", msg.Attributes["key"])
-		}
-	})
-
-	t.Run("creates empty attributes when nil", func(t *testing.T) {
-		msg := NewTyped(123, nil, nil)
-		if msg.Attributes == nil {
-			t.Error("expected non-nil attributes map")
-		}
-	})
-}
-
-func TestNewRaw(t *testing.T) {
-	t.Run("creates raw message", func(t *testing.T) {
+func TestRaw(t *testing.T) {
+	t.Run("reports true and returns bytes for raw data", func(t *testing.T) {
 		data := []byte(`{"id":123}`)
-		msg := NewRaw(data, Attributes{"type": "test"}, nil)
-		if string(msg.Data) != string(data) {
-			t.Errorf("expected data %s, got %s", data, msg.Data)
+		msg := New(data, Attributes{"type": "test"}, nil)
+
+		got, ok := msg.Raw()
+		if !ok {
+			t.Fatal("expected ok=true for []byte Data")
+		}
+		if string(got) != string(data) {
+			t.Errorf("expected data %s, got %s", data, got)
 		}
 		if msg.Type() != "test" {
 			t.Errorf("expected type test, got %v", msg.Type())
 		}
 	})
 
+	t.Run("reports false for typed data", func(t *testing.T) {
+		msg := New("hello", nil, nil)
+
+		_, ok := msg.Raw()
+		if ok {
+			t.Error("expected ok=false for non-[]byte Data")
+		}
+	})
+
 	t.Run("with acking for broker integration", func(t *testing.T) {
 		acked := false
-		msg := NewRaw([]byte("data"), nil, NewAcking(func() { acked = true }, func(error) {}))
+		msg := New([]byte("data"), nil, NewAcking(func() { acked = true }, func(error) {}))
 
 		msg.Ack()
 		if !acked {
@@ -188,7 +183,7 @@ func TestAcking(t *testing.T) {
 	})
 
 	t.Run("nil acking returns false", func(t *testing.T) {
-		msg := NewTyped[string]("data", nil, nil)
+		msg := New("data", nil, nil)
 		if msg.Ack() {
 			t.Error("expected Ack to return false with nil acking")
 		}
@@ -380,13 +375,17 @@ func TestParseRaw(t *testing.T) {
 		if msg.SpecVersion() != "1.0" {
 			t.Errorf("expected specversion 1.0, got %v", msg.SpecVersion())
 		}
-		if string(msg.Data) != `{"order_id":"ABC"}` {
-			t.Errorf("expected data {\"order_id\":\"ABC\"}, got %s", msg.Data)
+		data, ok := msg.Raw()
+		if !ok {
+			t.Fatalf("expected raw data, got %T", msg.Data)
+		}
+		if string(data) != `{"order_id":"ABC"}` {
+			t.Errorf("expected data {\"order_id\":\"ABC\"}, got %s", data)
 		}
 	})
 
 	t.Run("roundtrip with WriteTo", func(t *testing.T) {
-		original := NewRaw([]byte(`{"id":456}`), Attributes{
+		original := New([]byte(`{"id":456}`), Attributes{
 			"type":   "test.event",
 			"source": "/roundtrip",
 		}, nil)
@@ -402,8 +401,12 @@ func TestParseRaw(t *testing.T) {
 		if parsed.Type() != "test.event" {
 			t.Errorf("expected type test.event, got %v", parsed.Type())
 		}
-		if string(parsed.Data) != `{"id":456}` {
-			t.Errorf("expected data {\"id\":456}, got %s", parsed.Data)
+		data, ok := parsed.Raw()
+		if !ok {
+			t.Fatalf("expected raw data, got %T", parsed.Data)
+		}
+		if string(data) != `{"id":456}` {
+			t.Errorf("expected data {\"id\":456}, got %s", data)
 		}
 	})
 
@@ -418,14 +421,18 @@ func TestParseRaw(t *testing.T) {
 		if msg.Type() != "binary.event" {
 			t.Errorf("expected type binary.event, got %v", msg.Type())
 		}
-		if string(msg.Data) != "hello world" {
-			t.Errorf("expected data 'hello world', got %s", msg.Data)
+		data, ok := msg.Raw()
+		if !ok {
+			t.Fatalf("expected raw data, got %T", msg.Data)
+		}
+		if string(data) != "hello world" {
+			t.Errorf("expected data 'hello world', got %s", data)
 		}
 	})
 
 	t.Run("roundtrip with binary data", func(t *testing.T) {
 		binaryData := []byte{0x00, 0x01, 0x02, 0xFF, 0xFE}
-		original := NewRaw(binaryData, Attributes{
+		original := New(binaryData, Attributes{
 			"type":   "binary.event",
 			"source": "/binary",
 		}, nil)
@@ -447,8 +454,12 @@ func TestParseRaw(t *testing.T) {
 			t.Fatalf("ParseRaw failed: %v", err)
 		}
 
-		if !bytes.Equal(parsed.Data, binaryData) {
-			t.Errorf("expected data %v, got %v", binaryData, parsed.Data)
+		data, ok := parsed.Raw()
+		if !ok {
+			t.Fatalf("expected raw data, got %T", parsed.Data)
+		}
+		if !bytes.Equal(data, binaryData) {
+			t.Errorf("expected data %v, got %v", binaryData, data)
 		}
 	})
 }
