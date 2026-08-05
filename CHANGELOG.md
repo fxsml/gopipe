@@ -16,10 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `Stats` snapshot struct (`Depth`, `Capacity`, `Inflight`, `Labels`) returned by `Stats()` on `ProcessPipe`, `BatchPipe`, `Merger`, and `Distributor`
   - `Metrics`, `Labels`, and `LabelFunc` fields added to `pipe.Config`, `pipe.MergerConfig`, and `pipe.DistributorConfig`; zero overhead when `Metrics` is nil
 - **message:** propagate `Metrics`, `Labels`, and `LabelFunc` through `PipeConfig`, `MergerConfig`, and `DistributorConfig`; default `LabelFunc` automatically adds `cloudevents.type` dimension to all metrics events; `Stats()` method on `Router`, `UnmarshalPipe`, `MarshalPipe`, `Merger`, and `Distributor`
-- **message/otel:** new opt-in Go module (`github.com/fxsml/gopipe/message/otel`) providing OTel instrumentation
-  - `PipeMetrics` — implements `pipe.Metrics`; push instruments: `gopipe.receive.wait.duration`, `gopipe.send.wait.duration`, `gopipe.process.duration`, `gopipe.process.output`, `gopipe.process.total` (with `error.type=""` on success, Go error type on failure)
-  - `PipeMetrics.ObserveStats` — registers pull-based observable gauges for `gopipe.buffer.depth`, `gopipe.buffer.capacity`, and `gopipe.inflight`; OTel polls once per collection cycle via a single `RegisterCallback`
-  - `StatsProvider` interface satisfied by all gopipe components with a `Stats()` method
+  - an OTel-backed `pipe.Metrics` implementation is available at [gopipe-otel](https://github.com/fxsml/gopipe-otel)
 - **message/http:** `SubscriberConfig.ErrorHandler` for full control over nack HTTP responses (#140)
   - `ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)`
   - Has full control over status code, headers, and body; set in `parse()` so it is always non-nil
