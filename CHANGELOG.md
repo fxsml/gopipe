@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **message:** `Message.Raw() ([]byte, bool)` reports whether `Data` currently holds raw `[]byte` and returns it, following Go's comma-ok idiom (#148)
+- **message:** `ErrDataNotRaw`, `ErrDataNotTyped` sentinel errors — `UnmarshalPipe`/`MarshalPipe` now fail loudly instead of silently accepting `Data` in the wrong state (#148)
 - **pipe:** `Metrics` interface for backend-agnostic pipe-layer observability
   - `RecordProcessing` — handler duration, output count, and error rate per item
   - `RecordWait` — time blocked on receive and send channel operations
@@ -32,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **message:** `Message` is now a concrete struct (`Data any`) instead of the generic `TypedMessage[any]` alias — `TypedMessage[T]`, `RawMessage`, `NewTyped[T]`, and `NewRaw` are removed (breaking, pre-v1). `New(data any, attrs, acking) *Message` is the only constructor; the generic `Copy[In, Out any]` becomes `Copy(msg *Message, data any) *Message`; `ParseRaw`/`parseRawBytes` return `*Message` with `Data []byte`. `RawMessageFromContext` is removed — use `MessageFromContext`. External consumers typed on `RawMessage` (notably `gopipe-azservicebus`'s public API, and any broker adapter following its pattern) need a coordinated version bump with a mechanical `RawMessage`→`Message` rename — this is not purely an internal change. See [ADR 0033](docs/adr/0033-message-struct-simplification.md). (#148)
+- **message:** `UnmarshalPipe`/`MarshalPipe` channel type changes from `*RawMessage`↔`*Message` to a uniform `*Message`→`*Message` (breaking, pre-v1), using `Raw()` internally and failing with `ErrDataNotRaw`/`ErrDataNotTyped` on state mismatch instead of relying on the compiler to rule it out. `Use()` now takes `message.Middleware` instead of the generic `pipe/middleware.Middleware[In, Out]`; `Pipe()`/`Use()` called after start now return `message.ErrAlreadyStarted` instead of `pipe.ErrAlreadyStarted` (both pipes now track their own started state, consistent with `Router`). (#148)
+- **message/jsonschema, message/http, message/cloudevents:** mechanical retype from `*RawMessage` to `*Message` — `NewValidationMiddleware`/`NewInputValidationMiddleware`/`NewOutputValidationMiddleware`, `Subscriber`, `Publisher`, `FromCloudEvent`/`ToCloudEvent` (breaking, pre-v1). Behavior is unchanged aside from `jsonschema`'s output validation now also failing loudly (`ErrDataNotRaw`) if marshaling didn't actually produce raw bytes. (#148)
 - **channel:** Renamed `Route` → `Switch` (breaking, pre-v1) — avoids naming collision with `message.Router`, which does event-type-based routing (a different mechanism). Behavior is unchanged. (#165)
 - **channel:** `ToSlice` now returns `<-chan []T` instead of blocking synchronously and returning `[]T` (breaking, pre-v1) — matches the rest of the package's "launch goroutine, return channel" convention. The returned channel is closed after the slice is sent, so both `slice := <-channel.ToSlice(in)` and `for slice := range channel.ToSlice(in)` work. (#163)
 

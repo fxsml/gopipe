@@ -1,8 +1,8 @@
 # Plan: Raw-by-Default Message Contract (Router)
 
-**Status:** Proposed (design settled — no implementation yet)
+**Status:** In Progress — Phase 1 complete ([#148](https://github.com/fxsml/gopipe/issues/148)); Phase 2 (Router-level) superseded by [ADR 0031](../adr/0031-handler-level-marshaling.md), tracked under [#149](https://github.com/fxsml/gopipe/issues/149)
 **Related Issue:** [#125](https://github.com/fxsml/gopipe/issues/125) — Consider unifying Message and RawMessage for middleware composability
-**Related ADRs:** [0010](../adr/0010-dual-message-types.md) (Dual Message Types — to be superseded), [0022](../adr/0022-message-package-redesign.md) (Message Package Redesign)
+**Related ADRs:** [0010](../adr/0010-dual-message-types.md) (Dual Message Types — superseded), [0033](../adr/0033-message-struct-simplification.md) (Message Struct Simplification — implements Phase 1 below), [0022](../adr/0022-message-package-redesign.md) (Message Package Redesign)
 **Related Plans:** [archive/0008-marshal-unmarshal-pipes.decisions.md](archive/0008-marshal-unmarshal-pipes.decisions.md), [validation-marshaling-separation.decisions.md](validation-marshaling-separation.decisions.md)
 **Depends On:** [engine-removal.md](engine-removal.md) — must complete before this plan's Phase 1 (dropping `TypedMessage[T]`/`RawMessage` would otherwise break `Engine`'s compile)
 **Tracking Issues:** Phase 1 — [fxsml/gopipe#148](https://github.com/fxsml/gopipe/issues/148); Phase 2 — [fxsml/gopipe#149](https://github.com/fxsml/gopipe/issues/149)
@@ -341,20 +341,21 @@ Metrics: ns/op, B/op, allocs/op (`testing.B`), plus `DisableMarshaler` on/off co
 
 ## Next Steps
 
-- [ ] Write ADR superseding ADR 0010 (drop `TypedMessage[T]`/`RawMessage`, adopt raw-by-default `Message` contract; covers both phases)
-- [ ] Implement `Message` struct simplification (drop generic, add `Raw()`)
+- [x] Write ADR superseding ADR 0010 (drop `TypedMessage[T]`/`RawMessage`, adopt raw-by-default `Message` contract) — [ADR 0033](../adr/0033-message-struct-simplification.md), scoped to Phase 1 below; Phase 2's Router-level design is separately covered by [ADR 0031](../adr/0031-handler-level-marshaling.md)
+- [x] Implement `Message` struct simplification (drop generic, add `Raw()`)
 
-**Phase 1 — port existing pipes (do this first):**
-- [ ] Add `ErrDataNotRaw`/`ErrDataNotTyped` to `message/errors.go`
-- [ ] Port `UnmarshalPipe`/`MarshalPipe` to `*Message` → `*Message`, failing loudly on mismatch rather than silently passing through (Final Design §2)
-- [ ] Update pipe middleware usage to `message.Middleware`
-- [ ] Update CHANGELOG (breaking change to these two pipes' signatures *and* behavior — new fail-loud checks, not just a retype)
+**Phase 1 — port existing pipes (do this first):** Complete — see [#148](https://github.com/fxsml/gopipe/issues/148)
+- [x] Add `ErrDataNotRaw`/`ErrDataNotTyped` to `message/errors.go`
+- [x] Port `UnmarshalPipe`/`MarshalPipe` to `*Message` → `*Message`, failing loudly on mismatch rather than silently passing through (Final Design §2)
+- [x] Update pipe middleware usage to `message.Middleware`
+- [x] Update CHANGELOG (breaking change to these two pipes' signatures *and* behavior — new fail-loud checks, not just a retype)
+- [x] Mechanical retype of `message/jsonschema`'s three middleware constructors, `message/http`, and `message/cloudevents` from `*RawMessage` to `*Message` (originally scoped under Phase 2 below, pulled forward since it falls out of the same `Message` struct change)
 
 **Phase 2 — Router built-in default (later):**
 - [ ] Fix [#151](https://github.com/fxsml/gopipe/issues/151) (move error logging to the `pipe.Config.ErrorHandler` boundary) — independent bug, sequence alongside or before the rest of Phase 2 so the new errors below are observable by default (Final Design §6)
 - [ ] Implement public `MarshalMiddleware(registry, marshaler) Middleware` with fail-loud input/output checks (Final Design §3)
 - [ ] Implement `Router` changes (`Marshaler`/`DisableMarshaler` config, install `MarshalMiddleware` by default, simplify `process()`)
-- [ ] Retype `message/jsonschema`'s three middleware constructors (mechanical only — Final Design §5)
+- [x] Retype `message/jsonschema`'s three middleware constructors (mechanical only — Final Design §5) — done under Phase 1/#148, see above
 - [ ] Update `Subject()` godoc to document the `DisableMarshaler: true` requirement (Final Design §5)
 - [ ] Update `Router.DisableMarshaler` field godoc with the general rule (any middleware reading/setting typed `Data` needs it), cross-referenced with `Subject()` — not discoverable only via `Subject()`'s docs (Final Design §3, §5)
 - [ ] Add benchmarks (scenarios above)
