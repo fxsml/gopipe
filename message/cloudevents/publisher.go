@@ -17,7 +17,7 @@ type PublisherConfig struct {
 	// Concurrency is the number of send goroutines (default: 1).
 	Concurrency int
 	// ErrorHandler is called on conversion/send errors (default: no-op).
-	ErrorHandler func(raw *message.RawMessage, err error)
+	ErrorHandler func(raw *message.Message, err error)
 	// Logger is used for logging (default: slog.Default()).
 	Logger message.Logger
 	// CleanupHandler is called when the publisher finishes (input channel closes or context cancels).
@@ -28,13 +28,13 @@ type PublisherConfig struct {
 }
 
 // Publisher wraps a CloudEvents protocol.Sender as a gopipe output sink.
-// It receives RawMessages from a channel, converts them to CloudEvents,
+// It receives Messages from a channel, converts them to CloudEvents,
 // and sends them via the protocol.Sender.
 type Publisher struct {
 	sender protocol.Sender
 	cfg    PublisherConfig
 	logger message.Logger
-	sink   *pipe.ProcessPipe[*message.RawMessage, struct{}]
+	sink   *pipe.ProcessPipe[*message.Message, struct{}]
 }
 
 // NewPublisher creates a new Publisher wrapping the given sender.
@@ -53,7 +53,7 @@ func NewPublisher(sender protocol.Sender, cfg PublisherConfig) *Publisher {
 	pipeCfg := pipe.Config{
 		Concurrency: cfg.Concurrency,
 		ErrorHandler: func(in any, err error) {
-			raw, _ := in.(*message.RawMessage)
+			raw, _ := in.(*message.Message)
 			logger.Error("Message send failed",
 				"component", "publisher",
 				"error", err,
@@ -74,7 +74,7 @@ func NewPublisher(sender protocol.Sender, cfg PublisherConfig) *Publisher {
 // Use adds middleware to the publisher's internal pipe. Middleware wraps the
 // send function, enabling retry logic, circuit breaking, or backoff on errors.
 // Must be called before Publish. Returns ErrAlreadyStarted if called after.
-func (p *Publisher) Use(mw ...middleware.Middleware[*message.RawMessage, struct{}]) error {
+func (p *Publisher) Use(mw ...middleware.Middleware[*message.Message, struct{}]) error {
 	return p.sink.Use(mw...)
 }
 
@@ -86,12 +86,12 @@ func (p *Publisher) Use(mw ...middleware.Middleware[*message.RawMessage, struct{
 //   - Failed send: calls msg.Nack(err)
 //
 // Returns ErrAlreadyStarted if Publish has already been called.
-func (p *Publisher) Publish(ctx context.Context, ch <-chan *message.RawMessage) (<-chan struct{}, error) {
+func (p *Publisher) Publish(ctx context.Context, ch <-chan *message.Message) (<-chan struct{}, error) {
 	return p.sink.Pipe(ctx, ch)
 }
 
-func (p *Publisher) send(ctx context.Context, raw *message.RawMessage) error {
-	// Convert RawMessage to CloudEvents Event
+func (p *Publisher) send(ctx context.Context, raw *message.Message) error {
+	// Convert Message to CloudEvents Event
 	event, err := ToCloudEvent(raw)
 	if err != nil {
 		raw.Nack(err)

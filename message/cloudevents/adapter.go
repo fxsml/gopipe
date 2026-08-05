@@ -10,10 +10,10 @@ import (
 	"github.com/fxsml/gopipe/message"
 )
 
-// FromCloudEvent converts a cloudevents.Event into a RawMessage.
+// FromCloudEvent converts a cloudevents.Event into a Message with raw []byte Data.
 // Copies standard attributes and extensions, and returns event data as []byte.
 // The acking parameter is used to bridge CloudEvents acknowledgment to gopipe.
-func FromCloudEvent(e *cloudevents.Event, acking *message.Acking) (*message.RawMessage, error) {
+func FromCloudEvent(e *cloudevents.Event, acking *message.Acking) (*message.Message, error) {
 	attrs := message.Attributes{}
 	if e == nil {
 		return nil, fmt.Errorf("nil event")
@@ -45,14 +45,14 @@ func FromCloudEvent(e *cloudevents.Event, acking *message.Acking) (*message.RawM
 		data = append([]byte(nil), b...)
 	}
 
-	return message.NewRaw(data, attrs, acking), nil
+	return message.New(data, attrs, acking), nil
 }
 
-// ToCloudEvent converts a RawMessage into a cloudevents.Event.
+// ToCloudEvent converts a Message with raw []byte Data into a cloudevents.Event.
 // If datacontenttype is not set in attributes, it is omitted (allowed for binary data).
-func ToCloudEvent(msg *message.RawMessage) (*cloudevents.Event, error) {
+func ToCloudEvent(msg *message.Message) (*cloudevents.Event, error) {
 	if msg == nil {
-		return nil, fmt.Errorf("nil RawMessage")
+		return nil, fmt.Errorf("nil message")
 	}
 
 	e := cloudevents.NewEvent()
@@ -105,7 +105,7 @@ func ToCloudEvent(msg *message.RawMessage) (*cloudevents.Event, error) {
 		}
 	}
 
-	if data := msg.Data; data != nil {
+	if data, _ := msg.Raw(); data != nil {
 		var err error
 		if ct == "application/json" && json.Valid(data) {
 			err = e.SetData(ct, json.RawMessage(data))

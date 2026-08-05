@@ -53,10 +53,10 @@ func TestPublisher(t *testing.T) {
 		sender := newMockSender(protocol.ResultACK)
 		pub := NewPublisher(sender, PublisherConfig{})
 
-		in := make(chan *message.RawMessage, 1)
+		in := make(chan *message.Message, 1)
 
 		acked := make(chan bool, 1)
-		raw := message.NewRaw(
+		raw := message.New(
 			[]byte(`{"key":"value"}`),
 			message.Attributes{
 				"id":     "test-id",
@@ -100,10 +100,10 @@ func TestPublisher(t *testing.T) {
 		sender := newMockSender(protocol.NewReceipt(false, "send failed"))
 		pub := NewPublisher(sender, PublisherConfig{})
 
-		in := make(chan *message.RawMessage, 1)
+		in := make(chan *message.Message, 1)
 
 		nacked := make(chan bool, 1)
-		raw := message.NewRaw(
+		raw := message.New(
 			[]byte(`{"key":"value"}`),
 			message.Attributes{
 				"id":     "test-id",
@@ -137,7 +137,7 @@ func TestPublisher(t *testing.T) {
 		sender := newMockSender()
 		pub := NewPublisher(sender, PublisherConfig{})
 
-		in := make(chan *message.RawMessage) // Blocking channel
+		in := make(chan *message.Message) // Blocking channel
 
 		ctx, cancel := context.WithCancel(context.Background())
 		done, err := pub.Publish(ctx, in)
@@ -161,7 +161,7 @@ func TestPublisher(t *testing.T) {
 		sender := newMockSender()
 		pub := NewPublisher(sender, PublisherConfig{})
 
-		in := make(chan *message.RawMessage)
+		in := make(chan *message.Message)
 		close(in)
 
 		done, err := pub.Publish(context.Background(), in)
@@ -181,7 +181,7 @@ func TestPublisher(t *testing.T) {
 		sender := newMockSender()
 		pub := NewPublisher(sender, PublisherConfig{})
 
-		in := make(chan *message.RawMessage)
+		in := make(chan *message.Message)
 		close(in)
 
 		_, err := pub.Publish(context.Background(), in)
@@ -200,8 +200,8 @@ func TestPublisher(t *testing.T) {
 		pub := NewPublisher(sender, PublisherConfig{})
 
 		var calls atomic.Int32
-		countingMiddleware := func(next middleware.ProcessFunc[*message.RawMessage, struct{}]) middleware.ProcessFunc[*message.RawMessage, struct{}] {
-			return func(ctx context.Context, in *message.RawMessage) ([]struct{}, error) {
+		countingMiddleware := func(next middleware.ProcessFunc[*message.Message, struct{}]) middleware.ProcessFunc[*message.Message, struct{}] {
+			return func(ctx context.Context, in *message.Message) ([]struct{}, error) {
 				calls.Add(1)
 				return next(ctx, in)
 			}
@@ -211,8 +211,8 @@ func TestPublisher(t *testing.T) {
 			t.Fatalf("Use failed: %v", err)
 		}
 
-		in := make(chan *message.RawMessage, 1)
-		raw := message.NewRaw(
+		in := make(chan *message.Message, 1)
+		raw := message.New(
 			[]byte(`{}`),
 			message.Attributes{"id": "test", "type": "test", "source": "/test"},
 			nil,
@@ -240,8 +240,8 @@ func TestPublisher(t *testing.T) {
 			CleanupHandler: func(context.Context) { close(cleaned) },
 		})
 
-		in := make(chan *message.RawMessage, 1)
-		raw := message.NewRaw(
+		in := make(chan *message.Message, 1)
+		raw := message.New(
 			[]byte(`{"key":"value"}`),
 			message.Attributes{"id": "test", "type": "test", "source": "/test"},
 			nil,
@@ -272,7 +272,7 @@ func TestPublisher(t *testing.T) {
 			CleanupHandler: func(context.Context) { close(cleaned) },
 		})
 
-		in := make(chan *message.RawMessage)
+		in := make(chan *message.Message)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		done, err := pub.Publish(ctx, in)
@@ -307,8 +307,8 @@ func TestPublisher(t *testing.T) {
 			CleanupTimeout: 5 * time.Second,
 		})
 
-		in := make(chan *message.RawMessage, 1)
-		raw := message.NewRaw(
+		in := make(chan *message.Message, 1)
+		raw := message.New(
 			[]byte(`{}`),
 			message.Attributes{"id": "test", "type": "test", "source": "/test"},
 			nil,
@@ -337,8 +337,8 @@ func TestPublisher(t *testing.T) {
 			CleanupHandler: nil,
 		})
 
-		in := make(chan *message.RawMessage, 1)
-		raw := message.NewRaw(
+		in := make(chan *message.Message, 1)
+		raw := message.New(
 			[]byte(`{}`),
 			message.Attributes{"id": "test", "type": "test", "source": "/test"},
 			nil,
@@ -363,12 +363,12 @@ func TestPublisher(t *testing.T) {
 		sender := newMockSender()
 		pub := NewPublisher(sender, PublisherConfig{})
 
-		in := make(chan *message.RawMessage)
+		in := make(chan *message.Message)
 		close(in)
 
 		_, _ = pub.Publish(context.Background(), in)
 
-		err := pub.Use(func(next middleware.ProcessFunc[*message.RawMessage, struct{}]) middleware.ProcessFunc[*message.RawMessage, struct{}] {
+		err := pub.Use(func(next middleware.ProcessFunc[*message.Message, struct{}]) middleware.ProcessFunc[*message.Message, struct{}] {
 			return next
 		})
 		if !errors.Is(err, pipe.ErrAlreadyStarted) {

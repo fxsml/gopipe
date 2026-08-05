@@ -29,7 +29,7 @@ func TestPublisher_Send(t *testing.T) {
 			TargetURL: server.URL,
 		})
 
-		msg := message.NewRaw([]byte(`{"key":"value"}`), message.Attributes{
+		msg := message.New([]byte(`{"key":"value"}`), message.Attributes{
 			message.AttrID:     "test-1",
 			message.AttrType:   "test.type",
 			message.AttrSource: "/test",
@@ -72,7 +72,7 @@ func TestPublisher_Send(t *testing.T) {
 			StructuredMode: true,
 		})
 
-		msg := message.NewRaw([]byte(`{"key":"value"}`), message.Attributes{
+		msg := message.New([]byte(`{"key":"value"}`), message.Attributes{
 			message.AttrID:     "test-1",
 			message.AttrType:   "test.type",
 			message.AttrSource: "/test",
@@ -104,7 +104,7 @@ func TestPublisher_Send(t *testing.T) {
 
 		var acked bool
 		acking := message.NewAcking(func() { acked = true }, func(error) {})
-		msg := message.NewRaw([]byte(`{}`), message.Attributes{
+		msg := message.New([]byte(`{}`), message.Attributes{
 			message.AttrID:     "1",
 			message.AttrType:   "test",
 			message.AttrSource: "/test",
@@ -130,7 +130,7 @@ func TestPublisher_Send(t *testing.T) {
 
 		var nacked bool
 		acking := message.NewAcking(func() {}, func(error) { nacked = true })
-		msg := message.NewRaw([]byte(`{}`), message.Attributes{
+		msg := message.New([]byte(`{}`), message.Attributes{
 			message.AttrID:     "1",
 			message.AttrType:   "test",
 			message.AttrSource: "/test",
@@ -159,7 +159,7 @@ func TestPublisher_Send(t *testing.T) {
 			Headers:   http.Header{"Authorization": []string{"Bearer token"}},
 		})
 
-		msg := message.NewRaw([]byte(`{}`), message.Attributes{
+		msg := message.New([]byte(`{}`), message.Attributes{
 			message.AttrID:     "1",
 			message.AttrType:   "test",
 			message.AttrSource: "/test",
@@ -187,11 +187,11 @@ func TestPublisher_SendBatch(t *testing.T) {
 
 		pub := NewPublisher(PublisherConfig{TargetURL: server.URL})
 
-		msgs := []*message.RawMessage{
-			message.NewRaw([]byte(`{}`), message.Attributes{
+		msgs := []*message.Message{
+			message.New([]byte(`{}`), message.Attributes{
 				message.AttrID: "1", message.AttrType: "test", message.AttrSource: "/test",
 			}, nil),
-			message.NewRaw([]byte(`{}`), message.Attributes{
+			message.New([]byte(`{}`), message.Attributes{
 				message.AttrID: "2", message.AttrType: "test", message.AttrSource: "/test",
 			}, nil),
 		}
@@ -220,10 +220,10 @@ func TestPublisher_SendBatch(t *testing.T) {
 		pub := NewPublisher(PublisherConfig{TargetURL: server.URL})
 
 		var ackCount atomic.Int32
-		msgs := make([]*message.RawMessage, 3)
+		msgs := make([]*message.Message, 3)
 		for i := range msgs {
 			acking := message.NewAcking(func() { ackCount.Add(1) }, func(error) {})
-			msgs[i] = message.NewRaw([]byte(`{}`), message.Attributes{
+			msgs[i] = message.New([]byte(`{}`), message.Attributes{
 				message.AttrID: "1", message.AttrType: "test", message.AttrSource: "/test",
 			}, acking)
 		}
@@ -247,10 +247,10 @@ func TestPublisher_SendBatch(t *testing.T) {
 		pub := NewPublisher(PublisherConfig{TargetURL: server.URL})
 
 		var nackCount atomic.Int32
-		msgs := make([]*message.RawMessage, 3)
+		msgs := make([]*message.Message, 3)
 		for i := range msgs {
 			acking := message.NewAcking(func() {}, func(error) { nackCount.Add(1) })
-			msgs[i] = message.NewRaw([]byte(`{}`), message.Attributes{
+			msgs[i] = message.New([]byte(`{}`), message.Attributes{
 				message.AttrID: "1", message.AttrType: "test", message.AttrSource: "/test",
 			}, acking)
 		}
@@ -288,7 +288,7 @@ func TestPublisher_Publish(t *testing.T) {
 			Concurrency: 2,
 		})
 
-		ch := make(chan *message.RawMessage, 10)
+		ch := make(chan *message.Message, 10)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -298,7 +298,7 @@ func TestPublisher_Publish(t *testing.T) {
 		}
 
 		for i := 0; i < 5; i++ {
-			ch <- message.NewRaw([]byte(`{}`), message.Attributes{
+			ch <- message.New([]byte(`{}`), message.Attributes{
 				message.AttrID:     "1",
 				message.AttrType:   "test",
 				message.AttrSource: "/test",
@@ -334,7 +334,7 @@ func TestPublisher_Publish(t *testing.T) {
 			BatchDuration: 10 * time.Second,
 		})
 
-		ch := make(chan *message.RawMessage, 100)
+		ch := make(chan *message.Message, 100)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -345,7 +345,7 @@ func TestPublisher_Publish(t *testing.T) {
 
 		// Send 7 messages (should result in batches of 3, 3, 1)
 		for i := 0; i < 7; i++ {
-			ch <- message.NewRaw([]byte(`{}`), message.Attributes{
+			ch <- message.New([]byte(`{}`), message.Attributes{
 				message.AttrID:     "1",
 				message.AttrType:   "test",
 				message.AttrSource: "/test",
@@ -367,7 +367,7 @@ func TestPublisher_Publish(t *testing.T) {
 
 	t.Run("returns error if called twice", func(t *testing.T) {
 		pub := NewPublisher(PublisherConfig{TargetURL: "http://localhost"})
-		ch := make(chan *message.RawMessage)
+		ch := make(chan *message.Message)
 		ctx := context.Background()
 
 		_, err := pub.Publish(ctx, ch)
@@ -393,7 +393,7 @@ func BenchmarkPublisher_Send(b *testing.B) {
 
 	pub := NewPublisher(PublisherConfig{TargetURL: server.URL})
 
-	msg := message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
+	msg := message.New([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
 		message.AttrID:     "test-1",
 		message.AttrType:   "order.created",
 		message.AttrSource: "/test",
@@ -415,8 +415,8 @@ func BenchmarkPublisher_SendBatch(b *testing.B) {
 	pub := NewPublisher(PublisherConfig{TargetURL: server.URL})
 
 	b.Run("batch_size_1", func(b *testing.B) {
-		msgs := []*message.RawMessage{
-			message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
+		msgs := []*message.Message{
+			message.New([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
 				message.AttrID:     "test-1",
 				message.AttrType:   "order.created",
 				message.AttrSource: "/test",
@@ -429,9 +429,9 @@ func BenchmarkPublisher_SendBatch(b *testing.B) {
 	})
 
 	b.Run("batch_size_10", func(b *testing.B) {
-		msgs := make([]*message.RawMessage, 10)
+		msgs := make([]*message.Message, 10)
 		for i := range msgs {
-			msgs[i] = message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
+			msgs[i] = message.New([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
 				message.AttrID:     "test-1",
 				message.AttrType:   "order.created",
 				message.AttrSource: "/test",
@@ -459,13 +459,13 @@ func BenchmarkPublisher_Publish(b *testing.B) {
 				Concurrency: 1,
 			})
 
-			ch := make(chan *message.RawMessage, 100)
+			ch := make(chan *message.Message, 100)
 			ctx := context.Background()
 
 			done, _ := pub.Publish(ctx, ch)
 
 			for j := 0; j < 100; j++ {
-				ch <- message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
+				ch <- message.New([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
 					message.AttrID:     "test-1",
 					message.AttrType:   "order.created",
 					message.AttrSource: "/test",
@@ -484,13 +484,13 @@ func BenchmarkPublisher_Publish(b *testing.B) {
 				Concurrency: 4,
 			})
 
-			ch := make(chan *message.RawMessage, 100)
+			ch := make(chan *message.Message, 100)
 			ctx := context.Background()
 
 			done, _ := pub.Publish(ctx, ch)
 
 			for j := 0; j < 100; j++ {
-				ch <- message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
+				ch <- message.New([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
 					message.AttrID:     "test-1",
 					message.AttrType:   "order.created",
 					message.AttrSource: "/test",
@@ -511,13 +511,13 @@ func BenchmarkPublisher_Publish(b *testing.B) {
 				BatchDuration: time.Second,
 			})
 
-			ch := make(chan *message.RawMessage, 100)
+			ch := make(chan *message.Message, 100)
 			ctx := context.Background()
 
 			done, _ := pub.Publish(ctx, ch)
 
 			for j := 0; j < 100; j++ {
-				ch <- message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
+				ch <- message.New([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
 					message.AttrID:     "test-1",
 					message.AttrType:   "order.created",
 					message.AttrSource: "/test",

@@ -32,13 +32,13 @@ type SubscriberConfig struct {
 }
 
 // Subscriber wraps a CloudEvents protocol.Receiver as a gopipe input source.
-// It receives binding.Messages, converts them to RawMessages, and bridges
+// It receives binding.Messages, converts them to Messages, and bridges
 // the CloudEvents Finish() acknowledgment to gopipe's Acking callbacks.
 type Subscriber struct {
 	receiver protocol.Receiver
 	cfg      SubscriberConfig
 	logger   message.Logger
-	gen      *pipe.GeneratePipe[*message.RawMessage]
+	gen      *pipe.GeneratePipe[*message.Message]
 
 	mu      sync.Mutex
 	started bool
@@ -86,16 +86,16 @@ func NewSubscriber(receiver protocol.Receiver, cfg SubscriberConfig) *Subscriber
 // Use adds middleware to the subscriber's internal pipe. Middleware wraps the
 // receive function, enabling retry logic, circuit breaking, or backoff on errors.
 // Must be called before Subscribe. Returns ErrAlreadyStarted if called after.
-func (s *Subscriber) Use(mw ...middleware.Middleware[struct{}, *message.RawMessage]) error {
+func (s *Subscriber) Use(mw ...middleware.Middleware[struct{}, *message.Message]) error {
 	return s.gen.Use(mw...)
 }
 
 // Subscribe starts receiving messages from the CloudEvents receiver and returns
-// the output channel. The channel should be registered with the engine using AddRawInput.
+// the output channel. Compose the channel with UnmarshalPipe and Router to process it.
 // Spawns goroutines (based on Concurrency) that run until the context is cancelled
 // or the receiver returns EOF. The returned channel is closed when complete.
 // Returns ErrAlreadyStarted if Subscribe has already been called.
-func (s *Subscriber) Subscribe(ctx context.Context) (<-chan *message.RawMessage, error) {
+func (s *Subscriber) Subscribe(ctx context.Context) (<-chan *message.Message, error) {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
@@ -112,7 +112,7 @@ func (s *Subscriber) Subscribe(ctx context.Context) (<-chan *message.RawMessage,
 }
 
 // receive fetches the next message from the CloudEvents receiver and converts it.
-func (s *Subscriber) receive(ctx context.Context) ([]*message.RawMessage, error) {
+func (s *Subscriber) receive(ctx context.Context) ([]*message.Message, error) {
 	ceMsg, err := s.receiver.Receive(ctx)
 	if err != nil {
 		if err == io.EOF {
@@ -159,7 +159,7 @@ func (s *Subscriber) receive(ctx context.Context) ([]*message.RawMessage, error)
 		},
 	)
 
-	raw := message.NewRaw(event.Data(), attrs, acking)
+	raw := message.New(event.Data(), attrs, acking)
 
-	return []*message.RawMessage{raw}, nil
+	return []*message.Message{raw}, nil
 }

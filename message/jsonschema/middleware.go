@@ -5,10 +5,9 @@ import (
 	"fmt"
 
 	"github.com/fxsml/gopipe/message"
-	"github.com/fxsml/gopipe/pipe/middleware"
 )
 
-// NewValidationMiddleware creates middleware for validating RawMessage payloads.
+// NewValidationMiddleware creates middleware for validating raw Message payloads.
 // Use this for proxy scenarios where messages pass through without unmarshaling.
 //
 // Example - HTTP → AMQP proxy with validation:
@@ -18,14 +17,18 @@ import (
 //
 //	pipe := pipe.NewPassthroughPipe(cfg)
 //	pipe.Use(jsonschema.NewValidationMiddleware(registry))
-func NewValidationMiddleware(registry *Registry) middleware.Middleware[*message.RawMessage, *message.RawMessage] {
-	return func(next middleware.ProcessFunc[*message.RawMessage, *message.RawMessage]) middleware.ProcessFunc[*message.RawMessage, *message.RawMessage] {
-		return func(ctx context.Context, raw *message.RawMessage) ([]*message.RawMessage, error) {
+func NewValidationMiddleware(registry *Registry) message.Middleware {
+	return func(next message.ProcessFunc) message.ProcessFunc {
+		return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+			raw, ok := msg.Raw()
+			if !ok {
+				return nil, fmt.Errorf("%w: got %T", message.ErrDataNotRaw, msg.Data)
+			}
 			// Validate before passing through
-			if err := registry.Validate(raw.Type(), raw.Data); err != nil {
+			if err := registry.Validate(msg.Type(), raw); err != nil {
 				return nil, fmt.Errorf("validation failed: %w", err)
 			}
-			return next(ctx, raw)
+			return next(ctx, msg)
 		}
 	}
 }
@@ -43,14 +46,18 @@ func NewValidationMiddleware(registry *Registry) middleware.Middleware[*message.
 //	marshaler := message.NewJSONMarshaler()
 //	unmarshalPipe := message.NewUnmarshalPipe(registry, marshaler, cfg)
 //	unmarshalPipe.Use(jsonschema.NewInputValidationMiddleware(registry))
-func NewInputValidationMiddleware(registry *Registry) middleware.Middleware[*message.RawMessage, *message.Message] {
-	return func(next middleware.ProcessFunc[*message.RawMessage, *message.Message]) middleware.ProcessFunc[*message.RawMessage, *message.Message] {
-		return func(ctx context.Context, raw *message.RawMessage) ([]*message.Message, error) {
+func NewInputValidationMiddleware(registry *Registry) message.Middleware {
+	return func(next message.ProcessFunc) message.ProcessFunc {
+		return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+			raw, ok := msg.Raw()
+			if !ok {
+				return nil, fmt.Errorf("%w: got %T", message.ErrDataNotRaw, msg.Data)
+			}
 			// Validate BEFORE unmarshaling (fail fast)
-			if err := registry.Validate(raw.Type(), raw.Data); err != nil {
+			if err := registry.Validate(msg.Type(), raw); err != nil {
 				return nil, fmt.Errorf("input validation failed: %w", err)
 			}
-			return next(ctx, raw)
+			return next(ctx, msg)
 		}
 	}
 }
@@ -68,9 +75,9 @@ func NewInputValidationMiddleware(registry *Registry) middleware.Middleware[*mes
 //	marshaler := message.NewJSONMarshaler()
 //	marshalPipe := message.NewMarshalPipe(marshaler, cfg)
 //	marshalPipe.Use(jsonschema.NewOutputValidationMiddleware(registry))
-func NewOutputValidationMiddleware(registry *Registry) middleware.Middleware[*message.Message, *message.RawMessage] {
-	return func(next middleware.ProcessFunc[*message.Message, *message.RawMessage]) middleware.ProcessFunc[*message.Message, *message.RawMessage] {
-		return func(ctx context.Context, msg *message.Message) ([]*message.RawMessage, error) {
+func NewOutputValidationMiddleware(registry *Registry) message.Middleware {
+	return func(next message.ProcessFunc) message.ProcessFunc {
+		return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			// Marshal first
 			results, err := next(ctx, msg)
 			if err != nil {
@@ -78,8 +85,12 @@ func NewOutputValidationMiddleware(registry *Registry) middleware.Middleware[*me
 			}
 
 			// Validate AFTER marshaling
-			for _, raw := range results {
-				if err := registry.Validate(raw.Type(), raw.Data); err != nil {
+			for _, out := range results {
+				raw, ok := out.Raw()
+				if !ok {
+					return nil, fmt.Errorf("%w: got %T", message.ErrDataNotRaw, out.Data)
+				}
+				if err := registry.Validate(out.Type(), raw); err != nil {
 					return nil, fmt.Errorf("output validation failed: %w", err)
 				}
 			}

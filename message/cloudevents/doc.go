@@ -49,14 +49,14 @@
 //   - Finish(err) = NACK (failed processing)
 //
 // This package bridges to gopipe's [message.Acking]:
-//   - [message.RawMessage.Ack] calls ceMsg.Finish(nil)
-//   - [message.RawMessage.Nack] calls ceMsg.Finish(err)
+//   - [message.Message.Ack] calls ceMsg.Finish(nil)
+//   - [message.Message.Nack] calls ceMsg.Finish(err)
 //
 // # Conversion Functions
 //
 // For manual conversion between CloudEvents and gopipe messages:
-//   - [FromCloudEvent] converts a CloudEvents event to [message.RawMessage]
-//   - [ToCloudEvent] converts a [message.RawMessage] to a CloudEvents event
+//   - [FromCloudEvent] converts a CloudEvents event to a [message.Message] with raw []byte Data
+//   - [ToCloudEvent] converts a [message.Message] with raw []byte Data to a CloudEvents event
 //
 // # Supported Protocol Bindings
 //
