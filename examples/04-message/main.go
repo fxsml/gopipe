@@ -67,7 +67,7 @@ func basicRouting() {
 	defer cancel()
 
 	// Raw input → typed, via unmarshal pipe.
-	input := make(chan *message.RawMessage, 10)
+	input := make(chan *message.Message, 10)
 	marshaler := message.NewJSONMarshaler()
 	unmarshal := message.NewUnmarshalPipe(router, marshaler, message.PipeConfig{})
 	typedIn, _ := unmarshal.Pipe(ctx, input)
@@ -83,7 +83,7 @@ func basicRouting() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	input <- message.NewRaw(data, message.Attributes{
+	input <- message.New(data, message.Attributes{
 		message.AttrSpecVersion: "1.0",
 		message.AttrType:        "create.order",
 		message.AttrSource:      "/test",

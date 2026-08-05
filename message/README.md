@@ -50,7 +50,7 @@ ctx, cancel := context.WithCancel(context.Background())
 defer cancel()
 
 // Raw input → typed, via unmarshal pipe
-input := make(chan *message.RawMessage, 100)
+input := make(chan *message.Message, 100)
 marshaler := message.NewJSONMarshaler()
 unmarshal := message.NewUnmarshalPipe(router, marshaler, message.PipeConfig{})
 typedIn, _ := unmarshal.Pipe(ctx, input)
@@ -62,7 +62,7 @@ marshal := message.NewMarshalPipe(marshaler, message.PipeConfig{})
 output, _ := marshal.Pipe(ctx, typedOut)
 
 // Send/receive raw messages (bytes)
-input <- &message.RawMessage{
+input <- &message.Message{
     Data:       []byte(`{"id": "123"}`),
     Attributes: message.Attributes{"type": "order.command"},
 }
@@ -108,17 +108,11 @@ event := out.Data.(OrderEvent)
 
 ## Message Types
 
-### RawMessage
-
-Raw bytes with CloudEvents attributes:
-
-```go
-type RawMessage = TypedMessage[[]byte]
-```
-
 ### Message
 
-Typed message with unmarshaled data:
+A single concrete type. `Data` holds either raw `[]byte` (broker boundary)
+or a typed Go value, depending on where the message is in a pipeline. Use
+`Raw()` to check which state `Data` is currently in:
 
 ```go
 msg := &message.Message{
@@ -127,6 +121,12 @@ msg := &message.Message{
         "type":   "order.created",
         "source": "/orders",
     },
+}
+
+if data, ok := msg.Raw(); ok {
+    // Data is []byte
+} else {
+    // Data is a typed Go value
 }
 ```
 

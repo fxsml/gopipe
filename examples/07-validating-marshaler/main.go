@@ -114,7 +114,7 @@ func main() {
 	subscriber := cehttp.NewSubscriber(cehttp.SubscriberConfig{})
 	rawInput, _ := subscriber.Subscribe(ctx)
 
-	// 3. Unmarshal pipe: RawMessage → Message (with validation middleware).
+	// 3. Unmarshal pipe: raw []byte Data → typed Data (with validation middleware).
 	marshaler := message.NewJSONMarshaler()
 	unmarshalPipe := message.NewUnmarshalPipe(registry, marshaler, message.PipeConfig{})
 	unmarshalPipe.Use(jsonschema.NewInputValidationMiddleware(registry))
@@ -134,15 +134,16 @@ func main() {
 	))
 	processed, _ := router.Pipe(ctx, typed)
 
-	// 5. Marshal pipe: Message → RawMessage (with validation middleware).
+	// 5. Marshal pipe: typed Data → raw []byte Data (with validation middleware).
 	marshalPipe := message.NewMarshalPipe(marshaler, message.PipeConfig{})
 	marshalPipe.Use(jsonschema.NewOutputValidationMiddleware(registry))
 	rawOutput, _ := marshalPipe.Pipe(ctx, processed)
 
 	// 6. Sink to stdout using pipe primitive.
-	printer := pipe.NewSinkPipe(func(ctx context.Context, raw *message.RawMessage) error {
+	printer := pipe.NewSinkPipe(func(ctx context.Context, raw *message.Message) error {
 		var data any
-		json.Unmarshal(raw.Data, &data)
+		rawBytes, _ := raw.Raw()
+		json.Unmarshal(rawBytes, &data)
 		formatted, _ := json.MarshalIndent(data, "", "  ")
 		fmt.Printf("\n[%s]\n%s\n", raw.Type(), formatted)
 		return nil
