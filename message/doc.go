@@ -62,7 +62,7 @@
 // Basic pattern - ack after output delivery:
 //
 //	// Input source sets up acking
-//	raw := message.New(data, attrs, message.NewAcking(
+//	raw := message.NewRaw(data, attrs, message.NewAcking(
 //		func() { broker.Ack(msgID) },
 //		func(err error) { broker.Nack(msgID) },
 //	))
@@ -109,6 +109,14 @@
 // [Message] is a single concrete type: Data holds either raw []byte (broker
 // boundary) or a typed Go value, depending on where the message is in a
 // pipeline. Use [Message.Raw] to check which state Data is currently in.
+//
+// Messages crossing the broker boundary always have Data typed to []byte —
+// nil or an empty slice both represent "no payload," but Data must never be
+// a bare untyped nil. Use [NewRaw] to construct these messages: its []byte
+// parameter makes that guarantee structural rather than conventional. This
+// restriction applies only at the boundary; purely internal, typed-only
+// pipelines are free to use nil (or any other value) as they see fit — see
+// [New].
 //
 // # Subpackages
 //

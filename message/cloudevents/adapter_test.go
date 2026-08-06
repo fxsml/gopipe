@@ -3,6 +3,7 @@ package cloudevents
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -149,6 +150,35 @@ func TestToCloudEvent(t *testing.T) {
 		}
 		if event.Extensions()["customext"] != "custom-value" {
 			t.Errorf("expected customext 'custom-value', got %v", event.Extensions()["customext"])
+		}
+	})
+
+	t.Run("non-raw Data returns ErrUnexpectedDataType", func(t *testing.T) {
+		typed := message.New(
+			struct{ Key string }{Key: "value"},
+			message.Attributes{"id": "test-id", "type": "test.type", "source": "/test"},
+			nil,
+		)
+
+		_, err := ToCloudEvent(typed)
+		if !errors.Is(err, message.ErrUnexpectedDataType) {
+			t.Errorf("expected ErrUnexpectedDataType, got: %v", err)
+		}
+	})
+
+	t.Run("empty raw Data omits data field", func(t *testing.T) {
+		raw := message.NewRaw(
+			nil,
+			message.Attributes{"id": "test-id", "type": "test.type", "source": "/test"},
+			nil,
+		)
+
+		event, err := ToCloudEvent(raw)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if event.Data() != nil {
+			t.Errorf("expected no data, got %v", event.Data())
 		}
 	})
 

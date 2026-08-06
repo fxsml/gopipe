@@ -90,6 +90,50 @@ func TestRaw(t *testing.T) {
 	})
 }
 
+func TestNewRaw(t *testing.T) {
+	t.Run("creates a message satisfying Raw()", func(t *testing.T) {
+		data := []byte(`{"id":123}`)
+		msg := NewRaw(data, Attributes{"type": "test"}, nil)
+
+		got, ok := msg.Raw()
+		if !ok {
+			t.Fatal("expected ok=true for NewRaw-constructed message")
+		}
+		if string(got) != string(data) {
+			t.Errorf("expected data %s, got %s", data, got)
+		}
+	})
+
+	t.Run("nil raw still satisfies Raw() (no payload)", func(t *testing.T) {
+		msg := NewRaw(nil, Attributes{"type": "heartbeat"}, nil)
+
+		got, ok := msg.Raw()
+		if !ok {
+			t.Fatal("expected ok=true for nil []byte passed through NewRaw")
+		}
+		if got != nil {
+			t.Errorf("expected nil data, got %v", got)
+		}
+	})
+
+	t.Run("creates empty attributes when nil", func(t *testing.T) {
+		msg := NewRaw([]byte("data"), nil, nil)
+		if msg.Attributes == nil {
+			t.Error("expected non-nil attributes map")
+		}
+	})
+
+	t.Run("with acking for broker integration", func(t *testing.T) {
+		acked := false
+		msg := NewRaw([]byte("data"), nil, NewAcking(func() { acked = true }, func(error) {}))
+
+		msg.Ack()
+		if !acked {
+			t.Error("expected ack callback to be invoked")
+		}
+	})
+}
+
 func TestAcking(t *testing.T) {
 	t.Run("ack requires expected count", func(t *testing.T) {
 		acked := false

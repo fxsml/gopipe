@@ -43,6 +43,14 @@ func New(data any, attrs Attributes, acking *Acking) *Message {
 	}
 }
 
+// NewRaw creates a Message for the broker boundary, where Data is always
+// expected to be []byte (see Raw). Unlike New, the raw parameter's []byte
+// type guarantees Raw() reports true on the result, even for empty or nil
+// input — pass nil or []byte{} for a message with no payload.
+func NewRaw(raw []byte, attrs Attributes, acking *Acking) *Message {
+	return New(raw, attrs, acking)
+}
+
 // Raw reports whether Data currently holds raw []byte, and returns it.
 func (m *Message) Raw() ([]byte, bool) {
 	b, ok := m.Data.([]byte)

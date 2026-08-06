@@ -45,7 +45,7 @@ func FromCloudEvent(e *cloudevents.Event, acking *message.Acking) (*message.Mess
 		data = append([]byte(nil), b...)
 	}
 
-	return message.New(data, attrs, acking), nil
+	return message.NewRaw(data, attrs, acking), nil
 }
 
 // ToCloudEvent converts a Message with raw []byte Data into a cloudevents.Event.
@@ -53,6 +53,11 @@ func FromCloudEvent(e *cloudevents.Event, acking *message.Acking) (*message.Mess
 func ToCloudEvent(msg *message.Message) (*cloudevents.Event, error) {
 	if msg == nil {
 		return nil, fmt.Errorf("nil message")
+	}
+
+	data, ok := msg.Raw()
+	if !ok {
+		return nil, fmt.Errorf("%w: want raw []byte, got %T", message.ErrUnexpectedDataType, msg.Data)
 	}
 
 	e := cloudevents.NewEvent()
@@ -105,7 +110,7 @@ func ToCloudEvent(msg *message.Message) (*cloudevents.Event, error) {
 		}
 	}
 
-	if data, _ := msg.Raw(); data != nil {
+	if len(data) > 0 {
 		var err error
 		if ct == "application/json" && json.Valid(data) {
 			err = e.SetData(ct, json.RawMessage(data))

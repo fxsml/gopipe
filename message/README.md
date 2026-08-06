@@ -62,10 +62,7 @@ marshal := message.NewMarshalPipe(marshaler, message.PipeConfig{})
 output, _ := marshal.Pipe(ctx, typedOut)
 
 // Send/receive raw messages (bytes)
-input <- &message.Message{
-    Data:       []byte(`{"id": "123"}`),
-    Attributes: message.Attributes{"type": "order.command"},
-}
+input <- message.NewRaw([]byte(`{"id": "123"}`), message.Attributes{"type": "order.command"}, nil)
 
 out := <-output
 // out.Data contains marshaled OrderEvent as []byte
@@ -129,6 +126,22 @@ if data, ok := msg.Raw(); ok {
     // Data is a typed Go value
 }
 ```
+
+**Broker boundary contract:** messages crossing the broker boundary (broker
+adapters, `UnmarshalPipe`/`MarshalPipe`, `cloudevents.ToCloudEvent`/`FromCloudEvent`)
+always have `Data` typed to `[]byte` — `nil` or an empty slice both mean "no
+payload," but `Data` must never be a bare untyped `nil`. Use `NewRaw` to
+construct these messages instead of `New`: its `[]byte` parameter makes the
+guarantee structural, not just conventional.
+
+```go
+heartbeat := message.NewRaw(nil, message.Attributes{"type": "heartbeat"}, nil) // no payload
+order := message.NewRaw([]byte(`{"id":"123"}`), message.Attributes{"type": "order.created"}, nil)
+```
+
+This restriction applies only at the boundary. Purely internal, typed-only
+pipelines are free to use `nil` (or any other value) as `Data` — that's an
+application decision, not one gopipe imposes.
 
 ### Attributes
 
