@@ -9,8 +9,8 @@ import (
 )
 
 // UnmarshalPipe converts a Message with raw []byte Data into a Message with
-// typed Data, using a registry and marshaler. Fails with ErrDataNotRaw if
-// Data is not raw when received. Automatically nacks messages on errors and
+// typed Data, using a registry and marshaler. Fails with ErrUnexpectedDataType
+// if Data is not raw when received. Automatically nacks messages on errors and
 // provides consistent logging.
 type UnmarshalPipe struct {
 	inner *pipe.ProcessPipe[*Message, *Message]
@@ -26,7 +26,7 @@ func NewUnmarshalPipe(registry InputRegistry, marshaler Marshaler, cfg PipeConfi
 	p.inner = pipe.NewProcessPipe(func(ctx context.Context, msg *Message) ([]*Message, error) {
 		raw, ok := msg.Raw()
 		if !ok {
-			return nil, fmt.Errorf("%w: got %T", ErrDataNotRaw, msg.Data)
+			return nil, fmt.Errorf("%w: want raw []byte, got %T", ErrUnexpectedDataType, msg.Data)
 		}
 
 		instance := registry.NewInput(msg.Type())
@@ -85,8 +85,8 @@ func (p *UnmarshalPipe) Use(mw ...Middleware) error {
 }
 
 // MarshalPipe converts a Message with typed Data into a Message with raw
-// []byte Data, using a marshaler. Fails with ErrDataNotTyped if Data is
-// already raw when received. Automatically nacks messages on errors and
+// []byte Data, using a marshaler. Fails with ErrUnexpectedDataType if Data
+// is already raw when received. Automatically nacks messages on errors and
 // provides consistent logging.
 type MarshalPipe struct {
 	inner     *pipe.ProcessPipe[*Message, *Message]
@@ -101,7 +101,7 @@ func NewMarshalPipe(marshaler Marshaler, cfg PipeConfig) *MarshalPipe {
 	p := &MarshalPipe{marshaler: marshaler}
 	p.inner = pipe.NewProcessPipe(func(ctx context.Context, msg *Message) ([]*Message, error) {
 		if _, ok := msg.Raw(); ok {
-			return nil, ErrDataNotTyped
+			return nil, fmt.Errorf("%w: want typed data, got raw []byte", ErrUnexpectedDataType)
 		}
 
 		data, err := marshaler.Marshal(msg.Data)

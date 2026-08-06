@@ -22,7 +22,7 @@ func NewValidationMiddleware(registry *Registry) message.Middleware {
 		return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			raw, ok := msg.Raw()
 			if !ok {
-				return nil, fmt.Errorf("%w: got %T", message.ErrDataNotRaw, msg.Data)
+				return nil, fmt.Errorf("%w: want raw []byte, got %T", message.ErrUnexpectedDataType, msg.Data)
 			}
 			// Validate before passing through
 			if err := registry.Validate(msg.Type(), raw); err != nil {
@@ -51,7 +51,7 @@ func NewInputValidationMiddleware(registry *Registry) message.Middleware {
 		return func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 			raw, ok := msg.Raw()
 			if !ok {
-				return nil, fmt.Errorf("%w: got %T", message.ErrDataNotRaw, msg.Data)
+				return nil, fmt.Errorf("%w: want raw []byte, got %T", message.ErrUnexpectedDataType, msg.Data)
 			}
 			// Validate BEFORE unmarshaling (fail fast)
 			if err := registry.Validate(msg.Type(), raw); err != nil {
@@ -88,7 +88,7 @@ func NewOutputValidationMiddleware(registry *Registry) message.Middleware {
 			for _, out := range results {
 				raw, ok := out.Raw()
 				if !ok {
-					return nil, fmt.Errorf("%w: got %T", message.ErrDataNotRaw, out.Data)
+					return nil, fmt.Errorf("%w: want raw []byte, got %T", message.ErrUnexpectedDataType, out.Data)
 				}
 				if err := registry.Validate(out.Type(), raw); err != nil {
 					return nil, fmt.Errorf("output validation failed: %w", err)

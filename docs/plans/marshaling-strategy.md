@@ -34,6 +34,10 @@ Rebased onto `origin/develop` after ~15 commits landed there since this branch w
 
 Design conflicts found: two (both noted above and corrected in place). Otherwise the design below stands as against current `develop`.
 
+## Implementation Note: `ErrDataNotRaw`/`ErrDataNotTyped` consolidated
+
+During Phase 1 implementation (#148 PR review), the two sentinels sketched below in §2/§3 (`ErrDataNotRaw`, `ErrDataNotTyped`) were consolidated into a single `message.ErrUnexpectedDataType`, wrapped with directional context (`want raw []byte`/`want typed`, plus `got %T`) at each call site instead of carried in the sentinel identity. Both directions turned out to be the same precondition — `Data` in the wrong state for the current pipeline stage — and both only ever fire from a composition bug (wrong stage order, wrong channel, double marshal/unmarshal), never from anything in the message's actual payload, so no caller has a legitimate reason to `errors.Is`-branch differently per direction. The code snippets below (§2, §3) still show the original two-sentinel sketch as historical record of the design as proposed; see [ADR 0033](../adr/0033-message-struct-simplification.md)'s Updates section and [#148](https://github.com/fxsml/gopipe/issues/148) for the final decision.
+
 ## Current State (Research)
 
 ### Issue and repo survey
@@ -345,7 +349,7 @@ Metrics: ns/op, B/op, allocs/op (`testing.B`), plus `DisableMarshaler` on/off co
 - [x] Implement `Message` struct simplification (drop generic, add `Raw()`)
 
 **Phase 1 — port existing pipes (do this first):** Complete — see [#148](https://github.com/fxsml/gopipe/issues/148)
-- [x] Add `ErrDataNotRaw`/`ErrDataNotTyped` to `message/errors.go`
+- [x] Add `ErrUnexpectedDataType` to `message/errors.go` (consolidated from the `ErrDataNotRaw`/`ErrDataNotTyped` sketch below — see "Implementation Note" above)
 - [x] Port `UnmarshalPipe`/`MarshalPipe` to `*Message` → `*Message`, failing loudly on mismatch rather than silently passing through (Final Design §2)
 - [x] Update pipe middleware usage to `message.Middleware`
 - [x] Update CHANGELOG (breaking change to these two pipes' signatures *and* behavior — new fail-loud checks, not just a retype)

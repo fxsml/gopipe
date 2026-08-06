@@ -44,15 +44,15 @@ Both pipes keep their existing public API shape (constructors, `Pipe`, `Use`, `S
 func (p *UnmarshalPipe) process(ctx context.Context, msg *Message) ([]*Message, error) {
     raw, ok := msg.Raw()
     if !ok {
-        return nil, fmt.Errorf("%w: got %T", ErrDataNotRaw, msg.Data)
+        return nil, fmt.Errorf("%w: want raw []byte, got %T", ErrUnexpectedDataType, msg.Data)
     }
     // ... unmarshal raw into a typed instance, msg.Data = instance
 }
 ```
 
-`MarshalPipe` is symmetric, returning `ErrDataNotTyped` if `Data` is already raw `[]byte` when it reaches the pipe — a message arriving at `MarshalPipe` already-raw means something upstream marshaled it, or the wrong channel feeds this stage, not a legitimate shortcut. Both pipes now accept `message.Middleware` (the same type `Router` uses) instead of the generic `pipe/middleware.Middleware[In, Out]`, since In and Out are now identical.
+`MarshalPipe` is symmetric, returning `ErrUnexpectedDataType` if `Data` is already raw `[]byte` when it reaches the pipe — a message arriving at `MarshalPipe` already-raw means something upstream marshaled it, or the wrong channel feeds this stage, not a legitimate shortcut. Both pipes now accept `message.Middleware` (the same type `Router` uses) instead of the generic `pipe/middleware.Middleware[In, Out]`, since In and Out are now identical.
 
-Losing the compile-time guarantee that `UnmarshalPipe` can only be fed `*RawMessage` is a deliberate trade: the whole point of collapsing the type is to enforce raw-vs-typed state as a runtime invariant instead of a type-system one, and `ErrDataNotRaw`/`ErrDataNotTyped` are what make that enforcement loud instead of silent.
+Losing the compile-time guarantee that `UnmarshalPipe` can only be fed `*RawMessage` is a deliberate trade: the whole point of collapsing the type is to enforce raw-vs-typed state as a runtime invariant instead of a type-system one, and `ErrUnexpectedDataType` is what makes that enforcement loud instead of silent. Both directions (raw-when-typed-expected, typed-when-raw-expected) share one sentinel rather than two: at every call site this only ever fires from a pipeline composition bug — the wrong stage order, the wrong channel wired in, a double marshal/unmarshal — never from a property of the message's actual payload, so there's no legitimate caller that would branch differently on which direction failed. The specific direction (want raw vs. want typed) and actual type are carried in the wrapped `%w: want X, got %T` context at each call site instead of in the sentinel identity.
 
 ### 3. `message/jsonschema`, `message/http`, `message/cloudevents` retype mechanically
 
@@ -66,7 +66,7 @@ Losing the compile-time guarantee that `UnmarshalPipe` can only be fed `*RawMess
 - `TypedMessage[T]`, `RawMessage`, `NewTyped[T]`, `NewRaw` removed. `New(data any, attrs, acking) *Message` is the only constructor.
 - `Copy[In, Out any]` becomes `Copy(msg *Message, data any) *Message`.
 - `ParseRaw`/`parseRawBytes` return `*Message` (with `Data []byte`) instead of `*RawMessage`.
-- `UnmarshalPipe`/`MarshalPipe` change from `*RawMessage`↔`*Message` to uniform `*Message`→`*Message`, and now fail with `ErrDataNotRaw`/`ErrDataNotTyped` on state mismatch instead of relying on the compiler to rule mismatches out. Their `Use()` now takes `message.Middleware` instead of generic `pipe/middleware.Middleware[In, Out]`.
+- `UnmarshalPipe`/`MarshalPipe` change from `*RawMessage`↔`*Message` to uniform `*Message`→`*Message`, and now fail with `ErrUnexpectedDataType` on state mismatch instead of relying on the compiler to rule mismatches out. Their `Use()` now takes `message.Middleware` instead of generic `pipe/middleware.Middleware[In, Out]`.
 - `message.RawMessageFromContext` removed; use `MessageFromContext`.
 - `message/jsonschema`'s three middleware constructors, `message/http` (`Subscriber`/`Publisher`), and `message/cloudevents` (`FromCloudEvent`/`ToCloudEvent`/`Subscriber`/`Publisher`) retype from `*RawMessage` to `*Message`.
 - External consumers typed on `RawMessage` (`gopipe-azservicebus`'s entire public API, a production reference repository with 25+ call sites) need a coordinated version bump with a mechanical `RawMessage`→`Message` rename.
@@ -74,13 +74,17 @@ Losing the compile-time guarantee that `UnmarshalPipe` can only be fed `*RawMess
 **Benefits:**
 - One concrete message type; middleware written as `message.Middleware` composes everywhere regardless of a given handler's marshaling configuration, closing the gap #125 identified.
 - `Raw()` is a single, explicit boundary check instead of four incompatible generic instantiations standing in for the same concept.
-- `ErrDataNotRaw`/`ErrDataNotTyped` catch a real bug class (e.g., a handler returning `[]byte` directly getting silently double-encoded) that the old compile-time-only guarantee didn't actually prevent once messages crossed pipe boundaries.
+- `ErrUnexpectedDataType` catches a real bug class (e.g., a handler returning `[]byte` directly getting silently double-encoded) that the old compile-time-only guarantee didn't actually prevent once messages crossed pipe boundaries.
 
 **Drawbacks:**
-- Raw-vs-typed state is now a runtime invariant instead of a compile-time one; misuse surfaces as an `ErrDataNotRaw`/`ErrDataNotTyped` at run time instead of a build failure.
+- Raw-vs-typed state is now a runtime invariant instead of a compile-time one; misuse surfaces as an `ErrUnexpectedDataType` at run time instead of a build failure.
 - `Data any` requires a type assertion (or `Raw()`) everywhere `Message` is consumed, where `RawMessage.Data []byte` previously did not.
 
 ## Links
 
 - Supersedes: [ADR 0010](0010-dual-message-types.md) (Dual Message Types)
 - Related: [#148](https://github.com/fxsml/gopipe/issues/148) (tracking issue), [#125](https://github.com/fxsml/gopipe/issues/125) (original proposal), [ADR 0032](0032-remove-message-engine.md) (prerequisite removal of `Engine`), [ADR 0031](0031-handler-level-marshaling.md) (Phase 2 — handler-level marshaling, builds on this ADR), `docs/plans/marshaling-strategy.md` (full design record)
+
+## Updates
+
+**2026-08-06:** Consolidated the two sentinels originally proposed here (`ErrDataNotRaw`/`ErrDataNotTyped`) into a single `ErrUnexpectedDataType`, during PR review. Rationale: both directions are the same precondition ("`Data` is in the wrong state for this pipeline stage") and both only ever fire from a composition bug, never from input variation — there's no legitimate caller that needs `errors.Is` to distinguish which direction failed, since the fix is always "correct the wiring," not a runtime branch. The directional detail (want raw vs. want typed, plus the actual `%T`) is carried in the wrapped error message at each call site instead of in the sentinel identity. Decision recorded on [#148](https://github.com/fxsml/gopipe/issues/148).

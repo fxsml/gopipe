@@ -123,7 +123,7 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		}
 	})
 
-	t.Run("returns ErrDataNotRaw when Data is not []byte", func(t *testing.T) {
+	t.Run("returns ErrUnexpectedDataType when Data is not []byte", func(t *testing.T) {
 		registry := FactoryMap{
 			"test.data": func() any { return &PipeTestData{} },
 		}
@@ -150,8 +150,8 @@ func TestNewUnmarshalPipe(t *testing.T) {
 		for range out {
 		}
 
-		if !errors.Is(lastErr, ErrDataNotRaw) {
-			t.Errorf("error = %v, want %v", lastErr, ErrDataNotRaw)
+		if !errors.Is(lastErr, ErrUnexpectedDataType) {
+			t.Errorf("error = %v, want %v", lastErr, ErrUnexpectedDataType)
 		}
 	})
 
@@ -255,7 +255,7 @@ func TestNewMarshalPipe(t *testing.T) {
 		}
 	})
 
-	t.Run("returns ErrDataNotTyped when Data is already raw", func(t *testing.T) {
+	t.Run("returns ErrUnexpectedDataType when Data is already raw", func(t *testing.T) {
 		marshaler := NewJSONMarshaler()
 
 		var lastErr error
@@ -279,8 +279,8 @@ func TestNewMarshalPipe(t *testing.T) {
 		for range out {
 		}
 
-		if !errors.Is(lastErr, ErrDataNotTyped) {
-			t.Errorf("error = %v, want %v", lastErr, ErrDataNotTyped)
+		if !errors.Is(lastErr, ErrUnexpectedDataType) {
+			t.Errorf("error = %v, want %v", lastErr, ErrUnexpectedDataType)
 		}
 	})
 

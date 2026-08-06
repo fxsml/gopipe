@@ -500,8 +500,8 @@ func TestNewValidationMiddleware(t *testing.T) {
 	t.Run("non-raw data rejected", func(t *testing.T) {
 		typed := message.New(testData{Name: "ok", Value: 1}, message.Attributes{"type": "test.data"}, nil)
 		_, err := fn(context.Background(), typed)
-		if !errors.Is(err, message.ErrDataNotRaw) {
-			t.Errorf("expected ErrDataNotRaw, got: %v", err)
+		if !errors.Is(err, message.ErrUnexpectedDataType) {
+			t.Errorf("expected ErrUnexpectedDataType, got: %v", err)
 		}
 	})
 }
@@ -603,8 +603,8 @@ func TestNewOutputValidationMiddleware(t *testing.T) {
 
 		msg := message.New(nil, message.Attributes{"type": "test.data"}, nil)
 		_, err := fn(context.Background(), msg)
-		if !errors.Is(err, message.ErrDataNotRaw) {
-			t.Errorf("expected ErrDataNotRaw, got: %v", err)
+		if !errors.Is(err, message.ErrUnexpectedDataType) {
+			t.Errorf("expected ErrUnexpectedDataType, got: %v", err)
 		}
 	})
 }
