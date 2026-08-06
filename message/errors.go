@@ -25,13 +25,7 @@ var (
 	// or does not type-assert to the expected command type.
 	ErrCommandDataMismatch = errors.New("command data type mismatch")
 
-	// ErrUnexpectedDataType is returned when a message reaches a pipeline
-	// stage with Data in the wrong state for that stage — raw when typed
-	// was expected, or already-typed when raw was expected. This is always
-	// a pipeline composition bug (wrong stage order, wrong channel wired
-	// in, double marshal/unmarshal), never a property of the message's
-	// actual payload — bad wire input fails unmarshaling itself, it never
-	// produces a typed Go value in Data. Wrapped with directional context
-	// (want/got) at each call site.
+	// ErrUnexpectedDataType is returned when Data is raw when typed was
+	// expected, or already-typed when raw was expected — a composition bug.
 	ErrUnexpectedDataType = errors.New("unexpected data type")
 )
