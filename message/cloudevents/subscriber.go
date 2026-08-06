@@ -159,7 +159,7 @@ func (s *Subscriber) receive(ctx context.Context) ([]*message.Message, error) {
 		},
 	)
 
-	raw := message.New(event.Data(), attrs, acking)
+	raw := message.NewRaw(event.Data(), attrs, acking)
 
 	return []*message.Message{raw}, nil
 }

@@ -190,7 +190,7 @@ func TestHTTP_E2E_MultiTopic(t *testing.T) {
 	}()
 
 	for i := 0; i < 3; i++ {
-		_ = ordersPub.Send(ctx, message.New([]byte(`{}`), message.Attributes{
+		_ = ordersPub.Send(ctx, message.NewRaw([]byte(`{}`), message.Attributes{
 			message.AttrID:     fmt.Sprintf("o%d", i),
 			message.AttrType:   "order",
 			message.AttrSource: "/test",
@@ -198,7 +198,7 @@ func TestHTTP_E2E_MultiTopic(t *testing.T) {
 	}
 
 	for i := 0; i < 2; i++ {
-		_ = paymentsPub.Send(ctx, message.New([]byte(`{}`), message.Attributes{
+		_ = paymentsPub.Send(ctx, message.NewRaw([]byte(`{}`), message.Attributes{
 			message.AttrID:     fmt.Sprintf("p%d", i),
 			message.AttrType:   "payment",
 			message.AttrSource: "/test",
@@ -253,7 +253,7 @@ func TestHTTP_E2E_Publish(t *testing.T) {
 	}
 
 	for i := 0; i < 20; i++ {
-		inputCh <- message.New([]byte(`{}`), message.Attributes{
+		inputCh <- message.NewRaw([]byte(`{}`), message.Attributes{
 			message.AttrID:     fmt.Sprintf("s%d", i),
 			message.AttrType:   "stream",
 			message.AttrSource: "/test",

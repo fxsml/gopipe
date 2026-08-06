@@ -468,7 +468,7 @@ func TestNewValidationMiddleware(t *testing.T) {
 	fn := mw(passthrough)
 
 	t.Run("valid message passes through", func(t *testing.T) {
-		raw := message.New([]byte(`{"name":"ok","value":1}`), message.Attributes{"type": "test.data"}, nil)
+		raw := message.NewRaw([]byte(`{"name":"ok","value":1}`), message.Attributes{"type": "test.data"}, nil)
 		results, err := fn(context.Background(), raw)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -479,7 +479,7 @@ func TestNewValidationMiddleware(t *testing.T) {
 	})
 
 	t.Run("invalid message rejected", func(t *testing.T) {
-		raw := message.New([]byte(`{"name":"ok"}`), message.Attributes{"type": "test.data"}, nil)
+		raw := message.NewRaw([]byte(`{"name":"ok"}`), message.Attributes{"type": "test.data"}, nil)
 		_, err := fn(context.Background(), raw)
 		if err == nil {
 			t.Fatal("expected validation error")
@@ -490,7 +490,7 @@ func TestNewValidationMiddleware(t *testing.T) {
 	})
 
 	t.Run("unregistered type returns error", func(t *testing.T) {
-		raw := message.New([]byte(`{"any":"data"}`), message.Attributes{"type": "unknown"}, nil)
+		raw := message.NewRaw([]byte(`{"any":"data"}`), message.Attributes{"type": "unknown"}, nil)
 		_, err := fn(context.Background(), raw)
 		if err == nil {
 			t.Fatal("expected error for unregistered type")
@@ -517,7 +517,7 @@ func TestNewInputValidationMiddleware(t *testing.T) {
 	fn := mw(next)
 
 	t.Run("valid message passes to next", func(t *testing.T) {
-		raw := message.New([]byte(`{"name":"ok","value":1}`), message.Attributes{"type": "test.data"}, nil)
+		raw := message.NewRaw([]byte(`{"name":"ok","value":1}`), message.Attributes{"type": "test.data"}, nil)
 		results, err := fn(context.Background(), raw)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -528,7 +528,7 @@ func TestNewInputValidationMiddleware(t *testing.T) {
 	})
 
 	t.Run("invalid message rejected before next", func(t *testing.T) {
-		raw := message.New([]byte(`{"name":"ok"}`), message.Attributes{"type": "test.data"}, nil)
+		raw := message.NewRaw([]byte(`{"name":"ok"}`), message.Attributes{"type": "test.data"}, nil)
 		_, err := fn(context.Background(), raw)
 		if err == nil {
 			t.Fatal("expected validation error")
@@ -547,7 +547,7 @@ func TestNewOutputValidationMiddleware(t *testing.T) {
 	t.Run("valid output passes", func(t *testing.T) {
 		next := func(_ context.Context, msg *message.Message) ([]*message.Message, error) {
 			return []*message.Message{
-				message.New([]byte(`{"name":"ok","value":1}`), message.Attributes{"type": "test.data"}, nil),
+				message.NewRaw([]byte(`{"name":"ok","value":1}`), message.Attributes{"type": "test.data"}, nil),
 			}, nil
 		}
 		fn := mw(next)
@@ -565,7 +565,7 @@ func TestNewOutputValidationMiddleware(t *testing.T) {
 	t.Run("invalid output rejected", func(t *testing.T) {
 		next := func(_ context.Context, msg *message.Message) ([]*message.Message, error) {
 			return []*message.Message{
-				message.New([]byte(`{"name":"ok"}`), message.Attributes{"type": "test.data"}, nil),
+				message.NewRaw([]byte(`{"name":"ok"}`), message.Attributes{"type": "test.data"}, nil),
 			}, nil
 		}
 		fn := mw(next)
@@ -620,7 +620,7 @@ func TestNewValidationMiddleware_typeFreeRegister(t *testing.T) {
 	fn := mw(passthrough)
 
 	t.Run("valid message passes through", func(t *testing.T) {
-		raw := message.New([]byte(`{"name":"ok","value":1}`), message.Attributes{"type": "order.created"}, nil)
+		raw := message.NewRaw([]byte(`{"name":"ok","value":1}`), message.Attributes{"type": "order.created"}, nil)
 		results, err := fn(context.Background(), raw)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -631,7 +631,7 @@ func TestNewValidationMiddleware_typeFreeRegister(t *testing.T) {
 	})
 
 	t.Run("invalid message rejected", func(t *testing.T) {
-		raw := message.New([]byte(`{"name":"ok"}`), message.Attributes{"type": "order.created"}, nil)
+		raw := message.NewRaw([]byte(`{"name":"ok"}`), message.Attributes{"type": "order.created"}, nil)
 		_, err := fn(context.Background(), raw)
 		if err == nil {
 			t.Fatal("expected validation error")

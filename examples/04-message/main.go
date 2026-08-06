@@ -83,7 +83,7 @@ func basicRouting() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	input <- message.New(data, message.Attributes{
+	input <- message.NewRaw(data, message.Attributes{
 		message.AttrSpecVersion: "1.0",
 		message.AttrType:        "create.order",
 		message.AttrSource:      "/test",

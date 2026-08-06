@@ -56,7 +56,7 @@ func TestNew(t *testing.T) {
 func TestRaw(t *testing.T) {
 	t.Run("reports true and returns bytes for raw data", func(t *testing.T) {
 		data := []byte(`{"id":123}`)
-		msg := New(data, Attributes{"type": "test"}, nil)
+		msg := NewRaw(data, Attributes{"type": "test"}, nil)
 
 		got, ok := msg.Raw()
 		if !ok {
@@ -81,7 +81,7 @@ func TestRaw(t *testing.T) {
 
 	t.Run("with acking for broker integration", func(t *testing.T) {
 		acked := false
-		msg := New([]byte("data"), nil, NewAcking(func() { acked = true }, func(error) {}))
+		msg := NewRaw([]byte("data"), nil, NewAcking(func() { acked = true }, func(error) {}))
 
 		msg.Ack()
 		if !acked {
@@ -319,7 +319,7 @@ func TestString(t *testing.T) {
 
 	t.Run("embeds valid JSON bytes as raw JSON", func(t *testing.T) {
 		data := []byte(`{"orderId":"123","amount":50}`)
-		msg := New(data, Attributes{"type": "order.created"}, nil)
+		msg := NewRaw(data, Attributes{"type": "order.created"}, nil)
 		s := msg.String()
 
 		// Should contain the raw JSON, not base64 encoded
@@ -343,7 +343,7 @@ func TestString(t *testing.T) {
 
 	t.Run("handles invalid JSON bytes", func(t *testing.T) {
 		data := []byte("not json")
-		msg := New(data, nil, nil)
+		msg := NewRaw(data, nil, nil)
 		s := msg.String()
 
 		// Should still produce valid JSON output
@@ -382,7 +382,7 @@ func TestWriteTo(t *testing.T) {
 
 	t.Run("embeds raw JSON for byte slices", func(t *testing.T) {
 		data := []byte(`{"id":123}`)
-		msg := New(data, nil, nil)
+		msg := NewRaw(data, nil, nil)
 		var buf bytes.Buffer
 
 		_, err := msg.WriteTo(&buf)
@@ -429,7 +429,7 @@ func TestParseRaw(t *testing.T) {
 	})
 
 	t.Run("roundtrip with WriteTo", func(t *testing.T) {
-		original := New([]byte(`{"id":456}`), Attributes{
+		original := NewRaw([]byte(`{"id":456}`), Attributes{
 			"type":   "test.event",
 			"source": "/roundtrip",
 		}, nil)
@@ -476,7 +476,7 @@ func TestParseRaw(t *testing.T) {
 
 	t.Run("roundtrip with binary data", func(t *testing.T) {
 		binaryData := []byte{0x00, 0x01, 0x02, 0xFF, 0xFE}
-		original := New(binaryData, Attributes{
+		original := NewRaw(binaryData, Attributes{
 			"type":   "binary.event",
 			"source": "/binary",
 		}, nil)
