@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/fxsml/gopipe/pipe"
 )
 
 type PipeTestData struct {
@@ -564,8 +566,8 @@ func TestUnmarshalPipe_Use(t *testing.T) {
 			return next
 		})
 
-		if err != ErrAlreadyStarted {
-			t.Errorf("Use() after start error = %v, want %v", err, ErrAlreadyStarted)
+		if err != pipe.ErrAlreadyStarted {
+			t.Errorf("Use() after start error = %v, want %v", err, pipe.ErrAlreadyStarted)
 		}
 	})
 }
@@ -630,8 +632,8 @@ func TestMarshalPipe_Use(t *testing.T) {
 			return next
 		})
 
-		if err != ErrAlreadyStarted {
-			t.Errorf("Use() after start error = %v, want %v", err, ErrAlreadyStarted)
+		if err != pipe.ErrAlreadyStarted {
+			t.Errorf("Use() after start error = %v, want %v", err, pipe.ErrAlreadyStarted)
 		}
 	})
 }
