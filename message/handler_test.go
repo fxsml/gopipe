@@ -2,6 +2,7 @@ package message
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -27,20 +28,6 @@ func TestNewHandler(t *testing.T) {
 
 		if h.EventType() != "test.command" {
 			t.Errorf("expected event type 'test.command', got %q", h.EventType())
-		}
-	})
-
-	t.Run("NewInput creates typed instance", func(t *testing.T) {
-		h := NewHandler[TestCommand](
-			func(ctx context.Context, msg *Message) ([]*Message, error) {
-				return nil, nil
-			},
-			DotNaming,
-		)
-
-		instance := h.NewInput()
-		if _, ok := instance.(*TestCommand); !ok {
-			t.Errorf("expected *TestCommand, got %T", instance)
 		}
 	})
 
@@ -91,7 +78,7 @@ func TestNewCommandHandler(t *testing.T) {
 		}
 	})
 
-	t.Run("processes command and returns events", func(t *testing.T) {
+	t.Run("unmarshals raw input and marshals output by default", func(t *testing.T) {
 		h := NewCommandHandler(
 			func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
 				return []TestEvent{{ID: cmd.ID, Status: "processed"}}, nil
@@ -99,6 +86,94 @@ func TestNewCommandHandler(t *testing.T) {
 			CommandHandlerConfig{
 				Source: "/test-service",
 				Naming: DotNaming,
+			},
+		)
+
+		msg := NewRaw([]byte(`{"id":"abc","name":"test"}`), Attributes{"type": "test.command"}, nil)
+
+		outputs, err := h.Handle(context.Background(), msg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(outputs) != 1 {
+			t.Fatalf("expected 1 output, got %d", len(outputs))
+		}
+
+		out := outputs[0]
+		if out.Type() != "test.event" {
+			t.Errorf("expected output type 'test.event', got %v", out.Type())
+		}
+		if out.Source() != "/test-service" {
+			t.Errorf("expected source '/test-service', got %v", out.Source())
+		}
+
+		raw, ok := out.Raw()
+		if !ok {
+			t.Fatalf("expected raw output Data, got %T", out.Data)
+		}
+		var event TestEvent
+		if err := json.Unmarshal(raw, &event); err != nil {
+			t.Fatalf("unexpected unmarshal error: %v", err)
+		}
+		if event.ID != "abc" || event.Status != "processed" {
+			t.Errorf("unexpected event: %+v", event)
+		}
+		if out.Attributes[AttrDataContentType] != "application/json" {
+			t.Errorf("expected datacontenttype 'application/json', got %v", out.Attributes[AttrDataContentType])
+		}
+	})
+
+	t.Run("returns ErrUnexpectedDataType for non-raw input by default", func(t *testing.T) {
+		h := NewCommandHandler(
+			func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+				return nil, nil
+			},
+			CommandHandlerConfig{
+				Source: "/test",
+				Naming: DotNaming,
+			},
+		)
+
+		msg := &Message{Data: TestCommand{ID: "123"}}
+		_, err := h.Handle(context.Background(), msg)
+		if !errors.Is(err, ErrUnexpectedDataType) {
+			t.Fatalf("expected ErrUnexpectedDataType, got %v", err)
+		}
+	})
+
+	t.Run("Subject sets CE subject attribute pre-marshal", func(t *testing.T) {
+		h := NewCommandHandler(
+			func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+				return []TestEvent{{ID: cmd.ID, Status: "processed"}}, nil
+			},
+			CommandHandlerConfig{
+				Source: "/test",
+				Naming: DotNaming,
+				Subject: func(data any) string {
+					return data.(TestEvent).ID
+				},
+			},
+		)
+
+		msg := NewRaw([]byte(`{"id":"xyz"}`), Attributes{"type": "test.command"}, nil)
+		outputs, err := h.Handle(context.Background(), msg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if outputs[0].Subject() != "xyz" {
+			t.Errorf("expected subject 'xyz', got %v", outputs[0].Subject())
+		}
+	})
+
+	t.Run("DisableMarshaler operates typed-through", func(t *testing.T) {
+		h := NewCommandHandler(
+			func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
+				return []TestEvent{{ID: cmd.ID, Status: "processed"}}, nil
+			},
+			CommandHandlerConfig{
+				Source:           "/test-service",
+				Naming:           DotNaming,
+				DisableMarshaler: true,
 			},
 		)
 
@@ -111,7 +186,6 @@ func TestNewCommandHandler(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-
 		if len(outputs) != 1 {
 			t.Fatalf("expected 1 output, got %d", len(outputs))
 		}
@@ -123,8 +197,8 @@ func TestNewCommandHandler(t *testing.T) {
 		if out.Source() != "/test-service" {
 			t.Errorf("expected source '/test-service', got %v", out.Source())
 		}
-		if out.SpecVersion() != "1.0" {
-			t.Errorf("expected specversion '1.0', got %v", out.SpecVersion())
+		if _, ok := out.Attributes[AttrDataContentType]; ok {
+			t.Errorf("expected no datacontenttype, got %v", out.Attributes[AttrDataContentType])
 		}
 
 		event, ok := out.Data.(TestEvent)
@@ -136,15 +210,16 @@ func TestNewCommandHandler(t *testing.T) {
 		}
 	})
 
-	t.Run("returns error from handler", func(t *testing.T) {
+	t.Run("DisableMarshaler returns error from handler", func(t *testing.T) {
 		testErr := errors.New("handler error")
 		h := NewCommandHandler(
 			func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
 				return nil, testErr
 			},
 			CommandHandlerConfig{
-				Source: "/test",
-				Naming: DotNaming,
+				Source:           "/test",
+				Naming:           DotNaming,
+				DisableMarshaler: true,
 			},
 		)
 
@@ -155,14 +230,15 @@ func TestNewCommandHandler(t *testing.T) {
 		}
 	})
 
-	t.Run("returns error for nil data", func(t *testing.T) {
+	t.Run("DisableMarshaler returns error for nil data", func(t *testing.T) {
 		h := NewCommandHandler(
 			func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
 				return nil, nil
 			},
 			CommandHandlerConfig{
-				Source: "/test",
-				Naming: DotNaming,
+				Source:           "/test",
+				Naming:           DotNaming,
+				DisableMarshaler: true,
 			},
 		)
 
@@ -173,14 +249,15 @@ func TestNewCommandHandler(t *testing.T) {
 		}
 	})
 
-	t.Run("returns error for mismatched data type", func(t *testing.T) {
+	t.Run("DisableMarshaler returns error for mismatched data type", func(t *testing.T) {
 		h := NewCommandHandler(
 			func(ctx context.Context, cmd TestCommand) ([]TestEvent, error) {
 				return nil, nil
 			},
 			CommandHandlerConfig{
-				Source: "/test",
-				Naming: DotNaming,
+				Source:           "/test",
+				Naming:           DotNaming,
+				DisableMarshaler: true,
 			},
 		)
 
@@ -199,8 +276,9 @@ func TestNewCommandHandler(t *testing.T) {
 				return nil, nil
 			},
 			CommandHandlerConfig{
-				Source: "/test",
-				Naming: DotNaming,
+				Source:           "/test",
+				Naming:           DotNaming,
+				DisableMarshaler: true,
 			},
 		)
 
@@ -233,8 +311,9 @@ func TestNewCommandHandler(t *testing.T) {
 				return []TestEvent{{ID: cmd.ID, Status: "done"}}, nil
 			},
 			CommandHandlerConfig{
-				Source: "/test",
-				Naming: DotNaming,
+				Source:           "/test",
+				Naming:           DotNaming,
+				DisableMarshaler: true,
 				Attributes: Attributes{
 					AttrDataSchema: "https://example.com/schema.json",
 					"customext":    "custom-value",

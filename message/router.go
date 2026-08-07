@@ -237,16 +237,6 @@ func (r *Router) handler(eventType string) (handlerEntry, bool) {
 	return entry, ok
 }
 
-// NewInput creates a typed instance for unmarshaling.
-// Implements InputRegistry.
-func (r *Router) NewInput(eventType string) any {
-	entry, ok := r.handler(eventType)
-	if !ok {
-		return nil
-	}
-	return entry.handler.NewInput()
-}
-
 func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) {
 	// handler lookup → matcher check → handler.Handle
 	// Messages are auto-nacked on error (consistent with other components).
@@ -293,9 +283,6 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 func (r *Router) ackingMiddleware() Middleware {
 	return r.cfg.AckStrategy.middleware()
 }
-
-// Verify Router implements InputRegistry.
-var _ InputRegistry = (*Router)(nil)
 
 // funcName extracts a readable name from a function.
 // For package-level functions, returns "package.Function" (e.g., "context.Background").
