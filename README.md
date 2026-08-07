@@ -8,7 +8,7 @@
 
 ## Why gopipe?
 
-- **Progressive complexity** — Start with simple channel functions, scale to full message engines
+- **Progressive complexity** — Start with simple channel functions, scale to CloudEvents message routing
 - **Type-safe generics** — Full Go 1.18+ generics support throughout
 - **Zero dependencies** — Core packages have no external dependencies
 - **CloudEvents aligned** — Message package follows CloudEvents specification

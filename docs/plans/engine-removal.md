@@ -1,6 +1,6 @@
 # Plan: Remove Message Engine
 
-**Status:** Proposed
+**Status:** Complete
 **Related ADRs:** [0020](../adr/0020-message-engine-architecture.md) (Message Engine Architecture — to be superseded), [0022](../adr/0022-message-package-redesign.md) (Message Package Redesign — needs an Updates note)
 **Depended On By:** [marshaling-strategy.md](marshaling-strategy.md) (its Phase 1 requires this plan complete first)
 **Tracking Issue:** [fxsml/gopipe#147](https://github.com/fxsml/gopipe/issues/147)

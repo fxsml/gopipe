@@ -9,7 +9,7 @@ Learn gopipe step-by-step.
 | 1 | [channel](01-channel/) | Filter, Transform, Sink, FromValues |
 | 2 | [pipe](02-pipe/) | ProcessPipe, Config, Middleware |
 | 3 | [merger](03-merger/) | Dynamic inputs, shutdown timeout |
-| 4 | [message](04-message/) | CloudEvents engine, handlers, routing |
+| 4 | [message](04-message/) | CloudEvents router, handlers, routing |
 | 5 | [generator](05-generator/) | Producing values, context cancellation |
 | 6 | [http-cloudevents](06-http-cloudevents/) | HTTP pub/sub, binary/structured modes, batching |
 
@@ -47,7 +47,7 @@ Adds configuration (concurrency, buffer size) and middleware (recovery from pani
 Demonstrates dynamic fan-in: adding multiple input channels that get merged into a single output. Shows shutdown handling.
 
 ### 04-message
-CloudEvents message processing with typed handlers. Shows how to create an engine, register handlers, and route messages by type.
+CloudEvents message processing with typed handlers. Shows how to create a router, register handlers, and route messages by type.
 
 ### 05-generator
 Produces values on demand using a generator function. Shows context cancellation for controlled shutdown.

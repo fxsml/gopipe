@@ -6,7 +6,7 @@
 |------|-------|--------|
 | [pipe-metrics](pipe-metrics.md) | Pipeline Metrics | Complete |
 | [locals](locals.md) | Message Locals | Implemented |
-| [engine-removal](engine-removal.md) | Remove Message Engine | Proposed |
+| [engine-removal](engine-removal.md) | Remove Message Engine | Complete |
 | [marshaling-strategy](marshaling-strategy.md) | Raw-by-Default Message Contract (Router) | Complete |
 | [0007](0007-cesql-pattern-matching.md) | CESQL Pattern Matching | Proposed |
 | [transaction-handling](transaction-handling.md) | Transaction Handling | Proposed |
@@ -38,7 +38,7 @@ Historical plans from the message package development are in [archive/](archive/
 | [0011](archive/0011-named-pools.md) | Named Pools | Complete |
 | [0012](archive/0012-engine-simplification.md) | Engine Simplification | Complete |
 | [0013](archive/0013-http-cloudevents-adapter.md) | HTTP CloudEvents Adapter | Complete |
-| [validating-marshaler-example-enhancement](validating-marshaler-example-enhancement.md) | Validating Marshaler Example Enhancement | Complete |
+| [0014](archive/0014-validating-marshaler-example-enhancement.md) | Validating Marshaler Example Enhancement | Complete |
 
 ## Creating New Plans
 

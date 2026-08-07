@@ -276,7 +276,7 @@ engine := message.NewEngine(message.EngineConfig{
 - Related: ADR 0021 (Marshaler and NamingStrategy)
 - Related: ADR 0022 (Message Package Redesign)
 - Related: ADR 0024 (HTTP CloudEvents Adapter)
-- Plan: [validating-marshaler-example-enhancement.md](../plans/validating-marshaler-example-enhancement.md)
+- Plan: [validating-marshaler-example-enhancement.md](../plans/archive/0014-validating-marshaler-example-enhancement.md)
 - Implementation: `message/jsonschema/registry.go`
 - Example: `examples/07-validating-marshaler/`
 
