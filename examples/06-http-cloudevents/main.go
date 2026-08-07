@@ -2,7 +2,7 @@
 //
 // Demonstrates HTTP pub/sub using the message/http adapter:
 // - Receive CloudEvents via HTTP (binary or structured mode)
-// - Process with typed handlers via Router
+// - Process with a CommandHandler via Router (marshals by default)
 // - Publish results via HTTP (batched for efficiency)
 //
 // Run:
@@ -75,16 +75,9 @@ func main() {
 	orders := cehttp.NewSubscriber(cehttp.SubscriberConfig{BufferSize: 100})
 	ordersCh, _ := orders.Subscribe(ctx)
 
-	// Raw input → typed, via unmarshal pipe
-	marshaler := message.NewJSONMarshaler()
-	unmarshal := message.NewUnmarshalPipe(router, marshaler, message.PipeConfig{})
-	typedIn, _ := unmarshal.Pipe(ctx, ordersCh)
-
-	typedOut, _ := router.Pipe(ctx, typedIn)
-
-	// Typed output → raw, via marshal pipe
-	marshal := message.NewMarshalPipe(marshaler, message.PipeConfig{})
-	confirmationsCh, _ := marshal.Pipe(ctx, typedOut)
+	// CommandHandler marshals by default, so Router can take/return raw
+	// ([]byte) messages directly.
+	confirmationsCh, _ := router.Pipe(ctx, ordersCh)
 
 	// HTTP Publisher: send confirmations (batched)
 	publisher := cehttp.NewPublisher(cehttp.PublisherConfig{

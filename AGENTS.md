@@ -114,12 +114,13 @@ type Matcher interface {
 ```go
 type Handler interface {
     EventType() string   // CE type for routing
-    NewInput() any       // Creates instance for unmarshaling
     Handle(ctx, msg) ([]*Message, error)
 }
 ```
 
-**Why:** No central registry needed. Handler knows its type and can create instances.
+**Why:** No central registry needed — Router dispatches purely by CE type, never
+inspecting `Data`. Marshaling is a per-handler concern (`CommandHandlerConfig`),
+not Router's — see ADR 0031.
 
 ## Common Mistakes
 
@@ -199,7 +200,7 @@ type Marshaler interface {
 
 **Why:** Single responsibility. Split into:
 - `Marshaler` — pure serialization
-- `Handler.NewInput()` — provides instances for unmarshaling
+- `CommandHandlerConfig` — decides whether and how a handler marshals
 
 ### PipeHandler Interface
 

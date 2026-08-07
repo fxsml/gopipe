@@ -1,6 +1,6 @@
 # Plan: Raw-by-Default Message Contract (Router)
 
-**Status:** In Progress — Phase 1 complete ([#148](https://github.com/fxsml/gopipe/issues/148)); Phase 2 (Router-level) superseded by [ADR 0031](../adr/0031-handler-level-marshaling.md), tracked under [#149](https://github.com/fxsml/gopipe/issues/149)
+**Status:** Complete — Phase 1 implemented as designed ([#148](https://github.com/fxsml/gopipe/issues/148)); Phase 2's Router-level design (Final Design §3–5 below) was superseded before implementation by [ADR 0031](../adr/0031-handler-level-marshaling.md)'s handler-level design, implemented under [#149](https://github.com/fxsml/gopipe/issues/149)
 **Related Issue:** [#125](https://github.com/fxsml/gopipe/issues/125) — Consider unifying Message and RawMessage for middleware composability
 **Related ADRs:** [0010](../adr/0010-dual-message-types.md) (Dual Message Types — superseded), [0033](../adr/0033-message-struct-simplification.md) (Message Struct Simplification — implements Phase 1 below), [0022](../adr/0022-message-package-redesign.md) (Message Package Redesign)
 **Related Plans:** [archive/0008-marshal-unmarshal-pipes.decisions.md](archive/0008-marshal-unmarshal-pipes.decisions.md), [validation-marshaling-separation.decisions.md](validation-marshaling-separation.decisions.md)

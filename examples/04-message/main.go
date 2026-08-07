@@ -1,10 +1,11 @@
 // Example: Message routing with CloudEvents handlers.
 //
 // Demonstrates the core message package concepts:
-// - Creating a Router and registering a command handler
-// - Composing raw ([]byte) I/O via UnmarshalPipe/MarshalPipe
-// - Message acknowledgment (acking)
-// - A pure, heterogeneous-output command handler pattern with middleware
+//   - Creating a Router and registering a command handler
+//   - CommandHandler's default marshal-by-default behavior: Router takes and
+//     returns raw ([]byte) messages directly, no UnmarshalPipe/MarshalPipe needed
+//   - Message acknowledgment (acking)
+//   - A pure, heterogeneous-output command handler pattern with middleware
 //
 // Run: go run ./examples/04-message
 package main
@@ -40,8 +41,9 @@ func main() {
 	pureHeterogeneousHandler()
 }
 
-// basicRouting demonstrates a Router composed with UnmarshalPipe/MarshalPipe
-// for raw ([]byte) I/O — the pattern for broker integration.
+// basicRouting demonstrates a Router built from a CommandHandler, which
+// marshals by default — Router takes and returns raw ([]byte) messages
+// directly, the pattern for broker integration.
 func basicRouting() {
 	router := message.NewRouter(message.PipeConfig{})
 
@@ -66,17 +68,10 @@ func basicRouting() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Raw input → typed, via unmarshal pipe.
+	// CommandHandler marshals by default, so Router can take/return raw
+	// ([]byte) messages directly.
 	input := make(chan *message.Message, 10)
-	marshaler := message.NewJSONMarshaler()
-	unmarshal := message.NewUnmarshalPipe(router, marshaler, message.PipeConfig{})
-	typedIn, _ := unmarshal.Pipe(ctx, input)
-
-	typedOut, _ := router.Pipe(ctx, typedIn)
-
-	// Typed output → raw, via marshal pipe.
-	marshal := message.NewMarshalPipe(marshaler, message.PipeConfig{})
-	output, _ := marshal.Pipe(ctx, typedOut)
+	output, _ := router.Pipe(ctx, input)
 
 	// Send a message with acking.
 	data, err := json.Marshal(CreateOrder{OrderID: "ORD-123", Amount: 99.99})

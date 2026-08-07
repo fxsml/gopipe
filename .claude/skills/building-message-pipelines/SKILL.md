@@ -12,12 +12,16 @@ user-invocable: false
 ## Architecture: Router Composition
 
 ```
-RawInput → UnmarshalPipe → Router → MarshalPipe → RawOutput
+RawInput → Router (handlers unmarshal/marshal internally) → RawOutput
 ```
 
-`Router` is a standalone component — compose it directly with
-[`NewUnmarshalPipe`]/[`NewMarshalPipe`] at the boundary where raw ([]byte) messages
-meet typed ones. Use `channel.Merge`/`channel.Switch` for fan-in/fan-out.
+`Router` is pure dispatch: it looks up a handler by CE type and calls `Handle`,
+never inspecting `Data`. `NewCommandHandler` marshals by default, so a `Router`
+built from command handlers can sit directly on raw broker/HTTP I/O. Set
+`CommandHandlerConfig.DisableMarshaler` per handler to operate typed-through
+instead, composing `NewUnmarshalPipe`/`NewMarshalPipe` explicitly at the
+boundary where raw ([]byte) messages meet typed ones. Use
+`channel.Merge`/`channel.Switch` for fan-in/fan-out.
 
 ## Router Configuration
 
@@ -46,7 +50,6 @@ router.AddHandler("handler-name", matcher, message.NewCommandHandler(
 ```go
 type Handler interface {
     EventType() string          // CE type for routing (e.g., "order.created")
-    NewInput() any              // Creates instance for unmarshaling
     Handle(ctx context.Context, msg *Message) ([]*Message, error)
 }
 ```
@@ -64,19 +67,18 @@ Operates on Attributes only (not `*Message`) to avoid wrapper allocation for raw
 ## Raw and Typed I/O
 
 ```go
-// Raw input ([]byte data) → typed, via unmarshal pipe
+// CommandHandler marshals by default — feed the router raw messages directly.
 rawInput := make(chan *message.Message, 10)
-unmarshal := message.NewUnmarshalPipe(router, message.NewJSONMarshaler(), message.PipeConfig{})
-typedInput, _ := unmarshal.Pipe(ctx, rawInput)
+rawOutput, _ := router.Pipe(ctx, rawInput)
 
-// Or feed the router directly with an already-typed channel, no marshaling:
-// typedInput := make(chan *message.Message, 10)
-
-typedOutput, _ := router.Pipe(ctx, typedInput)
-
-// Typed output → raw, via marshal pipe
-marshal := message.NewMarshalPipe(message.NewJSONMarshaler(), message.PipeConfig{})
-rawOutput, _ := marshal.Pipe(ctx, typedOutput)
+// DisableMarshaler: true opts a handler out, for typed-through composition
+// via explicit NewUnmarshalPipe/NewMarshalPipe stages at the boundary:
+//
+//	unmarshal := message.NewUnmarshalPipe(registry, message.NewJSONMarshaler(), message.PipeConfig{})
+//	typedInput, _ := unmarshal.Pipe(ctx, rawInput)
+//	typedOutput, _ := router.Pipe(ctx, typedInput)
+//	marshal := message.NewMarshalPipe(message.NewJSONMarshaler(), message.PipeConfig{})
+//	rawOutput, _ := marshal.Pipe(ctx, typedOutput)
 ```
 
 ## Event Type Naming
@@ -100,7 +102,7 @@ for range out {}  // Drain until closed
 
 ## Rejected Alternatives
 
-**Combined Marshaler with Registry** — rejected: single responsibility. Marshaler is pure serialization; `Handler.NewInput()` provides instances.
+**Combined Marshaler with Registry** — rejected: single responsibility. Marshaler is pure serialization; `CommandHandlerConfig` decides whether and how a handler marshals.
 
 **PipeHandler Interface** — rejected: over-engineering. `EventType()` returning `"*"` for multi-type is a hack.
 

@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **message:** `Marshaler.Marshal`/`Unmarshal` godoc now states an explicit contract: `Marshal` must not panic on nil `v` (representation is implementation-defined); `Unmarshal` must return an error rather than panic if `v` isn't a non-nil pointer, and must handle empty `data` deterministically (erroring vs. leaving `v` at zero value is implementation-defined, matching the wire format's own semantics — e.g. JSON has no valid empty document, but some formats like protobuf define empty as "defaults"). No behavior change to `JSONMarshaler`, which already satisfied this via `encoding/json`. `InputRegistry.NewInput`/`FactoryMap`'s godoc similarly now states factories must return a non-nil pointer, or nil only to signal an unknown event type. (#148)
 - **channel:** Renamed `Route` → `Switch` (breaking, pre-v1) — avoids naming collision with `message.Router`, which does event-type-based routing (a different mechanism). Behavior is unchanged. (#165)
 - **channel:** `ToSlice` now returns `<-chan []T` instead of blocking synchronously and returning `[]T` (breaking, pre-v1) — matches the rest of the package's "launch goroutine, return channel" convention. The returned channel is closed after the slice is sent, so both `slice := <-channel.ToSlice(in)` and `for slice := range channel.ToSlice(in)` work. (#163)
+- **message:** `Handler` interface drops `NewInput()`; `Router` no longer implements `InputRegistry` (breaking, pre-v1) — `Router` is now purely CE-type dispatch and never needs to know `Data`'s concrete Go type. `InputRegistry`/`FactoryMap`/`UnmarshalPipe`/`MarshalPipe` are unaffected and remain the right tool for explicit composition. See [ADR 0031](docs/adr/0031-handler-level-marshaling.md). (#149)
+- **message:** `NewCommandHandler` marshals by default (breaking, pre-v1) — `CommandHandlerConfig` gains `Marshaler` (default `NewJSONMarshaler()`), `DisableMarshaler`, and `Subject func(data any) string`. Input `Data` is now unmarshaled from raw `[]byte` and output `Data` marshaled to raw `[]byte`, unless `DisableMarshaler: true`, which preserves the exact prior typed-through behavior. Returns `ErrUnexpectedDataType` if `!DisableMarshaler` and input `Data` isn't raw. (#149)
 
 ### Removed
 
@@ -50,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **message:** `Engine`, `EngineConfig`, `Plugin` (zero real-world usage across a production reference repository and the `gopipe-azservicebus` broker adapter). Breaking change, pre-v1. Compose `Router` directly with `NewUnmarshalPipe`/`NewMarshalPipe` at the raw/typed boundary instead — see `message/README.md`. (#147)
 - **message:** `ErrInputRejected` (only used by `Engine`'s input matcher). Breaking change, pre-v1. (#147)
 - **message/cloudevents:** `SubscriberPlugin`, `PublisherPlugin` (pure `Engine`-wiring sugar). Breaking change, pre-v1. Use `Subscriber`/`Publisher` directly. (#147)
+- **message/middleware:** `Subject()` removed entirely (breaking, pre-v1) — depended on typed `Data`, which `Router`-level middleware can no longer safely assume. Its capability moves to `CommandHandlerConfig.Subject`, called on the typed output value before marshaling. (#149)
 
 ## [0.18.0] - 2026-04-10
 

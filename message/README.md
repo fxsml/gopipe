@@ -12,16 +12,27 @@ The `message` package provides:
 
 ## Router Composition
 
-`Router` is a standalone component: it takes a channel of typed `*Message`
-values and returns a channel of typed `*Message` values.
+`Router` is pure dispatch: it looks up a handler by CE type and calls
+`Handle`, never inspecting `Data` itself. It takes and returns a channel of
+`*Message` values whose `Data` may be raw `[]byte` or typed, depending
+entirely on the handlers registered.
+
+`NewCommandHandler` marshals by default, so a `Router` built entirely from
+command handlers can sit directly on raw broker/HTTP I/O:
 
 ```
-RawInput → UnmarshalPipe → Router → MarshalPipe → RawOutput
+RawInput → Router (handlers unmarshal/marshal internally) → RawOutput
 ```
 
-- **Router** routes messages to handlers by CE type
-- **UnmarshalPipe**/**MarshalPipe** convert `[]byte` ↔ typed data at the boundary
-  (skip them entirely for internal/typed-only messaging)
+Set `CommandHandlerConfig.DisableMarshaler` per handler to operate
+typed-through instead. `UnmarshalPipe`/`MarshalPipe` remain the right tool
+for explicit composition — e.g. naming decoupled from dispatch via an
+`InputRegistry`, or a `DisableMarshaler: true` handler feeding further typed
+processing before an eventual marshal stage:
+
+```
+RawInput → UnmarshalPipe → Router (typed-through) → MarshalPipe → RawOutput
+```
 
 For fan-in/fan-out across multiple inputs/outputs, compose with
 [`channel.Merge`](https://pkg.go.dev/github.com/fxsml/gopipe/channel#Merge) and
@@ -34,7 +45,7 @@ For fan-in/fan-out across multiple inputs/outputs, compose with
 ```go
 router := message.NewRouter(message.PipeConfig{})
 
-// Register handlers
+// Register handlers — marshaling is on by default
 handler := message.NewCommandHandler(
     func(ctx context.Context, cmd OrderCommand) ([]OrderEvent, error) {
         return []OrderEvent{{ID: cmd.ID, Status: "created"}}, nil
@@ -49,17 +60,9 @@ router.AddHandler("orders", nil, handler)
 ctx, cancel := context.WithCancel(context.Background())
 defer cancel()
 
-// Raw input → typed, via unmarshal pipe
+// Router takes/returns raw messages directly
 input := make(chan *message.Message, 100)
-marshaler := message.NewJSONMarshaler()
-unmarshal := message.NewUnmarshalPipe(router, marshaler, message.PipeConfig{})
-typedIn, _ := unmarshal.Pipe(ctx, input)
-
-typedOut, _ := router.Pipe(ctx, typedIn)
-
-// Typed output → raw, via marshal pipe
-marshal := message.NewMarshalPipe(marshaler, message.PipeConfig{})
-output, _ := marshal.Pipe(ctx, typedOut)
+output, _ := router.Pipe(ctx, input)
 
 // Send/receive raw messages (bytes)
 input <- message.NewRaw([]byte(`{"id": "123"}`), message.Attributes{"type": "order.command"}, nil)
@@ -73,14 +76,15 @@ out := <-output
 ```go
 router := message.NewRouter(message.PipeConfig{})
 
-// Register handlers
+// DisableMarshaler: true opts this handler out of marshal-by-default
 handler := message.NewCommandHandler(
     func(ctx context.Context, cmd OrderCommand) ([]OrderEvent, error) {
         return []OrderEvent{{ID: cmd.ID, Status: "created"}}, nil
     },
     message.CommandHandlerConfig{
-        Source: "/orders",
-        Naming: message.DotNaming,
+        Source:           "/orders",
+        Naming:           message.DotNaming,
+        DisableMarshaler: true,
     },
 )
 router.AddHandler("orders", nil, handler)
@@ -164,7 +168,11 @@ const (
 
 ### CommandHandler
 
-Processes commands and returns events:
+Processes commands and returns events. Unmarshals input from raw `[]byte`
+and marshals output to raw `[]byte` by default (`NewJSONMarshaler()`);
+set `DisableMarshaler: true` to operate typed-through instead. `Subject`,
+if set, derives the CE subject attribute from each typed output event,
+before marshaling:
 
 ```go
 handler := message.NewCommandHandler(
@@ -174,6 +182,9 @@ handler := message.NewCommandHandler(
     message.CommandHandlerConfig{
         Source: "/orders",
         Naming: message.DotNaming,
+        Subject: func(data any) string {
+            return data.(OrderCreated).OrderID
+        },
     },
 )
 ```
@@ -183,7 +194,6 @@ handler := message.NewCommandHandler(
 ```go
 type Handler interface {
     EventType() string
-    NewInput() any
     Handle(ctx context.Context, msg *Message) ([]*Message, error)
 }
 ```
