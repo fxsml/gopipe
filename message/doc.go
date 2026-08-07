@@ -23,25 +23,31 @@
 //	)
 //	router.AddHandler("orders", nil, handler)
 //
-//	output, _ := router.Pipe(ctx, inputCh)
+//	output, _ := router.Pipe(ctx, rawInputCh)
 //
 // # Architecture
 //
-// [Router] is a standalone component: it takes a channel of typed [Message]
-// values and returns a channel of typed [Message] values. For raw ([]byte)
-// I/O — broker integration, HTTP — compose [NewUnmarshalPipe] and
-// [NewMarshalPipe] at the boundary:
+// [Router] is pure dispatch: it looks up a handler by CE type and calls
+// [Handler.Handle], never inspecting Data itself. It takes and returns a
+// channel of [Message] values whose Data may be raw []byte or typed,
+// depending entirely on the handlers registered.
 //
-//	rawIn → NewUnmarshalPipe → Router → NewMarshalPipe → rawOut
+// [NewCommandHandler] marshals by default: input Data is unmarshaled from
+// raw []byte and output Data is marshaled back to raw []byte, so a Router
+// built entirely from command handlers can sit directly on raw broker/HTTP
+// I/O. Set [CommandHandlerConfig.DisableMarshaler] per handler to operate
+// typed-through instead — e.g. to feed further typed processing before an
+// explicit [NewMarshalPipe] stage, or when naming needs to be decoupled from
+// dispatch via [NewUnmarshalPipe]/[NewMarshalPipe] and an [InputRegistry].
 //
 // See README.md in this package for a worked example.
 //
 // # Design Notes
 //
-// Handler is self-describing via [Handler.EventType] and [Handler.NewInput],
-// eliminating the need for a central type registry. [Router] and
-// [UnmarshalPipe] read these methods to route messages and create instances
-// for unmarshaling.
+// [Handler] is self-describing via [Handler.EventType], eliminating the need
+// for a central type registry — [Router] reads it to dispatch. Marshaling
+// is a per-handler concern ([CommandHandlerConfig]), not Router's: Router
+// never needs to know Data's concrete Go type to dispatch by CE type.
 //
 // [Matcher.Match] uses [Attributes] instead of *Message because all matchers
 // only access attributes, avoiding allocation when matching raw messages.

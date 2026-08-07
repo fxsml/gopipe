@@ -7,7 +7,7 @@
 | [pipe-metrics](pipe-metrics.md) | Pipeline Metrics | Complete |
 | [locals](locals.md) | Message Locals | Implemented |
 | [engine-removal](engine-removal.md) | Remove Message Engine | Proposed |
-| [marshaling-strategy](marshaling-strategy.md) | Raw-by-Default Message Contract (Router) | In Progress |
+| [marshaling-strategy](marshaling-strategy.md) | Raw-by-Default Message Contract (Router) | Complete |
 | [0007](0007-cesql-pattern-matching.md) | CESQL Pattern Matching | Proposed |
 | [transaction-handling](transaction-handling.md) | Transaction Handling | Proposed |
 | [inbox-outbox](inbox-outbox.md) | Inbox/Outbox Pattern | Proposed |

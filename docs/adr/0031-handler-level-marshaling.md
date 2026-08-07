@@ -1,7 +1,7 @@
 # ADR 0031: Marshaling Lives in CommandHandler, Not Router
 
 **Date:** 2026-07-27
-**Status:** Proposed
+**Status:** Implemented
 
 ## Context
 
