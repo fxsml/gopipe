@@ -21,7 +21,7 @@ func TestRouter_BasicRouting(t *testing.T) {
 		}, nil
 	}, DotNaming)
 
-	_ = router.AddHandler("", nil, handler)
+	_ = router.AddHandler("", handler)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -86,56 +86,6 @@ func TestRouter_NoHandler(t *testing.T) {
 	}
 }
 
-func TestRouter_HandlerMatcher(t *testing.T) {
-	var handledErr error
-	router := NewRouter(PipeConfig{
-		ErrorHandler: func(msg *Message, err error) {
-			handledErr = err
-		},
-	})
-
-	handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
-		return []*Message{{Data: msg.Data, Attributes: msg.Attributes}}, nil
-	}, DotNaming)
-
-	// Add handler with matcher that rejects messages without "allowed" attribute
-	_ = router.AddHandler("", matcherFunc(func(attrs Attributes) bool {
-		_, ok := attrs["allowed"]
-		return ok
-	}), handler)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	in := make(chan *Message, 2)
-	// This one will be rejected by matcher
-	in <- &Message{
-		Data:       &TestCommand{ID: "1", Name: "rejected"},
-		Attributes: Attributes{"type": "test.command"},
-	}
-	// This one will pass
-	in <- &Message{
-		Data:       &TestCommand{ID: "2", Name: "allowed"},
-		Attributes: Attributes{"type": "test.command", "allowed": true},
-	}
-	close(in)
-
-	out, _ := router.Pipe(ctx, in)
-
-	var received []*Message
-	for msg := range out {
-		received = append(received, msg)
-	}
-
-	if len(received) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(received))
-	}
-
-	if !errors.Is(handledErr, ErrHandlerRejected) {
-		t.Errorf("expected ErrHandlerRejected, got %v", handledErr)
-	}
-}
-
 func TestRouter_HandlerError(t *testing.T) {
 	testErr := errors.New("handler error")
 	var handledErr error
@@ -150,7 +100,7 @@ func TestRouter_HandlerError(t *testing.T) {
 		return nil, testErr
 	}, DotNaming)
 
-	_ = router.AddHandler("", nil, handler)
+	_ = router.AddHandler("", handler)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -185,7 +135,7 @@ func TestRouter_MultipleOutputs(t *testing.T) {
 		}, nil
 	}, DotNaming)
 
-	_ = router.AddHandler("", nil, handler)
+	_ = router.AddHandler("", handler)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -216,7 +166,7 @@ func TestRouter_ContextCancellation(t *testing.T) {
 		return []*Message{{Data: msg.Data, Attributes: msg.Attributes}}, nil
 	}, DotNaming)
 
-	_ = router.AddHandler("", nil, handler)
+	_ = router.AddHandler("", handler)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -273,7 +223,7 @@ func TestRouter_Standalone(t *testing.T) {
 		}, nil
 	}, DotNaming)
 
-	_ = router.AddHandler("", nil, handler)
+	_ = router.AddHandler("", handler)
 
 	ctx := context.Background()
 	in := make(chan *Message, 1)
@@ -444,8 +394,8 @@ func TestRouter_DuplicateHandler(t *testing.T) {
 		return nil, nil
 	}, DotNaming)
 
-	_ = router.AddHandler("test1", nil, handler1)
-	err := router.AddHandler("test2", nil, handler2)
+	_ = router.AddHandler("test1", handler1)
+	err := router.AddHandler("test2", handler2)
 	if !errors.Is(err, ErrHandlerExists) {
 		t.Errorf("expected ErrHandlerExists, got %v", err)
 	}
@@ -489,7 +439,7 @@ func TestRouter_AckStrategy_Default(t *testing.T) {
 		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 			return nil, nil // Success
 		}, DotNaming)
-		_ = router.AddHandler("", nil, handler)
+		_ = router.AddHandler("", handler)
 
 		ctx := context.Background()
 		in := make(chan *Message, 1)
@@ -521,7 +471,7 @@ func TestRouter_AckStrategy_Default(t *testing.T) {
 		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 			return nil, errors.New("handler error")
 		}, DotNaming)
-		_ = router.AddHandler("", nil, handler)
+		_ = router.AddHandler("", handler)
 
 		ctx := context.Background()
 		in := make(chan *Message, 1)
@@ -556,7 +506,7 @@ func TestRouter_AckStrategy_Manual(t *testing.T) {
 			msg.Ack() // Manual ack
 			return nil, nil
 		}, DotNaming)
-		_ = router.AddHandler("", nil, handler)
+		_ = router.AddHandler("", handler)
 
 		ctx := context.Background()
 		in := make(chan *Message, 1)
@@ -585,7 +535,7 @@ func TestRouter_AckStrategy_Manual(t *testing.T) {
 		handler := NewHandler[TestCommand](func(ctx context.Context, msg *Message) ([]*Message, error) {
 			return nil, errors.New("handler error")
 		}, DotNaming)
-		_ = router.AddHandler("", nil, handler)
+		_ = router.AddHandler("", handler)
 
 		ctx := context.Background()
 		in := make(chan *Message, 1)
@@ -619,7 +569,7 @@ func TestRouter_AckStrategy_Forward(t *testing.T) {
 				{Data: "out2", Attributes: Attributes{"type": "output"}},
 			}, nil
 		}, DotNaming)
-		_ = router.AddHandler("", nil, handler)
+		_ = router.AddHandler("", handler)
 
 		ctx := context.Background()
 		in := make(chan *Message, 1)
@@ -663,7 +613,7 @@ func TestRouter_AckStrategy_Forward(t *testing.T) {
 				{Data: "out2", Attributes: Attributes{"type": "output"}},
 			}, nil
 		}, DotNaming)
-		_ = router.AddHandler("", nil, handler)
+		_ = router.AddHandler("", handler)
 
 		ctx := context.Background()
 		in := make(chan *Message, 1)
@@ -715,7 +665,7 @@ func TestRouter_AckingMiddleware_Outermost(t *testing.T) {
 			order = append(order, "handler")
 			return nil, nil
 		}, DotNaming)
-		_ = router.AddHandler("", nil, handler)
+		_ = router.AddHandler("", handler)
 
 		ctx := context.Background()
 		in := make(chan *Message, 1)
@@ -765,7 +715,7 @@ func TestRouter_ProcessTimeout(t *testing.T) {
 			}
 		}, DotNaming)
 
-		_ = router.AddHandler("", nil, handler)
+		_ = router.AddHandler("", handler)
 
 		ctx := context.Background()
 		in := make(chan *Message, 1)
@@ -806,7 +756,7 @@ func TestRouter_ProcessTimeout(t *testing.T) {
 			}}, nil
 		}, DotNaming)
 
-		_ = router.AddHandler("", nil, handler)
+		_ = router.AddHandler("", handler)
 
 		ctx := context.Background()
 		in := make(chan *Message, 1)
@@ -846,7 +796,7 @@ func TestRouter_ProcessTimeout(t *testing.T) {
 			}}, nil
 		}, DotNaming)
 
-		_ = router.AddHandler("", nil, handler)
+		_ = router.AddHandler("", handler)
 
 		ctx := context.Background()
 		in := make(chan *Message, 1)
@@ -891,7 +841,7 @@ func TestRouter_ProcessTimeout(t *testing.T) {
 			}
 		}, DotNaming)
 
-		_ = router.AddHandler("", nil, handler)
+		_ = router.AddHandler("", handler)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		in := make(chan *Message, 1)
@@ -942,7 +892,7 @@ func TestRouter_Stats_BeforeStart(t *testing.T) {
 func TestRouter_Stats_AfterStart(t *testing.T) {
 	t.Parallel()
 	r := NewRouter(PipeConfig{Pool: PoolConfig{BufferSize: 8}})
-	_ = r.AddHandler("", nil, NewHandler[TestCommand](func(_ context.Context, _ *Message) ([]*Message, error) {
+	_ = r.AddHandler("", NewHandler[TestCommand](func(_ context.Context, _ *Message) ([]*Message, error) {
 		return nil, nil
 	}, DotNaming))
 
@@ -964,7 +914,7 @@ func TestRouter_Stats_AfterStart(t *testing.T) {
 func TestRouter_Stats_ConcurrentWithPipe(t *testing.T) {
 	// Run with -race to detect concurrent read/write on r.inner.
 	r := NewRouter(PipeConfig{Pool: PoolConfig{BufferSize: 4}})
-	_ = r.AddHandler("", nil, NewHandler[TestCommand](func(_ context.Context, _ *Message) ([]*Message, error) {
+	_ = r.AddHandler("", NewHandler[TestCommand](func(_ context.Context, _ *Message) ([]*Message, error) {
 		return nil, nil
 	}, DotNaming))
 

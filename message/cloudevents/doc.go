@@ -19,7 +19,7 @@
 //	rawIn, _ := sub.Subscribe(ctx)
 //
 //	router := message.NewRouter(message.PipeConfig{})
-//	router.AddHandler("orders", nil, handler)
+//	router.AddHandler("orders", handler)
 //
 //	unmarshal := message.NewUnmarshalPipe(router, message.NewJSONMarshaler(), message.PipeConfig{})
 //	typedIn, _ := unmarshal.Pipe(ctx, rawIn)

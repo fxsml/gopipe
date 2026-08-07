@@ -23,7 +23,7 @@ make check  # All of the above
 | Context | Pattern | Example |
 |---------|---------|---------|
 | Constructors | Config struct | `NewRouter(PipeConfig{})` |
-| Methods | Direct parameters | `AddHandler("name", matcher, h)` |
+| Methods | Direct parameters | `AddHandler("name", h)` |
 | Optional filtering | `nil` = match all | `AddOutput("out", nil)` |
 
 ## Godoc Standards
@@ -99,7 +99,7 @@ Handler should NOT own its name — name is a wiring concern:
 type Handler interface { Name() string }
 
 // CORRECT - name is parameter to AddHandler
-router.AddHandler("process-orders", matcher, handler)
+router.AddHandler("process-orders", handler)
 ```
 
 ### Copy() sharing Attributes map

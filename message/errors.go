@@ -12,9 +12,6 @@ var (
 	// ErrNoHandler is returned when no handler exists for a message type.
 	ErrNoHandler = errors.New("no handler for message type")
 
-	// ErrHandlerRejected is returned when a message is rejected by handler matcher.
-	ErrHandlerRejected = errors.New("message rejected by handler matcher")
-
 	// ErrUnknownType is returned when unmarshaling a message with unknown type.
 	ErrUnknownType = errors.New("unknown message type")
 

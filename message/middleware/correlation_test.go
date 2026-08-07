@@ -44,7 +44,7 @@ func TestCorrelationID(t *testing.T) {
 			}, nil
 		}, message.DotNaming)
 
-		if err := router.AddHandler("test", nil, handler); err != nil {
+		if err := router.AddHandler("test", handler); err != nil {
 			t.Fatalf("AddHandler failed: %v", err)
 		}
 
@@ -100,7 +100,7 @@ func TestCorrelationID(t *testing.T) {
 			}, nil
 		}, message.DotNaming)
 
-		if err := router.AddHandler("test", nil, handler); err != nil {
+		if err := router.AddHandler("test", handler); err != nil {
 			t.Fatalf("AddHandler failed: %v", err)
 		}
 
@@ -138,7 +138,7 @@ func TestUse_AfterStart(t *testing.T) {
 	handler := message.NewHandler[TestCommand](func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		return nil, nil
 	}, message.DotNaming)
-	_ = router.AddHandler("test", nil, handler)
+	_ = router.AddHandler("test", handler)
 
 	input := make(chan *message.Message)
 

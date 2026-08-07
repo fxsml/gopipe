@@ -27,7 +27,7 @@ pub := cloudevents.NewPublisher(sender, cloudevents.PublisherConfig{})
 
 // Wire raw input through Router via unmarshal/marshal pipes
 router := message.NewRouter(message.PipeConfig{})
-router.AddHandler("orders", nil, handler)
+router.AddHandler("orders", handler)
 
 rawIn, _ := sub.Subscribe(ctx)
 unmarshal := message.NewUnmarshalPipe(router, message.NewJSONMarshaler(), message.PipeConfig{})

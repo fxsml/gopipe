@@ -63,7 +63,7 @@ func basicRouting() {
 			Naming: message.DotNaming, // CreateOrder → "create.order"
 		},
 	)
-	router.AddHandler("process-order", nil, handler)
+	router.AddHandler("process-order", handler)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -131,7 +131,7 @@ func pureHeterogeneousHandler() {
 		Source: "/seeding",
 		Naming: message.DotNaming, // ExpiredEvent → "expired.event"
 	})
-	router.AddHandler("expired-transform", nil, handler)
+	router.AddHandler("expired-transform", handler)
 	_ = router.Use(middleware.CorrelationID())
 
 	ctx, cancel := context.WithCancel(context.Background())

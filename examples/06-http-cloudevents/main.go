@@ -56,7 +56,7 @@ func main() {
 
 	// Setup router with handler: OrderCreated → OrderConfirmed
 	router := message.NewRouter(message.PipeConfig{})
-	router.AddHandler("process-order", nil, message.NewCommandHandler(
+	router.AddHandler("process-order", message.NewCommandHandler(
 		func(ctx context.Context, order OrderCreated) ([]OrderConfirmed, error) {
 			fmt.Printf("Processing: %s ($%d)\n", order.OrderID, order.Amount)
 			return []OrderConfirmed{{

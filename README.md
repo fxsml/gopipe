@@ -59,7 +59,7 @@ handler := message.NewCommandHandler(
     },
     message.CommandHandlerConfig{Source: "/orders"},
 )
-router.AddHandler("orders", nil, handler)
+router.AddHandler("orders", handler)
 
 output, _ := router.Pipe(ctx, input)
 ```

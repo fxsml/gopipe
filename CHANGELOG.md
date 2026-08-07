@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **message:** `ErrInputRejected` (only used by `Engine`'s input matcher). Breaking change, pre-v1. (#147)
 - **message/cloudevents:** `SubscriberPlugin`, `PublisherPlugin` (pure `Engine`-wiring sugar). Breaking change, pre-v1. Use `Subscriber`/`Publisher` directly. (#147)
 - **message/middleware:** `Subject()` removed entirely (breaking, pre-v1) — depended on typed `Data`, which `Router`-level middleware can no longer safely assume. Its capability moves to `CommandHandlerConfig.Subject`, called on the typed output value before marshaling. (#149)
+- **message:** `Router.AddHandler`'s `matcher Matcher` parameter (`AddHandler(name string, h Handler) error`, was `AddHandler(name string, matcher Matcher, h Handler) error`); `ErrHandlerRejected`. This was `Engine`-inherited plumbing with zero real (non-test) call sites — every consumer passed `nil`. Breaking change, pre-v1. Filter inside the handler's own `Handle()` (or command function, via `MessageFromContext(ctx).Attributes`) instead. (#152)
 
 ## [0.18.0] - 2026-04-10
 

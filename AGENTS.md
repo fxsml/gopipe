@@ -96,7 +96,7 @@ TypedInputs ───────────┘                          │
 | Context | Pattern | Example |
 |---------|---------|---------|
 | Constructors | Config struct | `NewRouter(PipeConfig{})` |
-| Methods | Direct parameters | `AddHandler("name", matcher, h)` |
+| Methods | Direct parameters | `AddHandler("name", h)` |
 | Optional filtering | `nil` = match all | `AddOutput("out", nil)` |
 
 ### Matcher Interface
@@ -168,7 +168,7 @@ Handler should NOT own its name. Name is a wiring concern handled by Router:
 type Handler interface { Name() string }
 
 // CORRECT - name is parameter to AddHandler
-engine.AddHandler("process-orders", matcher, handler)
+router.AddHandler("process-orders", handler)
 ```
 
 ### ❌ Copy() sharing Attributes map
