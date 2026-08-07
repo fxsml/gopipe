@@ -24,4 +24,8 @@ var (
 	// ErrCommandDataMismatch is returned when a commandHandler's message data is nil
 	// or does not type-assert to the expected command type.
 	ErrCommandDataMismatch = errors.New("command data type mismatch")
+
+	// ErrUnexpectedDataType is returned when Data is raw when typed was
+	// expected, or already-typed when raw was expected — a composition bug.
+	ErrUnexpectedDataType = errors.New("unexpected data type")
 )

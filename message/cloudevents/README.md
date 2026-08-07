@@ -66,10 +66,10 @@ pub.Publish(ctx, outCh)
 For manual conversion between formats:
 
 ```go
-// CloudEvents Event -> RawMessage
+// CloudEvents Event -> Message (raw []byte Data)
 raw, err := cloudevents.FromCloudEvent(event, acking)
 
-// RawMessage -> CloudEvents Event
+// Message (raw []byte Data) -> CloudEvents Event
 event, err := cloudevents.ToCloudEvent(raw)
 ```
 

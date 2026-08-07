@@ -781,7 +781,7 @@ func TestAckingEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("TypedMessage works with custom types", func(t *testing.T) {
+	t.Run("Message works with custom types", func(t *testing.T) {
 		type CustomData struct {
 			ID   int
 			Name string
@@ -789,10 +789,11 @@ func TestAckingEdgeCases(t *testing.T) {
 
 		var acked bool
 		acking := NewAcking(func() { acked = true }, func(error) {})
-		msg := NewTyped(CustomData{ID: 1, Name: "test"}, nil, acking)
+		msg := New(CustomData{ID: 1, Name: "test"}, nil, acking)
 
-		if msg.Data.ID != 1 {
-			t.Errorf("Data.ID = %d, want 1", msg.Data.ID)
+		data := msg.Data.(CustomData)
+		if data.ID != 1 {
+			t.Errorf("Data.ID = %d, want 1", data.ID)
 		}
 
 		msg.Ack()
@@ -850,7 +851,7 @@ func TestAckingEdgeCases(t *testing.T) {
 	})
 }
 
-// TestMessageContextHelpers tests MessageFromContext and RawMessageFromContext.
+// TestMessageContextHelpers tests MessageFromContext.
 func TestMessageContextHelpers(t *testing.T) {
 	t.Run("MessageFromContext returns message", func(t *testing.T) {
 		acking := NewAcking(func() {}, func(error) {})
@@ -877,28 +878,6 @@ func TestMessageContextHelpers(t *testing.T) {
 		got := MessageFromContext(ctx)
 		if got != msg {
 			t.Errorf("MessageFromContext() = %v, want %v", got, msg)
-		}
-	})
-
-	t.Run("RawMessageFromContext returns raw message", func(t *testing.T) {
-		acking := NewAcking(func() {}, func(error) {})
-		msg := NewRaw([]byte("raw data"), Attributes{"type": "raw.test"}, acking)
-		ctx := msg.Context(context.Background())
-
-		got := RawMessageFromContext(ctx)
-		if got != msg {
-			t.Errorf("RawMessageFromContext() = %v, want %v", got, msg)
-		}
-	})
-
-	t.Run("RawMessageFromContext returns nil for Message", func(t *testing.T) {
-		acking := NewAcking(func() {}, func(error) {})
-		msg := New("not raw", nil, acking)
-		ctx := msg.Context(context.Background())
-
-		got := RawMessageFromContext(ctx)
-		if got != nil {
-			t.Errorf("RawMessageFromContext() for Message = %v, want nil", got)
 		}
 	})
 

@@ -33,12 +33,12 @@ type SubscriberConfig struct {
 	// If it returns a non-nil error, all messages are nacked and the error
 	// is returned as the HTTP response. Errors implementing StatusCoder
 	// control the HTTP status; otherwise 400 is used.
-	Validator func(*http.Request, []*message.RawMessage) error
+	Validator func(*http.Request, []*message.Message) error
 
 	// Enricher is called after Validator and before channel delivery.
 	// Use it to bridge HTTP request data into message locals (e.g., auth claims).
 	// Receives the full message slice for the request.
-	Enricher func(*http.Request, []*message.RawMessage)
+	Enricher func(*http.Request, []*message.Message)
 
 	// ErrorHandler is called when a message is nacked after delivery.
 	// It has full control over the HTTP response written to w.
@@ -94,7 +94,7 @@ func DefaultNackHandler(w http.ResponseWriter, r *http.Request, err error) {
 // message locals.
 type Subscriber struct {
 	mu         sync.RWMutex
-	ch         chan *message.RawMessage
+	ch         chan *message.Message
 	done       chan struct{}
 	wg         sync.WaitGroup
 	subscribed bool
@@ -114,13 +114,13 @@ func NewSubscriber(cfg SubscriberConfig) *Subscriber {
 //
 // Subscribe can only be called once. Multiple consumers can read from the
 // returned channel concurrently (competing consumers pattern).
-func (s *Subscriber) Subscribe(ctx context.Context) (<-chan *message.RawMessage, error) {
+func (s *Subscriber) Subscribe(ctx context.Context) (<-chan *message.Message, error) {
 	s.mu.Lock()
 	if s.subscribed {
 		s.mu.Unlock()
 		return nil, errors.New("already subscribed")
 	}
-	s.ch = make(chan *message.RawMessage, s.cfg.BufferSize)
+	s.ch = make(chan *message.Message, s.cfg.BufferSize)
 	s.done = make(chan struct{})
 	s.subscribed = true
 	s.mu.Unlock()
@@ -202,7 +202,7 @@ func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		len(events),
 	)
 
-	msgs := make([]*message.RawMessage, 0, len(events))
+	msgs := make([]*message.Message, 0, len(events))
 	for i := range events {
 		msg, err := ce.FromCloudEvent(&events[i], shared)
 		if err != nil {

@@ -51,7 +51,7 @@ type PublisherConfig struct {
 	BatchDuration time.Duration
 
 	// ErrorHandler is called on send errors.
-	ErrorHandler func(msg *message.RawMessage, err error)
+	ErrorHandler func(msg *message.Message, err error)
 
 	// Logger for structured logging.
 	Logger message.Logger
@@ -107,7 +107,7 @@ func NewPublisher(cfg PublisherConfig) *Publisher {
 // Send sends a single CloudEvent synchronously.
 // Uses binary mode by default, or structured mode if configured.
 // Calls msg.Ack() on success (HTTP 2xx), msg.Nack(err) on failure.
-func (p *Publisher) Send(ctx context.Context, msg *message.RawMessage) error {
+func (p *Publisher) Send(ctx context.Context, msg *message.Message) error {
 	event, err := ce.ToCloudEvent(msg)
 	if err != nil {
 		msg.Nack(err)
@@ -154,7 +154,7 @@ func (p *Publisher) Send(ctx context.Context, msg *message.RawMessage) error {
 //
 // Batch semantics: If any message fails conversion or the batch HTTP request fails,
 // all messages in the batch are nacked with the same error.
-func (p *Publisher) SendBatch(ctx context.Context, msgs []*message.RawMessage) error {
+func (p *Publisher) SendBatch(ctx context.Context, msgs []*message.Message) error {
 	if len(msgs) == 0 {
 		return nil
 	}
@@ -214,7 +214,7 @@ func (p *Publisher) SendBatch(ctx context.Context, msgs []*message.RawMessage) e
 // Uses batch mode internally for consistent middleware support.
 // When BatchSize=1 (default), messages are sent individually using Send for efficiency.
 // Returns a done channel that closes when all messages are sent.
-func (p *Publisher) Publish(ctx context.Context, in <-chan *message.RawMessage) (<-chan struct{}, error) {
+func (p *Publisher) Publish(ctx context.Context, in <-chan *message.Message) (<-chan struct{}, error) {
 	p.mu.Lock()
 	if p.started {
 		p.mu.Unlock()
@@ -228,8 +228,8 @@ func (p *Publisher) Publish(ctx context.Context, in <-chan *message.RawMessage) 
 
 // publishBatch batches messages and sends as CloudEvents batch format.
 // When batch size is 1, uses Send for efficiency (binary mode, less overhead).
-func (p *Publisher) publishBatch(ctx context.Context, in <-chan *message.RawMessage) (<-chan struct{}, error) {
-	batchPipe := pipe.NewBatchPipe(func(ctx context.Context, batch []*message.RawMessage) ([]struct{}, error) {
+func (p *Publisher) publishBatch(ctx context.Context, in <-chan *message.Message) (<-chan struct{}, error) {
+	batchPipe := pipe.NewBatchPipe(func(ctx context.Context, batch []*message.Message) ([]struct{}, error) {
 		var err error
 		if len(batch) == 1 {
 			// Use Send for single messages (more efficient binary mode)
@@ -244,7 +244,7 @@ func (p *Publisher) publishBatch(ctx context.Context, in <-chan *message.RawMess
 		Config: pipe.Config{
 			Concurrency: p.cfg.Concurrency,
 			ErrorHandler: func(in any, err error) {
-				batch, _ := in.([]*message.RawMessage)
+				batch, _ := in.([]*message.Message)
 				p.logger.Error("Batch send failed",
 					"component", "http-publisher",
 					"error", err,

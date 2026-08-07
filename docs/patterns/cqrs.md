@@ -70,7 +70,7 @@ router := message.NewRouter(message.PipeConfig{})
 router.AddHandler("create-order", nil, createOrderHandler)
 router.AddHandler("order-projection", nil, orderCreatedHandler)
 
-input := make(chan *message.RawMessage)
+input := make(chan *message.Message)
 marshaler := message.NewJSONMarshaler()
 unmarshal := message.NewUnmarshalPipe(router, marshaler, message.PipeConfig{})
 typedIn, _ := unmarshal.Pipe(ctx, input)

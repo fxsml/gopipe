@@ -91,7 +91,7 @@ func main() {
 		TargetURL:     "http://localhost:9000/confirmations", // External service
 		BatchSize:     10,
 		BatchDuration: time.Second,
-		ErrorHandler: func(msg *message.RawMessage, err error) {
+		ErrorHandler: func(msg *message.Message, err error) {
 			log.Printf("Send failed (id=%v): %v", msg.ID(), err)
 		},
 	})

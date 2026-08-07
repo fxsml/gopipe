@@ -21,7 +21,7 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0007](0007-public-message-fields.md) | Public Message Fields | Implemented |
 | [0008](0008-remove-properties-thread-safety.md) | Remove Properties Thread Safety | Implemented |
 | [0009](0009-remove-noisy-properties.md) | Remove Noisy Properties | Implemented |
-| [0010](0010-dual-message-types.md) | Dual Message Types | Implemented |
+| [0010](0010-dual-message-types.md) | Dual Message Types | Superseded by ADR 0033 |
 | [0011](0011-cqrs-implementation.md) | CQRS Implementation | Implemented |
 | [0012](0012-pubsub-package-structure.md) | Pub/Sub Package Structure | Implemented |
 | [0013](0013-multiplex-pubsub.md) | Multiplex Pub/Sub | Implemented |
@@ -44,6 +44,7 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0030](0030-drop-merger-distributor-matcher.md) | Drop Merger, Distributor, and Matcher | Proposed |
 | [0031](0031-handler-level-marshaling.md) | Marshaling Lives in CommandHandler, Not Router | Proposed |
 | [0032](0032-remove-message-engine.md) | Remove Message Engine | Implemented |
+| [0033](0033-message-struct-simplification.md) | Message Struct Simplification | Implemented |
 
 ## History
 

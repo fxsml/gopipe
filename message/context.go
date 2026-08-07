@@ -8,8 +8,7 @@ import (
 type contextKey string
 
 const (
-	messageKey    contextKey = "message.message"
-	rawMessageKey contextKey = "message.raw_message"
+	messageKey contextKey = "message.message"
 )
 
 // messageContext is a custom context that reports message expiry as deadline
@@ -20,7 +19,7 @@ const (
 // the effective deadline via ctx.Deadline().
 type messageContext struct {
 	context.Context
-	msg    any // *Message or *RawMessage
+	msg    *Message
 	expiry time.Time
 }
 
@@ -44,15 +43,7 @@ func (c *messageContext) Deadline() (time.Time, bool) {
 func (c *messageContext) Value(key any) any {
 	switch key {
 	case messageKey:
-		if msg, ok := c.msg.(*Message); ok {
-			return msg
-		}
-		return nil
-	case rawMessageKey:
-		if msg, ok := c.msg.(*RawMessage); ok {
-			return msg
-		}
-		return nil
+		return c.msg
 	default:
 		return c.Context.Value(key)
 	}
@@ -72,15 +63,4 @@ func MessageFromContext(ctx context.Context) *Message {
 // FromContext is an alias for MessageFromContext.
 func FromContext(ctx context.Context) *Message {
 	return MessageFromContext(ctx)
-}
-
-// RawMessageFromContext retrieves the RawMessage from context.
-// Returns nil if no raw message is present.
-func RawMessageFromContext(ctx context.Context) *RawMessage {
-	v := ctx.Value(rawMessageKey)
-	if v == nil {
-		return nil
-	}
-	msg, _ := v.(*RawMessage)
-	return msg
 }

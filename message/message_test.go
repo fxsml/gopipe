@@ -53,34 +53,73 @@ func TestNew(t *testing.T) {
 	})
 }
 
-func TestNewTyped(t *testing.T) {
-	t.Run("creates typed message", func(t *testing.T) {
-		msg := NewTyped("hello", Attributes{"key": "value"}, nil)
-		if msg.Data != "hello" {
-			t.Errorf("expected data hello, got %v", msg.Data)
+func TestRaw(t *testing.T) {
+	t.Run("reports true and returns bytes for raw data", func(t *testing.T) {
+		data := []byte(`{"id":123}`)
+		msg := NewRaw(data, Attributes{"type": "test"}, nil)
+
+		got, ok := msg.Raw()
+		if !ok {
+			t.Fatal("expected ok=true for []byte Data")
 		}
-		if msg.Attributes["key"] != "value" {
-			t.Errorf("expected attribute key=value, got %v", msg.Attributes["key"])
+		if string(got) != string(data) {
+			t.Errorf("expected data %s, got %s", data, got)
+		}
+		if msg.Type() != "test" {
+			t.Errorf("expected type test, got %v", msg.Type())
 		}
 	})
 
-	t.Run("creates empty attributes when nil", func(t *testing.T) {
-		msg := NewTyped(123, nil, nil)
-		if msg.Attributes == nil {
-			t.Error("expected non-nil attributes map")
+	t.Run("reports false for typed data", func(t *testing.T) {
+		msg := New("hello", nil, nil)
+
+		_, ok := msg.Raw()
+		if ok {
+			t.Error("expected ok=false for non-[]byte Data")
+		}
+	})
+
+	t.Run("with acking for broker integration", func(t *testing.T) {
+		acked := false
+		msg := NewRaw([]byte("data"), nil, NewAcking(func() { acked = true }, func(error) {}))
+
+		msg.Ack()
+		if !acked {
+			t.Error("expected ack callback to be invoked")
 		}
 	})
 }
 
 func TestNewRaw(t *testing.T) {
-	t.Run("creates raw message", func(t *testing.T) {
+	t.Run("creates a message satisfying Raw()", func(t *testing.T) {
 		data := []byte(`{"id":123}`)
 		msg := NewRaw(data, Attributes{"type": "test"}, nil)
-		if string(msg.Data) != string(data) {
-			t.Errorf("expected data %s, got %s", data, msg.Data)
+
+		got, ok := msg.Raw()
+		if !ok {
+			t.Fatal("expected ok=true for NewRaw-constructed message")
 		}
-		if msg.Type() != "test" {
-			t.Errorf("expected type test, got %v", msg.Type())
+		if string(got) != string(data) {
+			t.Errorf("expected data %s, got %s", data, got)
+		}
+	})
+
+	t.Run("nil raw still satisfies Raw() (no payload)", func(t *testing.T) {
+		msg := NewRaw(nil, Attributes{"type": "heartbeat"}, nil)
+
+		got, ok := msg.Raw()
+		if !ok {
+			t.Fatal("expected ok=true for nil []byte passed through NewRaw")
+		}
+		if got != nil {
+			t.Errorf("expected nil data, got %v", got)
+		}
+	})
+
+	t.Run("creates empty attributes when nil", func(t *testing.T) {
+		msg := NewRaw([]byte("data"), nil, nil)
+		if msg.Attributes == nil {
+			t.Error("expected non-nil attributes map")
 		}
 	})
 
@@ -188,7 +227,7 @@ func TestAcking(t *testing.T) {
 	})
 
 	t.Run("nil acking returns false", func(t *testing.T) {
-		msg := NewTyped[string]("data", nil, nil)
+		msg := New("data", nil, nil)
 		if msg.Ack() {
 			t.Error("expected Ack to return false with nil acking")
 		}
@@ -280,7 +319,7 @@ func TestString(t *testing.T) {
 
 	t.Run("embeds valid JSON bytes as raw JSON", func(t *testing.T) {
 		data := []byte(`{"orderId":"123","amount":50}`)
-		msg := New(data, Attributes{"type": "order.created"}, nil)
+		msg := NewRaw(data, Attributes{"type": "order.created"}, nil)
 		s := msg.String()
 
 		// Should contain the raw JSON, not base64 encoded
@@ -304,7 +343,7 @@ func TestString(t *testing.T) {
 
 	t.Run("handles invalid JSON bytes", func(t *testing.T) {
 		data := []byte("not json")
-		msg := New(data, nil, nil)
+		msg := NewRaw(data, nil, nil)
 		s := msg.String()
 
 		// Should still produce valid JSON output
@@ -343,7 +382,7 @@ func TestWriteTo(t *testing.T) {
 
 	t.Run("embeds raw JSON for byte slices", func(t *testing.T) {
 		data := []byte(`{"id":123}`)
-		msg := New(data, nil, nil)
+		msg := NewRaw(data, nil, nil)
 		var buf bytes.Buffer
 
 		_, err := msg.WriteTo(&buf)
@@ -380,8 +419,12 @@ func TestParseRaw(t *testing.T) {
 		if msg.SpecVersion() != "1.0" {
 			t.Errorf("expected specversion 1.0, got %v", msg.SpecVersion())
 		}
-		if string(msg.Data) != `{"order_id":"ABC"}` {
-			t.Errorf("expected data {\"order_id\":\"ABC\"}, got %s", msg.Data)
+		data, ok := msg.Raw()
+		if !ok {
+			t.Fatalf("expected raw data, got %T", msg.Data)
+		}
+		if string(data) != `{"order_id":"ABC"}` {
+			t.Errorf("expected data {\"order_id\":\"ABC\"}, got %s", data)
 		}
 	})
 
@@ -402,8 +445,12 @@ func TestParseRaw(t *testing.T) {
 		if parsed.Type() != "test.event" {
 			t.Errorf("expected type test.event, got %v", parsed.Type())
 		}
-		if string(parsed.Data) != `{"id":456}` {
-			t.Errorf("expected data {\"id\":456}, got %s", parsed.Data)
+		data, ok := parsed.Raw()
+		if !ok {
+			t.Fatalf("expected raw data, got %T", parsed.Data)
+		}
+		if string(data) != `{"id":456}` {
+			t.Errorf("expected data {\"id\":456}, got %s", data)
 		}
 	})
 
@@ -418,8 +465,12 @@ func TestParseRaw(t *testing.T) {
 		if msg.Type() != "binary.event" {
 			t.Errorf("expected type binary.event, got %v", msg.Type())
 		}
-		if string(msg.Data) != "hello world" {
-			t.Errorf("expected data 'hello world', got %s", msg.Data)
+		data, ok := msg.Raw()
+		if !ok {
+			t.Fatalf("expected raw data, got %T", msg.Data)
+		}
+		if string(data) != "hello world" {
+			t.Errorf("expected data 'hello world', got %s", data)
 		}
 	})
 
@@ -447,8 +498,12 @@ func TestParseRaw(t *testing.T) {
 			t.Fatalf("ParseRaw failed: %v", err)
 		}
 
-		if !bytes.Equal(parsed.Data, binaryData) {
-			t.Errorf("expected data %v, got %v", binaryData, parsed.Data)
+		data, ok := parsed.Raw()
+		if !ok {
+			t.Fatalf("expected raw data, got %T", parsed.Data)
+		}
+		if !bytes.Equal(data, binaryData) {
+			t.Errorf("expected data %v, got %v", binaryData, data)
 		}
 	})
 }

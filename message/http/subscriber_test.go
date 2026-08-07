@@ -205,7 +205,7 @@ func TestSubscriber_ServeHTTP(t *testing.T) {
 		var received []byte
 		go func() {
 			msg := <-ch
-			received = msg.Data
+			received, _ = msg.Raw()
 			msg.Ack()
 		}()
 
@@ -392,7 +392,7 @@ func TestSubscriber_Enricher(t *testing.T) {
 
 		sub := NewSubscriber(SubscriberConfig{
 			AckTimeout: time.Second,
-			Enricher: func(r *http.Request, msgs []*message.RawMessage) {
+			Enricher: func(r *http.Request, msgs []*message.Message) {
 				for _, msg := range msgs {
 					msg.SetLocal(keyType{}, r.Header.Get("X-Tenant-ID"))
 				}
@@ -430,7 +430,7 @@ func TestSubscriber_Enricher(t *testing.T) {
 
 		sub := NewSubscriber(SubscriberConfig{
 			AckTimeout: time.Second,
-			Enricher: func(r *http.Request, msgs []*message.RawMessage) {
+			Enricher: func(r *http.Request, msgs []*message.Message) {
 				for i, msg := range msgs {
 					msg.SetLocal(keyType{}, i+1)
 				}
@@ -522,7 +522,7 @@ func TestSubscriber_Validator(t *testing.T) {
 	t.Run("validator error returns 400 by default", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{
 			AckTimeout: time.Second,
-			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+			Validator: func(r *http.Request, msgs []*message.Message) error {
 				return errors.New("invalid payload")
 			},
 		})
@@ -545,7 +545,7 @@ func TestSubscriber_Validator(t *testing.T) {
 	t.Run("validator error with StatusCoder uses custom status", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{
 			AckTimeout: time.Second,
-			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+			Validator: func(r *http.Request, msgs []*message.Message) error {
 				return &statusError{code: http.StatusForbidden, msg: "forbidden"}
 			},
 		})
@@ -568,7 +568,7 @@ func TestSubscriber_Validator(t *testing.T) {
 	t.Run("validator wrapped error with StatusCoder unwraps correctly", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{
 			AckTimeout: time.Second,
-			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+			Validator: func(r *http.Request, msgs []*message.Message) error {
 				return fmt.Errorf("validation: %w", &statusError{code: http.StatusForbidden, msg: "forbidden"})
 			},
 		})
@@ -591,7 +591,7 @@ func TestSubscriber_Validator(t *testing.T) {
 	t.Run("validator error nacks all messages in batch", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{
 			AckTimeout: time.Second,
-			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+			Validator: func(r *http.Request, msgs []*message.Message) error {
 				if len(msgs) != 2 {
 					t.Errorf("expected 2 messages, got %d", len(msgs))
 				}
@@ -620,7 +620,7 @@ func TestSubscriber_Validator(t *testing.T) {
 	t.Run("validator success allows delivery", func(t *testing.T) {
 		sub := NewSubscriber(SubscriberConfig{
 			AckTimeout: time.Second,
-			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+			Validator: func(r *http.Request, msgs []*message.Message) error {
 				return nil // pass
 			},
 		})
@@ -650,11 +650,11 @@ func TestSubscriber_Validator(t *testing.T) {
 
 		sub := NewSubscriber(SubscriberConfig{
 			AckTimeout: time.Second,
-			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+			Validator: func(r *http.Request, msgs []*message.Message) error {
 				order = append(order, "validator")
 				return nil
 			},
-			Enricher: func(r *http.Request, msgs []*message.RawMessage) {
+			Enricher: func(r *http.Request, msgs []*message.Message) {
 				order = append(order, "enricher")
 			},
 		})
@@ -687,10 +687,10 @@ func TestSubscriber_Validator(t *testing.T) {
 
 		sub := NewSubscriber(SubscriberConfig{
 			AckTimeout: time.Second,
-			Validator: func(r *http.Request, msgs []*message.RawMessage) error {
+			Validator: func(r *http.Request, msgs []*message.Message) error {
 				return errors.New("rejected")
 			},
-			Enricher: func(r *http.Request, msgs []*message.RawMessage) {
+			Enricher: func(r *http.Request, msgs []*message.Message) {
 				enricherCalled = true
 			},
 		})

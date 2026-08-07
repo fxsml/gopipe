@@ -10,12 +10,14 @@ import (
 	"time"
 )
 
-// TypedMessage wraps a typed data payload with attributes and acknowledgment callbacks.
-// This is the base generic type for all message variants.
+// Message wraps a data payload with attributes and acknowledgment callbacks.
+// Data holds either raw []byte (broker boundary) or a typed Go value
+// (after unmarshaling), depending on where the message is in a pipeline.
+// Use Raw() to check which state Data is currently in.
 // Ack/Nack operations are mutually exclusive and idempotent.
-type TypedMessage[T any] struct {
+type Message struct {
 	// Data is the event payload per CloudEvents spec.
-	Data T
+	Data any
 
 	// Attributes contains the context attributes per CloudEvents spec.
 	Attributes Attributes
@@ -29,16 +31,7 @@ type TypedMessage[T any] struct {
 	locals map[any]any
 }
 
-// Message is the internal message type used by handlers and middleware.
-// Data holds any typed payload after unmarshaling from RawMessage.
-type Message = TypedMessage[any]
-
-// RawMessage is the broker boundary message type with serialized []byte data.
-// Used for pub/sub integrations (Kafka, RabbitMQ, NATS, etc.).
-type RawMessage = TypedMessage[[]byte]
-
-// New creates a Message for engine input channels.
-// Pass nil for attrs or acking if not needed.
+// New creates a Message. Pass nil for attrs or acking if not needed.
 func New(data any, attrs Attributes, acking *Acking) *Message {
 	if attrs == nil {
 		attrs = make(Attributes)
@@ -50,30 +43,18 @@ func New(data any, attrs Attributes, acking *Acking) *Message {
 	}
 }
 
-// NewTyped creates a generic typed message.
-// Pass nil for attrs or acking if not needed.
-func NewTyped[T any](data T, attrs Attributes, acking *Acking) *TypedMessage[T] {
-	if attrs == nil {
-		attrs = make(Attributes)
-	}
-	return &TypedMessage[T]{
-		Data:       data,
-		Attributes: attrs,
-		acking:     acking,
-	}
+// NewRaw creates a Message for the broker boundary, where Data is always
+// expected to be []byte (see Raw). Unlike New, the raw parameter's []byte
+// type guarantees Raw() reports true on the result, even for empty or nil
+// input — pass nil or []byte{} for a message with no payload.
+func NewRaw(raw []byte, attrs Attributes, acking *Acking) *Message {
+	return New(raw, attrs, acking)
 }
 
-// NewRaw creates a RawMessage for broker integration.
-// Pass nil for attrs or acking if not needed.
-func NewRaw(data []byte, attrs Attributes, acking *Acking) *RawMessage {
-	if attrs == nil {
-		attrs = make(Attributes)
-	}
-	return &RawMessage{
-		Data:       data,
-		Attributes: attrs,
-		acking:     acking,
-	}
+// Raw reports whether Data currently holds raw []byte, and returns it.
+func (m *Message) Raw() ([]byte, bool) {
+	b, ok := m.Data.([]byte)
+	return b, ok
 }
 
 // Ack acknowledges successful processing of the message.
@@ -81,7 +62,7 @@ func NewRaw(data []byte, attrs Attributes, acking *Acking) *RawMessage {
 // Returns false if no ack callback was provided or if the message was already nacked.
 // The ack callback is invoked at most once when all stages have acked. Thread-safe.
 // Callbacks are invoked outside the mutex to prevent deadlocks.
-func (m *TypedMessage[T]) Ack() bool {
+func (m *Message) Ack() bool {
 	return m.acking.ack()
 }
 
@@ -91,7 +72,7 @@ func (m *TypedMessage[T]) Ack() bool {
 // The nack callback is invoked immediately with the first error, permanently blocking all further acks.
 // Also closes the done channel, allowing sibling messages to detect the settlement.
 // Thread-safe. Callbacks are invoked outside the mutex to prevent deadlocks.
-func (m *TypedMessage[T]) Nack(err error) bool {
+func (m *Message) Nack(err error) bool {
 	return m.acking.nack(err)
 }
 
@@ -108,13 +89,13 @@ func (m *TypedMessage[T]) Nack(err error) bool {
 //	default:
 //	    // still pending
 //	}
-func (m *TypedMessage[T]) Err() error {
+func (m *Message) Err() error {
 	return m.acking.err()
 }
 
 // Settled returns a channel that is closed when the message is settled (acked or nacked).
 // Returns nil if no acking is set.
-func (m *TypedMessage[T]) Settled() <-chan struct{} {
+func (m *Message) Settled() <-chan struct{} {
 	return m.acking.done()
 }
 
@@ -125,7 +106,7 @@ func (m *TypedMessage[T]) Settled() <-chan struct{} {
 //
 // Not safe for concurrent use. Follows the single-writer assumption: one
 // worker processes one message at a time (same as Attributes mutation).
-func (m *TypedMessage[T]) SetLocal(key, val any) {
+func (m *Message) SetLocal(key, val any) {
 	if m == nil {
 		return
 	}
@@ -140,7 +121,7 @@ func (m *TypedMessage[T]) SetLocal(key, val any) {
 // This inspects only the message's own locals. Locals are decoupled from
 // context: they do not appear in contexts created by Context(parent).
 // Use typed helpers like TxFromMessage(msg) to read specific locals.
-func (m *TypedMessage[T]) Local(key any) any {
+func (m *Message) Local(key any) any {
 	if m == nil {
 		return nil
 	}
@@ -151,7 +132,7 @@ func (m *TypedMessage[T]) Local(key any) any {
 //
 // The context provides:
 //   - Deadline from minimum of parent deadline and message ExpiryTime
-//   - Message reference via MessageFromContext or RawMessageFromContext
+//   - Message reference via MessageFromContext
 //   - Parent cancellation propagation
 //
 // Note: This method reports the deadline via ctx.Deadline() but does not
@@ -164,49 +145,40 @@ func (m *TypedMessage[T]) Local(key any) any {
 // For settlement detection (ack/nack), use msg.Settled() directly.
 // This keeps context cancellation (lifecycle) separate from message
 // settlement (domain logic).
-func (m *TypedMessage[T]) Context(parent context.Context) context.Context {
-	// Determine what to store as the message reference
-	var msg any
-	switch v := any(m).(type) {
-	case *Message:
-		msg = v
-	case *RawMessage:
-		msg = v
-	}
-
+func (m *Message) Context(parent context.Context) context.Context {
 	return &messageContext{
 		Context: parent,
-		msg:     msg,
+		msg:     m,
 		expiry:  m.ExpiryTime(),
 	}
 }
 
 // ID returns the event identifier. Returns empty string if not set.
-func (m *TypedMessage[T]) ID() string {
+func (m *Message) ID() string {
 	s, _ := m.Attributes[AttrID].(string)
 	return s
 }
 
 // Type returns the event type. Returns empty string if not set.
-func (m *TypedMessage[T]) Type() string {
+func (m *Message) Type() string {
 	s, _ := m.Attributes[AttrType].(string)
 	return s
 }
 
 // Source returns the event source. Returns empty string if not set.
-func (m *TypedMessage[T]) Source() string {
+func (m *Message) Source() string {
 	s, _ := m.Attributes[AttrSource].(string)
 	return s
 }
 
 // Subject returns the event subject. Returns empty string if not set.
-func (m *TypedMessage[T]) Subject() string {
+func (m *Message) Subject() string {
 	s, _ := m.Attributes[AttrSubject].(string)
 	return s
 }
 
 // Time returns the event timestamp. Returns zero time if not set or invalid.
-func (m *TypedMessage[T]) Time() time.Time {
+func (m *Message) Time() time.Time {
 	switch v := m.Attributes[AttrTime].(type) {
 	case time.Time:
 		return v
@@ -219,31 +191,31 @@ func (m *TypedMessage[T]) Time() time.Time {
 }
 
 // DataContentType returns the data content type. Returns empty string if not set.
-func (m *TypedMessage[T]) DataContentType() string {
+func (m *Message) DataContentType() string {
 	s, _ := m.Attributes[AttrDataContentType].(string)
 	return s
 }
 
 // DataSchema returns the data schema URI. Returns empty string if not set.
-func (m *TypedMessage[T]) DataSchema() string {
+func (m *Message) DataSchema() string {
 	s, _ := m.Attributes[AttrDataSchema].(string)
 	return s
 }
 
 // SpecVersion returns the CloudEvents spec version. Returns empty string if not set.
-func (m *TypedMessage[T]) SpecVersion() string {
+func (m *Message) SpecVersion() string {
 	s, _ := m.Attributes[AttrSpecVersion].(string)
 	return s
 }
 
 // CorrelationID returns the correlation ID extension. Returns empty string if not set.
-func (m *TypedMessage[T]) CorrelationID() string {
+func (m *Message) CorrelationID() string {
 	s, _ := m.Attributes[AttrCorrelationID].(string)
 	return s
 }
 
 // ExpiryTime returns the expiry time extension. Returns zero time if not set or invalid.
-func (m *TypedMessage[T]) ExpiryTime() time.Time {
+func (m *Message) ExpiryTime() time.Time {
 	switch v := m.Attributes[AttrExpiryTime].(type) {
 	case time.Time:
 		return v
@@ -257,8 +229,8 @@ func (m *TypedMessage[T]) ExpiryTime() time.Time {
 
 // Copy creates a new message with different data while preserving
 // attributes (cloned), acknowledgment callbacks (shared), and locals (cloned).
-func Copy[In, Out any](msg *TypedMessage[In], data Out) *TypedMessage[Out] {
-	return &TypedMessage[Out]{
+func Copy(msg *Message, data any) *Message {
+	return &Message{
 		Data:       data,
 		Attributes: maps.Clone(msg.Attributes),
 		acking:     msg.acking,
@@ -269,7 +241,7 @@ func Copy[In, Out any](msg *TypedMessage[In], data Out) *TypedMessage[Out] {
 // cloudEvent returns the message as a CloudEvents structured map.
 // Injects specversion "1.0" if not present in attributes.
 // For []byte data: valid JSON goes to "data", binary goes to "data_base64".
-func (m *TypedMessage[T]) cloudEvent() map[string]any {
+func (m *Message) cloudEvent() map[string]any {
 	ce := make(map[string]any, len(m.Attributes)+2)
 	maps.Copy(ce, m.Attributes)
 	if _, ok := ce[AttrSpecVersion]; !ok {
@@ -277,7 +249,7 @@ func (m *TypedMessage[T]) cloudEvent() map[string]any {
 	}
 
 	// For []byte data, embed as raw JSON if valid, otherwise base64 encode
-	if data, ok := any(m.Data).([]byte); ok {
+	if data, ok := m.Raw(); ok {
 		if len(data) == 0 {
 			// Empty data, omit
 		} else if json.Valid(data) {
@@ -293,13 +265,13 @@ func (m *TypedMessage[T]) cloudEvent() map[string]any {
 
 // MarshalJSON implements json.Marshaler.
 // Returns the message as CloudEvents structured JSON.
-func (m *TypedMessage[T]) MarshalJSON() ([]byte, error) {
+func (m *Message) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m.cloudEvent())
 }
 
 // String implements fmt.Stringer.
 // Returns the message as CloudEvents structured JSON.
-func (m *TypedMessage[T]) String() string {
+func (m *Message) String() string {
 	b, err := m.MarshalJSON()
 	if err != nil {
 		return fmt.Sprintf("gopipe error: %v", err)
@@ -309,7 +281,7 @@ func (m *TypedMessage[T]) String() string {
 
 // WriteTo implements io.WriterTo.
 // Writes the message as CloudEvents structured JSON.
-func (m *TypedMessage[T]) WriteTo(w io.Writer) (int64, error) {
+func (m *Message) WriteTo(w io.Writer) (int64, error) {
 	b, err := m.MarshalJSON()
 	if err != nil {
 		return 0, err
@@ -318,9 +290,9 @@ func (m *TypedMessage[T]) WriteTo(w io.Writer) (int64, error) {
 	return int64(n), err
 }
 
-// ParseRaw parses CloudEvents structured JSON from r into a RawMessage.
+// ParseRaw parses CloudEvents structured JSON from r into a Message with raw []byte Data.
 // Handles both data and data_base64 fields per CloudEvents spec.
-func ParseRaw(r io.Reader) (*RawMessage, error) {
+func ParseRaw(r io.Reader) (*Message, error) {
 	b, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("message: reading body: %w", err)
@@ -328,8 +300,8 @@ func ParseRaw(r io.Reader) (*RawMessage, error) {
 	return parseRawBytes(b)
 }
 
-// parseRawBytes parses CloudEvents structured JSON bytes into a RawMessage.
-func parseRawBytes(b []byte) (*RawMessage, error) {
+// parseRawBytes parses CloudEvents structured JSON bytes into a Message with raw []byte Data.
+func parseRawBytes(b []byte) (*Message, error) {
 	var ce struct {
 		Data       json.RawMessage `json:"data"`
 		DataBase64 string          `json:"data_base64"`
@@ -357,7 +329,7 @@ func parseRawBytes(b []byte) (*RawMessage, error) {
 		data = ce.Data
 	}
 
-	return &RawMessage{
+	return &Message{
 		Data:       data,
 		Attributes: attrs,
 	}, nil

@@ -65,7 +65,7 @@ Operates on Attributes only (not `*Message`) to avoid wrapper allocation for raw
 
 ```go
 // Raw input ([]byte data) → typed, via unmarshal pipe
-rawInput := make(chan *message.RawMessage, 10)
+rawInput := make(chan *message.Message, 10)
 unmarshal := message.NewUnmarshalPipe(router, message.NewJSONMarshaler(), message.PipeConfig{})
 typedInput, _ := unmarshal.Pipe(ctx, rawInput)
 

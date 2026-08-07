@@ -6,10 +6,15 @@ package message
 // an unresolvable type and handle it gracefully — typically by returning
 // ErrUnknownType rather than attempting to unmarshal.
 type InputRegistry interface {
-	NewInput(eventType string) any // nil if unknown type
+	// NewInput returns a non-nil pointer ready for unmarshaling into for
+	// the given event type, or nil if eventType is unknown — the only
+	// case in which a nil return is valid.
+	NewInput(eventType string) any
 }
 
 // FactoryMap is a simple InputRegistry for standalone use.
+// Factory functions must return a non-nil pointer ready for unmarshaling
+// into, e.g. func() any { return &Order{} }.
 type FactoryMap map[string]func() any
 
 func (m FactoryMap) NewInput(eventType string) any {

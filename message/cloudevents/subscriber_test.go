@@ -270,8 +270,8 @@ func TestSubscriber(t *testing.T) {
 		source := NewSubscriber(receiver, SubscriberConfig{Buffer: 10})
 
 		var calls atomic.Int32
-		countingMiddleware := func(next middleware.ProcessFunc[struct{}, *message.RawMessage]) middleware.ProcessFunc[struct{}, *message.RawMessage] {
-			return func(ctx context.Context, in struct{}) ([]*message.RawMessage, error) {
+		countingMiddleware := func(next middleware.ProcessFunc[struct{}, *message.Message]) middleware.ProcessFunc[struct{}, *message.Message] {
+			return func(ctx context.Context, in struct{}) ([]*message.Message, error) {
 				calls.Add(1)
 				return next(ctx, in)
 			}
@@ -305,7 +305,7 @@ func TestSubscriber(t *testing.T) {
 
 		_, _ = source.Subscribe(ctx)
 
-		err := source.Use(func(next middleware.ProcessFunc[struct{}, *message.RawMessage]) middleware.ProcessFunc[struct{}, *message.RawMessage] {
+		err := source.Use(func(next middleware.ProcessFunc[struct{}, *message.Message]) middleware.ProcessFunc[struct{}, *message.Message] {
 			return next
 		})
 		if !errors.Is(err, pipe.ErrAlreadyStarted) {
