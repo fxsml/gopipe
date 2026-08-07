@@ -34,7 +34,7 @@ router := message.NewRouter(message.PipeConfig{
 ## Adding Handlers
 
 ```go
-router.AddHandler("handler-name", matcher, message.NewCommandHandler(
+router.AddHandler("handler-name", message.NewCommandHandler(
     func(ctx context.Context, cmd InputType) ([]OutputType, error) {
         return []OutputType{{...}}, nil
     },

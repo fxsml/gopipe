@@ -122,7 +122,7 @@ func main() {
 
 	// 4. Router: handle messages and produce new messages.
 	router := message.NewRouter(message.PipeConfig{})
-	router.AddHandler("process-order", nil, message.NewCommandHandler(
+	router.AddHandler("process-order", message.NewCommandHandler(
 		func(ctx context.Context, cmd CreateOrderCommand) ([]OrderCreatedEvent, error) {
 			log.Printf("Processing order: %s ($%.2f)", cmd.OrderID, cmd.Amount)
 			return []OrderCreatedEvent{{

@@ -21,7 +21,7 @@
 //		},
 //		message.CommandHandlerConfig{Source: "/orders", Naming: message.DotNaming},
 //	)
-//	router.AddHandler("orders", nil, handler)
+//	router.AddHandler("orders", handler)
 //
 //	output, _ := router.Pipe(ctx, rawInputCh)
 //

@@ -55,7 +55,7 @@ handler := message.NewCommandHandler(
         Naming: message.DotNaming,
     },
 )
-router.AddHandler("orders", nil, handler)
+router.AddHandler("orders", handler)
 
 ctx, cancel := context.WithCancel(context.Background())
 defer cancel()
@@ -87,7 +87,7 @@ handler := message.NewCommandHandler(
         DisableMarshaler: true,
     },
 )
-router.AddHandler("orders", nil, handler)
+router.AddHandler("orders", handler)
 
 // Typed input/output, no marshal/unmarshal
 input := make(chan *message.Message, 100)

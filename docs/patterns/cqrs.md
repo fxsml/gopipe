@@ -67,8 +67,8 @@ handler := message.NewHandler[OrderCreated](
 ```go
 router := message.NewRouter(message.PipeConfig{})
 
-router.AddHandler("create-order", nil, createOrderHandler)
-router.AddHandler("order-projection", nil, orderCreatedHandler)
+router.AddHandler("create-order", createOrderHandler)
+router.AddHandler("order-projection", orderCreatedHandler)
 
 input := make(chan *message.Message)
 marshaler := message.NewJSONMarshaler()

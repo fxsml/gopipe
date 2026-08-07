@@ -22,7 +22,6 @@ type Middleware func(ProcessFunc) ProcessFunc
 // handlerEntry holds a handler and its configuration.
 type handlerEntry struct {
 	name    string
-	matcher Matcher
 	handler Handler
 }
 
@@ -135,8 +134,7 @@ func NewRouter(cfg PipeConfig) *Router {
 }
 
 // AddHandler registers a handler.
-// The optional matcher is applied after type matching.
-func (r *Router) AddHandler(name string, matcher Matcher, h Handler) error {
+func (r *Router) AddHandler(name string, h Handler) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.started {
@@ -146,7 +144,7 @@ func (r *Router) AddHandler(name string, matcher Matcher, h Handler) error {
 	if _, exists := r.handlers[eventType]; exists {
 		return ErrHandlerExists
 	}
-	r.handlers[eventType] = handlerEntry{name: name, matcher: matcher, handler: h}
+	r.handlers[eventType] = handlerEntry{name: name, handler: h}
 	r.cfg.Logger.Info("Adding handler",
 		"component", "router",
 		"handler", name,
@@ -238,7 +236,7 @@ func (r *Router) handler(eventType string) (handlerEntry, bool) {
 }
 
 func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) {
-	// handler lookup → matcher check → handler.Handle
+	// handler lookup → handler.Handle
 	// Messages are auto-nacked on error (consistent with other components).
 	// Acking on success is the handler's responsibility. Use AutoAck middleware
 	// for automatic ack-on-success behavior.
@@ -247,16 +245,6 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 		err := ErrNoHandler
 		r.cfg.Logger.Error("Routing message failed",
 			"component", "router",
-			"error", err,
-			"attributes", msg.Attributes)
-		return nil, err
-	}
-
-	if entry.matcher != nil && !entry.matcher.Match(msg.Attributes) {
-		err := ErrHandlerRejected
-		r.cfg.Logger.Error("Matching handler failed",
-			"component", "router",
-			"handler", entry.name,
 			"error", err,
 			"attributes", msg.Attributes)
 		return nil, err
