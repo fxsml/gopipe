@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -32,12 +33,17 @@ type SubscriberConfig struct {
 	// If it returns a non-nil error, all messages are nacked and the error
 	// is returned as the HTTP response. Errors implementing StatusCoder
 	// control the HTTP status; otherwise 400 is used.
-	Validator func(*http.Request, []*message.RawMessage) error
+	Validator func(*http.Request, []*message.Message) error
 
 	// Enricher is called after Validator and before channel delivery.
 	// Use it to bridge HTTP request data into message locals (e.g., auth claims).
 	// Receives the full message slice for the request.
-	Enricher func(*http.Request, []*message.RawMessage)
+	Enricher func(*http.Request, []*message.Message)
+
+	// ErrorHandler is called when a message is nacked after delivery.
+	// It has full control over the HTTP response written to w.
+	// If nil, DefaultNackHandler is used.
+	ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 }
 
 func (c SubscriberConfig) parse() SubscriberConfig {
@@ -47,7 +53,33 @@ func (c SubscriberConfig) parse() SubscriberConfig {
 	if c.AckTimeout <= 0 {
 		c.AckTimeout = 30 * time.Second
 	}
+	if c.ErrorHandler == nil {
+		c.ErrorHandler = DefaultNackHandler
+	}
 	return c
+}
+
+// DefaultNackHandler is the ErrorHandler used when none is configured.
+// It derives the HTTP status code from the error if it implements StatusCoder,
+// falling back to 500. For status codes >= 500 the response body is the generic
+// status text (e.g. "Internal Server Error") to avoid leaking infrastructure
+// details. For status codes < 500 the error message is used directly, as the
+// caller opted into a non-server-error and the message is considered safe to
+// expose. The response body is always JSON: {"error":"<message>"}.
+func DefaultNackHandler(w http.ResponseWriter, r *http.Request, err error) {
+	code := http.StatusInternalServerError
+	var sc StatusCoder
+	if errors.As(err, &sc) {
+		code = sc.StatusCode()
+	}
+	msg := err.Error()
+	if code >= http.StatusInternalServerError {
+		msg = http.StatusText(code)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	b, _ := json.Marshal(map[string]string{"error": msg})
+	w.Write(b) //nolint:errcheck
 }
 
 // Subscriber receives CloudEvents over HTTP and delivers to a channel.
@@ -62,7 +94,7 @@ func (c SubscriberConfig) parse() SubscriberConfig {
 // message locals.
 type Subscriber struct {
 	mu         sync.RWMutex
-	ch         chan *message.RawMessage
+	ch         chan *message.Message
 	done       chan struct{}
 	wg         sync.WaitGroup
 	subscribed bool
@@ -82,13 +114,13 @@ func NewSubscriber(cfg SubscriberConfig) *Subscriber {
 //
 // Subscribe can only be called once. Multiple consumers can read from the
 // returned channel concurrently (competing consumers pattern).
-func (s *Subscriber) Subscribe(ctx context.Context) (<-chan *message.RawMessage, error) {
+func (s *Subscriber) Subscribe(ctx context.Context) (<-chan *message.Message, error) {
 	s.mu.Lock()
 	if s.subscribed {
 		s.mu.Unlock()
 		return nil, errors.New("already subscribed")
 	}
-	s.ch = make(chan *message.RawMessage, s.cfg.BufferSize)
+	s.ch = make(chan *message.Message, s.cfg.BufferSize)
 	s.done = make(chan struct{})
 	s.subscribed = true
 	s.mu.Unlock()
@@ -103,9 +135,9 @@ func (s *Subscriber) Subscribe(ctx context.Context) (<-chan *message.RawMessage,
 		s.subscribed = false
 		s.mu.Unlock()
 
-		close(s.done)  // Signal shutdown to in-flight requests
-		s.wg.Wait()    // Wait for in-flight requests to complete
-		close(s.ch)    // Safe to close now
+		close(s.done) // Signal shutdown to in-flight requests
+		s.wg.Wait()   // Wait for in-flight requests to complete
+		close(s.ch)   // Safe to close now
 	}()
 
 	return s.ch, nil
@@ -170,7 +202,7 @@ func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		len(events),
 	)
 
-	msgs := make([]*message.RawMessage, 0, len(events))
+	msgs := make([]*message.Message, 0, len(events))
 	for i := range events {
 		msg, err := ce.FromCloudEvent(&events[i], shared)
 		if err != nil {
@@ -217,7 +249,7 @@ func (s *Subscriber) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	select {
 	case err := <-result:
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			s.cfg.ErrorHandler(w, r, err)
 			return
 		}
 	case <-s.done:

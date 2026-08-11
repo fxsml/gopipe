@@ -1,10 +1,11 @@
 // Example: HTTP service with JSON Schema validation using middleware.
 //
-// Demonstrates manual pipeline composition with jsonschema validation middleware.
-// This example shows the low-level pipe primitives instead of using the Engine.
+// Demonstrates manual pipeline composition with jsonschema validation middleware,
+// using the low-level pipe primitives directly.
 //
 // Pipeline:
-//   HTTP → UnmarshalPipe+ValidationMW → Router → MarshalPipe+ValidationMW → stdout
+//
+//	HTTP → UnmarshalPipe+ValidationMW → Router → MarshalPipe+ValidationMW → stdout
 //
 // CloudEvents defines the envelope contract (type, source, id).
 // JSON Schema defines the payload data contract (what's inside "data").
@@ -113,7 +114,7 @@ func main() {
 	subscriber := cehttp.NewSubscriber(cehttp.SubscriberConfig{})
 	rawInput, _ := subscriber.Subscribe(ctx)
 
-	// 3. Unmarshal pipe: RawMessage → Message (with validation middleware).
+	// 3. Unmarshal pipe: raw []byte Data → typed Data (with validation middleware).
 	marshaler := message.NewJSONMarshaler()
 	unmarshalPipe := message.NewUnmarshalPipe(registry, marshaler, message.PipeConfig{})
 	unmarshalPipe.Use(jsonschema.NewInputValidationMiddleware(registry))
@@ -121,7 +122,7 @@ func main() {
 
 	// 4. Router: handle messages and produce new messages.
 	router := message.NewRouter(message.PipeConfig{})
-	router.AddHandler("process-order", nil, message.NewCommandHandler(
+	router.AddHandler("process-order", message.NewCommandHandler(
 		func(ctx context.Context, cmd CreateOrderCommand) ([]OrderCreatedEvent, error) {
 			log.Printf("Processing order: %s ($%.2f)", cmd.OrderID, cmd.Amount)
 			return []OrderCreatedEvent{{
@@ -133,15 +134,16 @@ func main() {
 	))
 	processed, _ := router.Pipe(ctx, typed)
 
-	// 5. Marshal pipe: Message → RawMessage (with validation middleware).
+	// 5. Marshal pipe: typed Data → raw []byte Data (with validation middleware).
 	marshalPipe := message.NewMarshalPipe(marshaler, message.PipeConfig{})
 	marshalPipe.Use(jsonschema.NewOutputValidationMiddleware(registry))
 	rawOutput, _ := marshalPipe.Pipe(ctx, processed)
 
 	// 6. Sink to stdout using pipe primitive.
-	printer := pipe.NewSinkPipe(func(ctx context.Context, raw *message.RawMessage) error {
+	printer := pipe.NewSinkPipe(func(ctx context.Context, raw *message.Message) error {
 		var data any
-		json.Unmarshal(raw.Data, &data)
+		rawBytes, _ := raw.Raw()
+		json.Unmarshal(rawBytes, &data)
 		formatted, _ := json.MarshalIndent(data, "", "  ")
 		fmt.Printf("\n[%s]\n%s\n", raw.Type(), formatted)
 		return nil

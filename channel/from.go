@@ -27,63 +27,6 @@ func FromValues[T any](
 	return FromSlice(values)
 }
 
-// FromRange returns a channel that emits a sequence of integers.
-// Usage:
-//
-//	FromRange(to)              // emits 0, 1, ..., to-1 (step=1)
-//	FromRange(from, to)        // emits from, from+1, ..., to-1 (step=1)
-//	FromRange(from, to, step)  // emits from, from+step, ... < to
-//
-// If step > 0, emits ascending values: from, from+step, ... < to
-// If step < 0, emits descending values: from, from+step, ... > to
-// If step == 0, panics.
-//
-// The channel is closed after all values have been sent.
-// Panics if called with zero or more than three arguments.
-func FromRange(
-	i ...int,
-) <-chan int {
-	var from, to, step int
-	switch len(i) {
-	case 0:
-		panic("FromRange requires at least 1 integer argument")
-	case 1:
-		from = 0
-		to = i[0]
-		step = 1
-	case 2:
-		from = i[0]
-		to = i[1]
-		step = 1
-	case 3:
-		from = i[0]
-		to = i[1]
-		step = i[2]
-	default:
-		panic("FromRange accepts at most 3 integer arguments")
-	}
-	out := make(chan int)
-
-	if step == 0 {
-		panic("FromRange step must not be null")
-	}
-
-	go func() {
-		defer close(out)
-		if step < 0 {
-			for j := from; j > to; j += step {
-				out <- j
-			}
-			return
-		}
-		for j := from; j < to; j += step {
-			out <- j
-		}
-	}()
-
-	return out
-}
-
 // FromFunc generates values by repeatedly calling the handle function
 // until context cancellation.
 func FromFunc[T any](

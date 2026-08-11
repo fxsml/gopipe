@@ -187,7 +187,7 @@ func TestPublisher_SendBatch(t *testing.T) {
 
 		pub := NewPublisher(PublisherConfig{TargetURL: server.URL})
 
-		msgs := []*message.RawMessage{
+		msgs := []*message.Message{
 			message.NewRaw([]byte(`{}`), message.Attributes{
 				message.AttrID: "1", message.AttrType: "test", message.AttrSource: "/test",
 			}, nil),
@@ -220,7 +220,7 @@ func TestPublisher_SendBatch(t *testing.T) {
 		pub := NewPublisher(PublisherConfig{TargetURL: server.URL})
 
 		var ackCount atomic.Int32
-		msgs := make([]*message.RawMessage, 3)
+		msgs := make([]*message.Message, 3)
 		for i := range msgs {
 			acking := message.NewAcking(func() { ackCount.Add(1) }, func(error) {})
 			msgs[i] = message.NewRaw([]byte(`{}`), message.Attributes{
@@ -247,7 +247,7 @@ func TestPublisher_SendBatch(t *testing.T) {
 		pub := NewPublisher(PublisherConfig{TargetURL: server.URL})
 
 		var nackCount atomic.Int32
-		msgs := make([]*message.RawMessage, 3)
+		msgs := make([]*message.Message, 3)
 		for i := range msgs {
 			acking := message.NewAcking(func() {}, func(error) { nackCount.Add(1) })
 			msgs[i] = message.NewRaw([]byte(`{}`), message.Attributes{
@@ -288,7 +288,7 @@ func TestPublisher_Publish(t *testing.T) {
 			Concurrency: 2,
 		})
 
-		ch := make(chan *message.RawMessage, 10)
+		ch := make(chan *message.Message, 10)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -334,7 +334,7 @@ func TestPublisher_Publish(t *testing.T) {
 			BatchDuration: 10 * time.Second,
 		})
 
-		ch := make(chan *message.RawMessage, 100)
+		ch := make(chan *message.Message, 100)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -367,7 +367,7 @@ func TestPublisher_Publish(t *testing.T) {
 
 	t.Run("returns error if called twice", func(t *testing.T) {
 		pub := NewPublisher(PublisherConfig{TargetURL: "http://localhost"})
-		ch := make(chan *message.RawMessage)
+		ch := make(chan *message.Message)
 		ctx := context.Background()
 
 		_, err := pub.Publish(ctx, ch)
@@ -415,7 +415,7 @@ func BenchmarkPublisher_SendBatch(b *testing.B) {
 	pub := NewPublisher(PublisherConfig{TargetURL: server.URL})
 
 	b.Run("batch_size_1", func(b *testing.B) {
-		msgs := []*message.RawMessage{
+		msgs := []*message.Message{
 			message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
 				message.AttrID:     "test-1",
 				message.AttrType:   "order.created",
@@ -429,7 +429,7 @@ func BenchmarkPublisher_SendBatch(b *testing.B) {
 	})
 
 	b.Run("batch_size_10", func(b *testing.B) {
-		msgs := make([]*message.RawMessage, 10)
+		msgs := make([]*message.Message, 10)
 		for i := range msgs {
 			msgs[i] = message.NewRaw([]byte(`{"order_id":"ORD-001","amount":100}`), message.Attributes{
 				message.AttrID:     "test-1",
@@ -459,7 +459,7 @@ func BenchmarkPublisher_Publish(b *testing.B) {
 				Concurrency: 1,
 			})
 
-			ch := make(chan *message.RawMessage, 100)
+			ch := make(chan *message.Message, 100)
 			ctx := context.Background()
 
 			done, _ := pub.Publish(ctx, ch)
@@ -484,7 +484,7 @@ func BenchmarkPublisher_Publish(b *testing.B) {
 				Concurrency: 4,
 			})
 
-			ch := make(chan *message.RawMessage, 100)
+			ch := make(chan *message.Message, 100)
 			ctx := context.Background()
 
 			done, _ := pub.Publish(ctx, ch)
@@ -511,7 +511,7 @@ func BenchmarkPublisher_Publish(b *testing.B) {
 				BatchDuration: time.Second,
 			})
 
-			ch := make(chan *message.RawMessage, 100)
+			ch := make(chan *message.Message, 100)
 			ctx := context.Background()
 
 			done, _ := pub.Publish(ctx, ch)

@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-11
+
+### Added
+
+- **message:** `Message.Raw() ([]byte, bool)` reports whether `Data` currently holds raw `[]byte` and returns it, following Go's comma-ok idiom (#148)
+- **message:** `ErrUnexpectedDataType` sentinel error — `UnmarshalPipe`/`MarshalPipe` now fail loudly instead of silently accepting `Data` in the wrong state (raw when typed was expected, or vice versa), wrapped with directional context (`want raw []byte`/`want typed`, plus `got %T`) at each call site (#148)
+- **message:** `NewRaw(raw []byte, attrs Attributes, acking *Acking) *Message` — the compile-time-safe constructor for broker-boundary messages. Its `[]byte` parameter makes `Raw()` report `true` on the result structurally, even for `nil`/empty input (which represents "no payload"); `FromCloudEvent` now uses it instead of `New`. Messages crossing the broker boundary are documented as always expected to satisfy `Raw()`; purely internal, typed-only usage has no such restriction — see `message/README.md` and `message/doc.go`. (#148)
+- **pipe:** `Metrics` interface for backend-agnostic pipe-layer observability
+  - `RecordProcessing` — handler duration, output count, and error rate per item
+  - `RecordWait` — time blocked on receive and send channel operations
+  - `WaitOpReceive` / `WaitOpSend` exported constants for `WaitInfo.Operation`
+  - `Stats` snapshot struct (`Depth`, `Capacity`, `Inflight`, `Labels`) returned by `Stats()` on `ProcessPipe`, `BatchPipe`, `Merger`, and `Distributor`
+  - `Metrics`, `Labels`, and `LabelFunc` fields added to `pipe.Config`, `pipe.MergerConfig`, and `pipe.DistributorConfig`; zero overhead when `Metrics` is nil
+- **message:** propagate `Metrics`, `Labels`, and `LabelFunc` through `PipeConfig`, `MergerConfig`, and `DistributorConfig`; default `LabelFunc` automatically adds `cloudevents.type` dimension to all metrics events; `Stats()` method on `Router`, `UnmarshalPipe`, `MarshalPipe`, `Merger`, and `Distributor`
+  - an OTel-backed `pipe.Metrics` implementation is available at [gopipe-otel](https://github.com/fxsml/gopipe-otel)
+- **message/http:** `SubscriberConfig.ErrorHandler` for full control over nack HTTP responses (#140)
+  - `ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)`
+  - Has full control over status code, headers, and body; set in `parse()` so it is always non-nil
+  - `DefaultNackHandler` is used when nil: derives status via `StatusCoder` (falls back to 500);
+    for `>= 500` writes generic `http.StatusText` to avoid leaking internals, for `< 500` writes `err.Error()`
+  - All default responses are JSON: `{"error":"<message>"}` with `Content-Type: application/json`
+
+### Fixed
+
+- **message:** `commandHandler.Handle` now returns `ErrCommandDataMismatch` instead
+  of silently falling back to a zero-value command when `msg.Data` is `nil` or does
+  not type-assert to `*C`/`C` (#145)
+- **message/cloudevents:** `ToCloudEvent` now checks `Raw()`'s `ok` result instead of discarding it — previously, a message reaching `ToCloudEvent` with non-raw `Data` silently produced a CloudEvent with no data field instead of failing; it now returns `ErrUnexpectedDataType`. The unrelated "should I include a data field" decision is now `len(data) > 0`, separated from this correctness check. (#148)
+
+### Changed
+
+- **message:** `Message` is now a concrete struct (`Data any`) instead of the generic `TypedMessage[any]` alias — `TypedMessage[T]`, `RawMessage`, and `NewTyped[T]` are removed (breaking, pre-v1). `New(data any, attrs, acking) *Message` is the general constructor; the generic `Copy[In, Out any]` becomes `Copy(msg *Message, data any) *Message`; `ParseRaw`/`parseRawBytes` return `*Message` with `Data []byte`. `RawMessageFromContext` is removed — use `MessageFromContext`. External consumers typed on `RawMessage` (notably `gopipe-azservicebus`'s public API, and any broker adapter following its pattern) need a coordinated version bump with a mechanical `RawMessage`→`Message` rename — this is not purely an internal change. See [ADR 0033](docs/adr/0033-message-struct-simplification.md). (#148)
+- **message:** `UnmarshalPipe`/`MarshalPipe` channel type changes from `*RawMessage`↔`*Message` to a uniform `*Message`→`*Message` (breaking, pre-v1), using `Raw()` internally and failing with `ErrUnexpectedDataType` on state mismatch instead of relying on the compiler to rule it out. `Use()` now takes `message.Middleware` instead of the generic `pipe/middleware.Middleware[In, Out]` (adapted internally to the same underlying `pipe.ProcessPipe`, so `Pipe()`/`Use()` after start still return `pipe.ErrAlreadyStarted`, unchanged). (#148)
+- **message/jsonschema, message/http, message/cloudevents:** mechanical retype from `*RawMessage` to `*Message` — `NewValidationMiddleware`/`NewInputValidationMiddleware`/`NewOutputValidationMiddleware`, `Subscriber`, `Publisher`, `FromCloudEvent`/`ToCloudEvent` (breaking, pre-v1). Behavior is unchanged aside from `jsonschema`'s output validation now also failing loudly (`ErrUnexpectedDataType`) if marshaling didn't actually produce raw bytes. (#148)
+- **message:** `Marshaler.Marshal`/`Unmarshal` godoc now states an explicit contract: `Marshal` must not panic on nil `v` (representation is implementation-defined); `Unmarshal` must return an error rather than panic if `v` isn't a non-nil pointer, and must handle empty `data` deterministically (erroring vs. leaving `v` at zero value is implementation-defined, matching the wire format's own semantics — e.g. JSON has no valid empty document, but some formats like protobuf define empty as "defaults"). No behavior change to `JSONMarshaler`, which already satisfied this via `encoding/json`. `InputRegistry.NewInput`/`FactoryMap`'s godoc similarly now states factories must return a non-nil pointer, or nil only to signal an unknown event type. (#148)
+- **channel:** Renamed `Route` → `Switch` (breaking, pre-v1) — avoids naming collision with `message.Router`, which does event-type-based routing (a different mechanism). Behavior is unchanged. (#165)
+- **channel:** `ToSlice` now returns `<-chan []T` instead of blocking synchronously and returning `[]T` (breaking, pre-v1) — matches the rest of the package's "launch goroutine, return channel" convention. The returned channel is closed after the slice is sent, so both `slice := <-channel.ToSlice(in)` and `for slice := range channel.ToSlice(in)` work. (#163)
+- **message:** `Handler` interface drops `NewInput()`; `Router` no longer implements `InputRegistry` (breaking, pre-v1) — `Router` is now purely CE-type dispatch and never needs to know `Data`'s concrete Go type. `InputRegistry`/`FactoryMap`/`UnmarshalPipe`/`MarshalPipe` are unaffected and remain the right tool for explicit composition. See [ADR 0031](docs/adr/0031-handler-level-marshaling.md). (#149)
+- **message:** `NewCommandHandler` marshals by default (breaking, pre-v1) — `CommandHandlerConfig` gains `Marshaler` (default `NewJSONMarshaler()`), `DisableMarshaler`, and `Subject func(data any) string`. Input `Data` is now unmarshaled from raw `[]byte` and output `Data` marshaled to raw `[]byte`, unless `DisableMarshaler: true`, which preserves the exact prior typed-through behavior. Returns `ErrUnexpectedDataType` if `!DisableMarshaler` and input `Data` isn't raw. (#149)
+
+### Removed
+
+- **channel:** `FromRange` (Python-style variadic-overload range constructor; the only function in `channel` with argument-count-dependent dispatch/panic-based validation). Breaking change, pre-v1. Use `FromValues` or `FromSlice` with a local loop instead. (#160)
+- **channel:** `Cancel` (zero real-world usage across gopipe's own `pipe`/`message`/`examples`, the production reference repo, and the `gopipe-azservicebus` broker adapter; only exercised by its own unit test). Breaking change, pre-v1. Use `ctx.Done()` handling inside `Filter`/`Process` instead. (#161)
+- **message:** `Engine`, `EngineConfig`, `Plugin` (zero real-world usage across a production reference repository and the `gopipe-azservicebus` broker adapter). Breaking change, pre-v1. Compose `Router` directly with `NewUnmarshalPipe`/`NewMarshalPipe` at the raw/typed boundary instead — see `message/README.md`. (#147)
+- **message:** `ErrInputRejected` (only used by `Engine`'s input matcher). Breaking change, pre-v1. (#147)
+- **message/cloudevents:** `SubscriberPlugin`, `PublisherPlugin` (pure `Engine`-wiring sugar). Breaking change, pre-v1. Use `Subscriber`/`Publisher` directly. (#147)
+- **message/middleware:** `Subject()` removed entirely (breaking, pre-v1) — depended on typed `Data`, which `Router`-level middleware can no longer safely assume. Its capability moves to `CommandHandlerConfig.Subject`, called on the typed output value before marshaling. (#149)
+- **message:** `Router.AddHandler`'s `matcher Matcher` parameter (`AddHandler(name string, h Handler) error`, was `AddHandler(name string, matcher Matcher, h Handler) error`); `ErrHandlerRejected`. This was `Engine`-inherited plumbing with zero real (non-test) call sites — every consumer passed `nil`. Breaking change, pre-v1. Filter inside the handler's own `Handle()` (or command function, via `MessageFromContext(ctx).Attributes`) instead. (#152)
+
 ## [0.18.0] - 2026-04-10
 
 ### Added

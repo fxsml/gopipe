@@ -16,10 +16,10 @@ func TestMiddlewareName_CorrelationID(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
-	engine := message.NewEngine(message.EngineConfig{
+	router := message.NewRouter(message.PipeConfig{
 		Logger: logger,
 	})
-	_ = engine.Use(middleware.CorrelationID())
+	_ = router.Use(middleware.CorrelationID())
 
 	if !strings.Contains(buf.String(), "middleware=CorrelationID") {
 		t.Errorf("expected log to contain 'middleware=CorrelationID', got: %s", buf.String())
@@ -28,12 +28,10 @@ func TestMiddlewareName_CorrelationID(t *testing.T) {
 
 func TestCorrelationID(t *testing.T) {
 	t.Run("propagates correlationid to outputs", func(t *testing.T) {
-		engine := message.NewEngine(message.EngineConfig{
-			BufferSize: 10,
-		})
+		router := message.NewRouter(message.PipeConfig{})
 
 		// Register middleware
-		if err := engine.Use(middleware.CorrelationID()); err != nil {
+		if err := router.Use(middleware.CorrelationID()); err != nil {
 			t.Fatalf("Use() failed: %v", err)
 		}
 
@@ -46,37 +44,27 @@ func TestCorrelationID(t *testing.T) {
 			}, nil
 		}, message.DotNaming)
 
-		if err := engine.AddHandler("test", nil, handler); err != nil {
+		if err := router.AddHandler("test", handler); err != nil {
 			t.Fatalf("AddHandler failed: %v", err)
 		}
 
 		input := make(chan *message.Message, 1)
-		if _, err := engine.AddInput("input", nil, input); err != nil {
-			t.Fatalf("AddInput failed: %v", err)
-		}
-
-		output, err := engine.AddOutput("output", nil)
-		if err != nil {
-			t.Fatalf("AddOutput failed: %v", err)
-		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		done, err := engine.Start(ctx)
-		if err != nil {
-			t.Fatalf("Start failed: %v", err)
-		}
-
-		// Send message with correlationid
 		input <- &message.Message{
 			Data: &TestCommand{Input: 5},
 			Attributes: message.Attributes{
-				"type":                   "test.command",
+				"type":                    "test.command",
 				message.AttrCorrelationID: "abc-123",
 			},
 		}
 		close(input)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		output, err := router.Pipe(ctx, input)
+		if err != nil {
+			t.Fatalf("Pipe failed: %v", err)
+		}
 
 		// Collect 2 outputs
 		var outputs []*message.Message
@@ -90,9 +78,6 @@ func TestCorrelationID(t *testing.T) {
 			}
 		}
 
-		cancel()
-		<-done
-
 		for i, out := range outputs {
 			cid, ok := out.Attributes[message.AttrCorrelationID].(string)
 			if !ok || cid != "abc-123" {
@@ -102,11 +87,9 @@ func TestCorrelationID(t *testing.T) {
 	})
 
 	t.Run("no correlationid does not add attribute", func(t *testing.T) {
-		engine := message.NewEngine(message.EngineConfig{
-			BufferSize: 10,
-		})
+		router := message.NewRouter(message.PipeConfig{})
 
-		if err := engine.Use(middleware.CorrelationID()); err != nil {
+		if err := router.Use(middleware.CorrelationID()); err != nil {
 			t.Fatalf("Use() failed: %v", err)
 		}
 
@@ -117,29 +100,11 @@ func TestCorrelationID(t *testing.T) {
 			}, nil
 		}, message.DotNaming)
 
-		if err := engine.AddHandler("test", nil, handler); err != nil {
+		if err := router.AddHandler("test", handler); err != nil {
 			t.Fatalf("AddHandler failed: %v", err)
 		}
 
 		input := make(chan *message.Message, 1)
-		if _, err := engine.AddInput("input", nil, input); err != nil {
-			t.Fatalf("AddInput failed: %v", err)
-		}
-
-		output, err := engine.AddOutput("output", nil)
-		if err != nil {
-			t.Fatalf("AddOutput failed: %v", err)
-		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		done, err := engine.Start(ctx)
-		if err != nil {
-			t.Fatalf("Start failed: %v", err)
-		}
-
-		// Send message without correlationid
 		input <- &message.Message{
 			Data: &TestCommand{Input: 5},
 			Attributes: message.Attributes{
@@ -147,6 +112,14 @@ func TestCorrelationID(t *testing.T) {
 			},
 		}
 		close(input)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		output, err := router.Pipe(ctx, input)
+		if err != nil {
+			t.Fatalf("Pipe failed: %v", err)
+		}
 
 		select {
 		case msg := <-output:
@@ -156,32 +129,26 @@ func TestCorrelationID(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("timeout waiting for output")
 		}
-
-		cancel()
-		<-done
 	})
 }
 
 func TestUse_AfterStart(t *testing.T) {
-	engine := message.NewEngine(message.EngineConfig{
-		BufferSize: 10,
-	})
+	router := message.NewRouter(message.PipeConfig{})
 
 	handler := message.NewHandler[TestCommand](func(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
 		return nil, nil
 	}, message.DotNaming)
-	_ = engine.AddHandler("test", nil, handler)
+	_ = router.AddHandler("test", handler)
 
 	input := make(chan *message.Message)
-	_, _ = engine.AddInput("input", nil, input)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, _ = engine.Start(ctx)
+	_, _ = router.Pipe(ctx, input)
 
 	// Try to add middleware after start
-	err := engine.Use(middleware.CorrelationID())
+	err := router.Use(middleware.CorrelationID())
 	if err != message.ErrAlreadyStarted {
 		t.Errorf("expected ErrAlreadyStarted, got %v", err)
 	}

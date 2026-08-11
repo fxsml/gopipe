@@ -4,14 +4,17 @@
 
 | Plan | Title | Status |
 |------|-------|--------|
+| [pipe-metrics](pipe-metrics.md) | Pipeline Metrics | Complete |
 | [locals](locals.md) | Message Locals | Implemented |
+| [engine-removal](engine-removal.md) | Remove Message Engine | Complete |
+| [marshaling-strategy](marshaling-strategy.md) | Raw-by-Default Message Contract (Router) | Complete |
 | [0007](0007-cesql-pattern-matching.md) | CESQL Pattern Matching | Proposed |
-| [autoscale-worker-pool](autoscale-worker-pool.md) | Autoscale Worker Pool | Proposed |
 | [transaction-handling](transaction-handling.md) | Transaction Handling | Proposed |
 | [inbox-outbox](inbox-outbox.md) | Inbox/Outbox Pattern | Proposed |
 | [redis-transactions](redis-transactions.md) | Redis Integration | Proposed |
 | [oauth2-cloudevents](oauth2-cloudevents.md) | OAuth2 CloudEvents Integration | Proposed |
 | [webhook-abuse-protection](webhook-abuse-protection.md) | Webhook Abuse Protection Handshake | Proposed |
+| [channel-pipe-interface-consolidation](channel-pipe-interface-consolidation.md) | Channel/Pipe Interface Consolidation | In Progress |
 
 ## Agent Guidance
 
@@ -35,7 +38,7 @@ Historical plans from the message package development are in [archive/](archive/
 | [0011](archive/0011-named-pools.md) | Named Pools | Complete |
 | [0012](archive/0012-engine-simplification.md) | Engine Simplification | Complete |
 | [0013](archive/0013-http-cloudevents-adapter.md) | HTTP CloudEvents Adapter | Complete |
-| [validating-marshaler-example-enhancement](validating-marshaler-example-enhancement.md) | Validating Marshaler Example Enhancement | Complete |
+| [0014](archive/0014-validating-marshaler-example-enhancement.md) | Validating Marshaler Example Enhancement | Complete |
 
 ## Creating New Plans
 

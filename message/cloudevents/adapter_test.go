@@ -3,6 +3,7 @@ package cloudevents
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func TestFromCloudEvent(t *testing.T) {
 		}
 	})
 
-	t.Run("converts event to RawMessage", func(t *testing.T) {
+	t.Run("converts event to Message", func(t *testing.T) {
 		event := cloudevents.NewEvent()
 		event.SetID("test-id")
 		event.SetType("test.type")
@@ -63,8 +64,12 @@ func TestFromCloudEvent(t *testing.T) {
 		if raw.Attributes["customext"] != "custom-value" {
 			t.Errorf("expected customext 'custom-value', got %v", raw.Attributes["customext"])
 		}
-		if string(raw.Data) != `{"key":"value"}` {
-			t.Errorf("expected data '{\"key\":\"value\"}', got %s", string(raw.Data))
+		data, ok := raw.Raw()
+		if !ok {
+			t.Fatalf("expected raw data, got %T", raw.Data)
+		}
+		if string(data) != `{"key":"value"}` {
+			t.Errorf("expected data '{\"key\":\"value\"}', got %s", data)
 		}
 	})
 
@@ -100,8 +105,8 @@ func TestToCloudEvent(t *testing.T) {
 		}
 	})
 
-	t.Run("converts RawMessage to event", func(t *testing.T) {
-		raw := message.NewRaw(
+	t.Run("converts Message to event", func(t *testing.T) {
+		raw := message.New(
 			[]byte(`{"key":"value"}`),
 			message.Attributes{
 				"id":              "test-id",
@@ -148,8 +153,37 @@ func TestToCloudEvent(t *testing.T) {
 		}
 	})
 
-	t.Run("omits datacontenttype when not in attributes", func(t *testing.T) {
+	t.Run("non-raw Data returns ErrUnexpectedDataType", func(t *testing.T) {
+		typed := message.New(
+			struct{ Key string }{Key: "value"},
+			message.Attributes{"id": "test-id", "type": "test.type", "source": "/test"},
+			nil,
+		)
+
+		_, err := ToCloudEvent(typed)
+		if !errors.Is(err, message.ErrUnexpectedDataType) {
+			t.Errorf("expected ErrUnexpectedDataType, got: %v", err)
+		}
+	})
+
+	t.Run("empty raw Data omits data field", func(t *testing.T) {
 		raw := message.NewRaw(
+			nil,
+			message.Attributes{"id": "test-id", "type": "test.type", "source": "/test"},
+			nil,
+		)
+
+		event, err := ToCloudEvent(raw)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if event.Data() != nil {
+			t.Errorf("expected no data, got %v", event.Data())
+		}
+	})
+
+	t.Run("omits datacontenttype when not in attributes", func(t *testing.T) {
+		raw := message.New(
 			[]byte(`{"key":"value"}`),
 			message.Attributes{
 				"id":     "test-id",
@@ -205,9 +239,9 @@ func TestExtractAttributes(t *testing.T) {
 }
 
 func TestSDKCompatibility(t *testing.T) {
-	t.Run("RawMessage JSON data roundtrip through SDK", func(t *testing.T) {
-		// Create a RawMessage with JSON data
-		original := message.NewRaw(
+	t.Run("raw Message JSON data roundtrip through SDK", func(t *testing.T) {
+		// Create a Message with raw JSON data
+		original := message.New(
 			[]byte(`{"key":"value","count":42}`),
 			message.Attributes{
 				message.AttrID:     "json-test",
@@ -244,10 +278,10 @@ func TestSDKCompatibility(t *testing.T) {
 		}
 	})
 
-	t.Run("RawMessage binary data roundtrip through SDK", func(t *testing.T) {
-		// Create a RawMessage with binary data (not valid JSON)
+	t.Run("raw Message binary data roundtrip through SDK", func(t *testing.T) {
+		// Create a Message with raw binary data (not valid JSON)
 		binaryData := []byte{0x00, 0x01, 0x02, 0xFF, 0xFE}
-		original := message.NewRaw(
+		original := message.New(
 			binaryData,
 			message.Attributes{
 				message.AttrID:     "binary-test",
@@ -282,7 +316,7 @@ func TestSDKCompatibility(t *testing.T) {
 		}
 	})
 
-	t.Run("SDK Event JSON to RawMessage", func(t *testing.T) {
+	t.Run("SDK Event JSON to Message", func(t *testing.T) {
 		// Create SDK event with JSON data
 		sdkEvent := cloudevents.NewEvent()
 		sdkEvent.SetID("sdk-json-test")
@@ -313,12 +347,16 @@ func TestSDKCompatibility(t *testing.T) {
 		}
 
 		// Verify data is valid JSON
-		if !json.Valid(parsed.Data) {
-			t.Errorf("parsed data is not valid JSON: %s", parsed.Data)
+		data, ok := parsed.Raw()
+		if !ok {
+			t.Fatalf("expected raw data, got %T", parsed.Data)
+		}
+		if !json.Valid(data) {
+			t.Errorf("parsed data is not valid JSON: %s", data)
 		}
 	})
 
-	t.Run("SDK Event binary to RawMessage", func(t *testing.T) {
+	t.Run("SDK Event binary to Message", func(t *testing.T) {
 		// Create SDK event with binary data
 		binaryData := []byte{0xDE, 0xAD, 0xBE, 0xEF}
 		sdkEvent := cloudevents.NewEvent()
@@ -352,13 +390,17 @@ func TestSDKCompatibility(t *testing.T) {
 		}
 
 		// Verify binary data was decoded
-		if !bytes.Equal(parsed.Data, binaryData) {
-			t.Errorf("parsed data = %v, want %v", parsed.Data, binaryData)
+		data, ok := parsed.Raw()
+		if !ok {
+			t.Fatalf("expected raw data, got %T", parsed.Data)
+		}
+		if !bytes.Equal(data, binaryData) {
+			t.Errorf("parsed data = %v, want %v", data, binaryData)
 		}
 	})
 
-	t.Run("full roundtrip: RawMessage -> SDK -> RawMessage", func(t *testing.T) {
-		original := message.NewRaw(
+	t.Run("full roundtrip: Message -> SDK -> Message", func(t *testing.T) {
+		original := message.New(
 			[]byte(`{"roundtrip":true}`),
 			message.Attributes{
 				message.AttrID:              "roundtrip-test",
@@ -371,13 +413,13 @@ func TestSDKCompatibility(t *testing.T) {
 			nil,
 		)
 
-		// RawMessage -> SDK Event via ToCloudEvent
+		// Message -> SDK Event via ToCloudEvent
 		sdkEvent, err := ToCloudEvent(original)
 		if err != nil {
 			t.Fatalf("ToCloudEvent failed: %v", err)
 		}
 
-		// SDK Event -> RawMessage via FromCloudEvent
+		// SDK Event -> Message via FromCloudEvent
 		restored, err := FromCloudEvent(sdkEvent, nil)
 		if err != nil {
 			t.Fatalf("FromCloudEvent failed: %v", err)
@@ -404,14 +446,16 @@ func TestSDKCompatibility(t *testing.T) {
 		}
 
 		// Verify data preserved
-		if !bytes.Equal(restored.Data, original.Data) {
-			t.Errorf("data = %s, want %s", restored.Data, original.Data)
+		restoredData, _ := restored.Raw()
+		originalData, _ := original.Raw()
+		if !bytes.Equal(restoredData, originalData) {
+			t.Errorf("data = %s, want %s", restoredData, originalData)
 		}
 	})
 
 	t.Run("binary data roundtrip through SDK adapters", func(t *testing.T) {
 		binaryData := []byte{0x00, 0x01, 0x02, 0x03, 0xFF}
-		original := message.NewRaw(
+		original := message.New(
 			binaryData,
 			message.Attributes{
 				message.AttrID:              "binary-roundtrip",
@@ -422,7 +466,7 @@ func TestSDKCompatibility(t *testing.T) {
 			nil,
 		)
 
-		// RawMessage -> SDK Event
+		// Message -> SDK Event
 		sdkEvent, err := ToCloudEvent(original)
 		if err != nil {
 			t.Fatalf("ToCloudEvent failed: %v", err)
@@ -433,15 +477,16 @@ func TestSDKCompatibility(t *testing.T) {
 			t.Errorf("SDK data = %v, want %v", sdkEvent.Data(), binaryData)
 		}
 
-		// SDK Event -> RawMessage
+		// SDK Event -> Message
 		restored, err := FromCloudEvent(sdkEvent, nil)
 		if err != nil {
 			t.Fatalf("FromCloudEvent failed: %v", err)
 		}
 
 		// Verify binary data preserved
-		if !bytes.Equal(restored.Data, binaryData) {
-			t.Errorf("restored data = %v, want %v", restored.Data, binaryData)
+		restoredData, _ := restored.Raw()
+		if !bytes.Equal(restoredData, binaryData) {
+			t.Errorf("restored data = %v, want %v", restoredData, binaryData)
 		}
 	})
 }

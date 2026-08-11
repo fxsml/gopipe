@@ -20,6 +20,14 @@ type MergerConfig struct {
 	Logger Logger
 	// ErrorHandler is called on merge errors after auto-nack (optional).
 	ErrorHandler ErrorHandler
+	// Metrics receives observability events from the underlying pipe (optional).
+	Metrics pipe.Metrics
+	// Labels provides static identifiers attached to every metrics event.
+	Labels map[string]string
+	// LabelFunc extracts dynamic labels from each forwarded message.
+	// Default: extracts "cloudevents.type" from *Message when Metrics is set.
+	// Set to nil to disable dynamic label extraction.
+	LabelFunc func(val any) map[string]string
 }
 
 func (c MergerConfig) parse() MergerConfig {
@@ -29,14 +37,17 @@ func (c MergerConfig) parse() MergerConfig {
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
+	if c.LabelFunc == nil {
+		c.LabelFunc = messageLabelFunc
+	}
 	return c
 }
 
 // Merger combines multiple message input channels into a single output.
 // Automatically nacks messages on errors and provides consistent logging.
 type Merger struct {
-	inner  *pipe.Merger[*Message]
-	cfg    MergerConfig
+	inner *pipe.Merger[*Message]
+	cfg   MergerConfig
 }
 
 // NewMerger creates a new message merger.
@@ -48,6 +59,9 @@ func NewMerger(cfg MergerConfig) *Merger {
 	m.inner = pipe.NewMerger[*Message](pipe.MergerConfig{
 		Buffer:          cfg.BufferSize,
 		ShutdownTimeout: cfg.ShutdownTimeout,
+		Metrics:         cfg.Metrics,
+		Labels:          cfg.Labels,
+		LabelFunc:       cfg.LabelFunc,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			msg.Nack(err)
@@ -74,4 +88,10 @@ func (m *Merger) AddInput(ch <-chan *Message) (<-chan struct{}, error) {
 // The output channel closes when all inputs are closed (or shutdown timeout).
 func (m *Merger) Merge(ctx context.Context) (<-chan *Message, error) {
 	return m.inner.Merge(ctx)
+}
+
+// Stats returns a point-in-time snapshot of the output buffer depth and capacity.
+// Use with a pull-based metrics backend (e.g. OTel observable gauge).
+func (m *Merger) Stats() pipe.Stats {
+	return m.inner.Stats()
 }

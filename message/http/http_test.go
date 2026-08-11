@@ -44,7 +44,7 @@ func TestHTTP_E2E_SingleEvent(t *testing.T) {
 	})
 
 	// Receive messages in background
-	received := make(chan *message.RawMessage, 1)
+	received := make(chan *message.Message, 1)
 	go func() {
 		for msg := range ch {
 			received <- msg
@@ -53,7 +53,7 @@ func TestHTTP_E2E_SingleEvent(t *testing.T) {
 	}()
 
 	// Send event
-	msg := message.NewRaw(
+	msg := message.New(
 		[]byte(`{"order_id":"ORD-001"}`),
 		message.Attributes{
 			message.AttrID:     "test-1",
@@ -114,14 +114,14 @@ func TestHTTP_E2E_BatchEvent(t *testing.T) {
 		}
 	}()
 
-	inputCh := make(chan *message.RawMessage, 100)
+	inputCh := make(chan *message.Message, 100)
 	done, err := pub.Publish(ctx, inputCh)
 	if err != nil {
 		t.Fatalf("publish error: %v", err)
 	}
 
 	for i := 0; i < 10; i++ {
-		inputCh <- message.NewRaw(
+		inputCh <- message.New(
 			[]byte(fmt.Sprintf(`{"order_id":"ORD-%03d"}`, i)),
 			message.Attributes{
 				message.AttrID:     fmt.Sprintf("batch-%d", i),
@@ -246,7 +246,7 @@ func TestHTTP_E2E_Publish(t *testing.T) {
 		}
 	}()
 
-	inputCh := make(chan *message.RawMessage, 100)
+	inputCh := make(chan *message.Message, 100)
 	done, err := pub.Publish(ctx, inputCh)
 	if err != nil {
 		t.Fatalf("publish error: %v", err)

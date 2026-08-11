@@ -51,6 +51,10 @@ Review PR `$ARGUMENTS` (or the current branch PR if no number given) against gop
 - [ ] No merge commits in feature branch history
 - [ ] PR targets `develop`, not `main`
 
+## Reference Procedures
+
+- @../docs/procedures/coding.md — simplicity, surgical changes, scope discipline
+
 ## Output Format
 
 Report as:

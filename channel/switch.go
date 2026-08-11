@@ -1,9 +1,9 @@
 package channel
 
-// Route directs values from in to n output channels based on handle's index.
+// Switch directs values from in to n output channels based on handle's index.
 // Values with an index outside [0,n) are ignored. All returned channels
 // are closed after in is closed.
-func Route[T any](
+func Switch[T any](
 	in <-chan T,
 	handle func(item T) int,
 	n int,

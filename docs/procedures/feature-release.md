@@ -128,16 +128,21 @@ git push --force-with-lease origin feature/xxx
 
 ### Phase 2: Merge to Develop
 
-#### 2.1 Create PR to Develop
+#### 2.1 Push Feature Branch
+
+Push the feature branch to remote before creating the PR. If a rebase was performed in Phase 1, use `--force-with-lease`; otherwise a regular push suffices.
 
 ```bash
-# Ensure feature branch is up to date
-git fetch origin develop
-git rebase origin/develop
-
-# Push updated branch
+# If Phase 1 rebase was performed:
 git push --force-with-lease origin feature/xxx
 
+# If no rebase was needed (branch was already clean):
+git push -u origin feature/xxx
+```
+
+#### 2.2 Create PR to Develop
+
+```bash
 # Create PR
 gh pr create \
   --base develop \
@@ -161,7 +166,7 @@ EOF
 )"
 ```
 
-#### 2.2 Review PR
+#### 2.3 Review PR
 
 ```bash
 # View PR status
@@ -174,7 +179,7 @@ gh pr checks
 gh pr diff
 ```
 
-#### 2.3 Merge PR
+#### 2.4 Merge PR
 
 **⚠️ APPROVAL REQUIRED before merge**
 
@@ -319,7 +324,8 @@ go list -m github.com/fxsml/gopipe/message@$VERSION
 ```bash
 git checkout develop
 git merge main
-git push origin develop
+# Agent stops here — ask user to run:
+# ! git push origin develop
 ```
 
 #### 6.2 Update Version References (if needed)

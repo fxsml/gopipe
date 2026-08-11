@@ -8,7 +8,7 @@ import (
 
 func main() {
 	// Create an input channel
-	in := channel.FromRange(10)
+	in := channel.FromValues(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
 
 	// Filter even numbers only
 	filtered := channel.Filter(in, func(i int) bool {

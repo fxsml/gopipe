@@ -1,13 +1,20 @@
 package channel
 
 // ToSlice collects all values from the input channel into a slice.
-// It blocks until the input channel is closed.
+// The returned channel is closed after the slice is collected.
 func ToSlice[T any](
 	in <-chan T,
-) []T {
-	var slice []T
-	for val := range in {
-		slice = append(slice, val)
-	}
-	return slice
+) <-chan []T {
+	out := make(chan []T)
+
+	go func() {
+		defer close(out)
+		var slice []T
+		for val := range in {
+			slice = append(slice, val)
+		}
+		out <- slice
+	}()
+
+	return out
 }

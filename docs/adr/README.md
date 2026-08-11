@@ -21,7 +21,7 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0007](0007-public-message-fields.md) | Public Message Fields | Implemented |
 | [0008](0008-remove-properties-thread-safety.md) | Remove Properties Thread Safety | Implemented |
 | [0009](0009-remove-noisy-properties.md) | Remove Noisy Properties | Implemented |
-| [0010](0010-dual-message-types.md) | Dual Message Types | Implemented |
+| [0010](0010-dual-message-types.md) | Dual Message Types | Superseded by ADR 0033 |
 | [0011](0011-cqrs-implementation.md) | CQRS Implementation | Implemented |
 | [0012](0012-pubsub-package-structure.md) | Pub/Sub Package Structure | Implemented |
 | [0013](0013-multiplex-pubsub.md) | Multiplex Pub/Sub | Implemented |
@@ -31,14 +31,20 @@ See [ADR Procedures](../procedures/adr.md) for details.
 | [0017](0017-middleware-for-processfunc.md) | Middleware for ProcessFunc | Accepted |
 | [0018](0018-interface-naming-conventions.md) | Interface Naming Conventions | Implemented |
 | [0019](0019-remove-sender-receiver.md) | Remove Sender and Receiver | Proposed |
-| [0020](0020-message-engine-architecture.md) | Message Engine Architecture | Proposed |
+| [0020](0020-message-engine-architecture.md) | Message Engine Architecture | Superseded by ADR 0032 |
 | [0021](0021-codec-marshaling-pattern.md) | Codec/Marshaling Pattern | Proposed |
 | [0022](0022-message-package-redesign.md) | Message Package Redesign | Proposed |
 | [0023](0023-engine-simplification.md) | Engine Simplification | Implemented |
 | [0024](0024-http-cloudevents-adapter.md) | HTTP CloudEvents Adapter Design | Implemented |
 | [0025](0025-message-context-values.md) | Message Context for In-Process Values | Proposed |
-| [0027](0027-json-schema-validation.md) | JSON Schema Validation | Implemented |
 | [0026](0026-acking-middleware-outermost.md) | Acking Middleware Outermost | Proposed |
+| [0027](0027-json-schema-validation.md) | JSON Schema Validation | Superseded by ADR 0028 |
+| [0028](0028-external-dependency-policy.md) | External Dependency Policy | Proposed |
+| [0029](0029-channel-pipe-interface-boundaries.md) | Channel/Pipe Interface and Naming Boundaries | Proposed |
+| [0030](0030-drop-merger-distributor-matcher.md) | Drop Merger, Distributor, and Matcher | Proposed |
+| [0031](0031-handler-level-marshaling.md) | Marshaling Lives in CommandHandler, Not Router | Implemented |
+| [0032](0032-remove-message-engine.md) | Remove Message Engine | Implemented |
+| [0033](0033-message-struct-simplification.md) | Message Struct Simplification | Implemented |
 
 ## History
 

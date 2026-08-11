@@ -1,7 +1,7 @@
 # Validation vs. Marshaling Separation - Design Evolution
 
 **Status:** Resolved — Option A implemented (Pure Separation via Registry + Middleware)
-**Related Plan:** validating-marshaler-example-enhancement.md
+**Related Plan:** [archive/0014-validating-marshaler-example-enhancement.md](archive/0014-validating-marshaler-example-enhancement.md)
 **Related ADR:** [0027](../adr/0027-json-schema-validation.md)
 
 ## Context

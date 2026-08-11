@@ -7,39 +7,45 @@ CloudEvents message handling with type-based routing.
 The `message` package provides:
 
 - **Message** - CloudEvents-aligned message with typed data and attributes
-- **Engine** - Orchestrates message flow between inputs, handlers, and outputs
+- **Router** - Dispatches messages to handlers by CE type
 - **Handler** - Type-safe command/event handlers with automatic marshaling
 
-## Engine Architecture
+## Router Composition
+
+`Router` is pure dispatch: it looks up a handler by CE type and calls
+`Handle`, never inspecting `Data` itself. It takes and returns a channel of
+`*Message` values whose `Data` may be raw `[]byte` or typed, depending
+entirely on the handlers registered.
+
+`NewCommandHandler` marshals by default, so a `Router` built entirely from
+command handlers can sit directly on raw broker/HTTP I/O:
 
 ```
-RawInput₁ → Unmarshal ─┐
-RawInput₂ → Unmarshal ─┼─→ Merger → Router → Distributor
-TypedInput ────────────┘                            │
-                                         ┌──────────┴──────────┐
-                                   TypedOutput            Marshal
-                                                             ↓
-                                                         RawOutput
+RawInput → Router (handlers unmarshal/marshal internally) → RawOutput
 ```
 
-The Engine uses a single merger for all message flows:
+Set `CommandHandlerConfig.DisableMarshaler` per handler to operate
+typed-through instead. `UnmarshalPipe`/`MarshalPipe` remain the right tool
+for explicit composition — e.g. naming decoupled from dispatch via an
+`InputRegistry`, or a `DisableMarshaler: true` handler feeding further typed
+processing before an eventual marshal stage:
 
-- **Merger** combines typed inputs and unmarshaled raw inputs
-- **Router** routes messages to handlers by CE type
-- **Distributor** routes output to consumers using first-match-wins semantics
-- **TypedOutput** bypasses marshaling (for internal use)
-- **RawOutput** marshals to bytes (for broker integration)
+```
+RawInput → UnmarshalPipe → Router (typed-through) → MarshalPipe → RawOutput
+```
+
+For fan-in/fan-out across multiple inputs/outputs, compose with
+[`channel.Merge`](https://pkg.go.dev/github.com/fxsml/gopipe/channel#Merge) and
+[`channel.Switch`](https://pkg.go.dev/github.com/fxsml/gopipe/channel#Switch).
 
 ## Usage
 
 ### Raw I/O (Broker Integration)
 
 ```go
-engine := message.NewEngine(message.EngineConfig{
-    Marshaler: message.NewJSONMarshaler(),
-})
+router := message.NewRouter(message.PipeConfig{})
 
-// Register handlers
+// Register handlers — marshaling is on by default
 handler := message.NewCommandHandler(
     func(ctx context.Context, cmd OrderCommand) ([]OrderEvent, error) {
         return []OrderEvent{{ID: cmd.ID, Status: "created"}}, nil
@@ -49,23 +55,17 @@ handler := message.NewCommandHandler(
         Naming: message.DotNaming,
     },
 )
-engine.AddHandler("orders", nil, handler)
+router.AddHandler("orders", handler)
 
-// Add raw inputs and outputs (for broker integration)
-input := make(chan *message.RawMessage, 100)
-engine.AddRawInput("orders-in", nil, input)
-output, _ := engine.AddRawOutput("orders-out", nil)
-
-// Start engine
 ctx, cancel := context.WithCancel(context.Background())
 defer cancel()
-done, _ := engine.Start(ctx)
+
+// Router takes/returns raw messages directly
+input := make(chan *message.Message, 100)
+output, _ := router.Pipe(ctx, input)
 
 // Send/receive raw messages (bytes)
-input <- &message.RawMessage{
-    Data:       []byte(`{"id": "123"}`),
-    Attributes: message.Attributes{"type": "order.command"},
-}
+input <- message.NewRaw([]byte(`{"id": "123"}`), message.Attributes{"type": "order.command"}, nil)
 
 out := <-output
 // out.Data contains marshaled OrderEvent as []byte
@@ -74,31 +74,27 @@ out := <-output
 ### Typed I/O (Internal Use / Testing)
 
 ```go
-engine := message.NewEngine(message.EngineConfig{
-    Marshaler: message.NewJSONMarshaler(),
-})
+router := message.NewRouter(message.PipeConfig{})
 
-// Register handlers
+// DisableMarshaler: true opts this handler out of marshal-by-default
 handler := message.NewCommandHandler(
     func(ctx context.Context, cmd OrderCommand) ([]OrderEvent, error) {
         return []OrderEvent{{ID: cmd.ID, Status: "created"}}, nil
     },
     message.CommandHandlerConfig{
-        Source: "/orders",
-        Naming: message.DotNaming,
+        Source:           "/orders",
+        Naming:           message.DotNaming,
+        DisableMarshaler: true,
     },
 )
-engine.AddHandler("orders", nil, handler)
+router.AddHandler("orders", handler)
 
-// Add typed inputs and outputs (no marshal/unmarshal)
+// Typed input/output, no marshal/unmarshal
 input := make(chan *message.Message, 100)
-engine.AddInput("orders-in", nil, input)
-output, _ := engine.AddOutput("orders-out", nil)
 
-// Start engine
 ctx, cancel := context.WithCancel(context.Background())
 defer cancel()
-done, _ := engine.Start(ctx)
+output, _ := router.Pipe(ctx, input)
 
 // Send/receive typed messages directly
 input <- &message.Message{
@@ -111,39 +107,13 @@ out := <-output
 event := out.Data.(OrderEvent)
 ```
 
-## Dynamic Input/Output
-
-Inputs and outputs can be added after Start():
-
-```go
-engine.Start(ctx)
-
-// Add new raw input dynamically (broker integration)
-newRawInput := make(chan *message.RawMessage, 100)
-engine.AddRawInput("new-raw-input", nil, newRawInput)
-
-// Add new typed input dynamically (internal use)
-newTypedInput := make(chan *message.Message, 100)
-engine.AddInput("new-typed-input", nil, newTypedInput)
-
-// Add new outputs dynamically
-newRawOutput, _ := engine.AddRawOutput("orders-out", match.Types("order.%"))
-newTypedOutput, _ := engine.AddOutput("internal-out", match.Types("internal.%"))
-```
-
 ## Message Types
-
-### RawMessage
-
-Raw bytes with CloudEvents attributes:
-
-```go
-type RawMessage = TypedMessage[[]byte]
-```
 
 ### Message
 
-Typed message with unmarshaled data:
+A single concrete type. `Data` holds either raw `[]byte` (broker boundary)
+or a typed Go value, depending on where the message is in a pipeline. Use
+`Raw()` to check which state `Data` is currently in:
 
 ```go
 msg := &message.Message{
@@ -153,7 +123,29 @@ msg := &message.Message{
         "source": "/orders",
     },
 }
+
+if data, ok := msg.Raw(); ok {
+    // Data is []byte
+} else {
+    // Data is a typed Go value
+}
 ```
+
+**Broker boundary contract:** messages crossing the broker boundary (broker
+adapters, `UnmarshalPipe`/`MarshalPipe`, `cloudevents.ToCloudEvent`/`FromCloudEvent`)
+always have `Data` typed to `[]byte` — `nil` or an empty slice both mean "no
+payload," but `Data` must never be a bare untyped `nil`. Use `NewRaw` to
+construct these messages instead of `New`: its `[]byte` parameter makes the
+guarantee structural, not just conventional.
+
+```go
+heartbeat := message.NewRaw(nil, message.Attributes{"type": "heartbeat"}, nil) // no payload
+order := message.NewRaw([]byte(`{"id":"123"}`), message.Attributes{"type": "order.created"}, nil)
+```
+
+This restriction applies only at the boundary. Purely internal, typed-only
+pipelines are free to use `nil` (or any other value) as `Data` — that's an
+application decision, not one gopipe imposes.
 
 ### Attributes
 
@@ -176,7 +168,11 @@ const (
 
 ### CommandHandler
 
-Processes commands and returns events:
+Processes commands and returns events. Unmarshals input from raw `[]byte`
+and marshals output to raw `[]byte` by default (`NewJSONMarshaler()`);
+set `DisableMarshaler: true` to operate typed-through instead. `Subject`,
+if set, derives the CE subject attribute from each typed output event,
+before marshaling:
 
 ```go
 handler := message.NewCommandHandler(
@@ -186,6 +182,9 @@ handler := message.NewCommandHandler(
     message.CommandHandlerConfig{
         Source: "/orders",
         Naming: message.DotNaming,
+        Subject: func(data any) string {
+            return data.(OrderCreated).OrderID
+        },
     },
 )
 ```
@@ -195,7 +194,6 @@ handler := message.NewCommandHandler(
 ```go
 type Handler interface {
     EventType() string
-    NewInput() any
     Handle(ctx context.Context, msg *Message) ([]*Message, error)
 }
 ```

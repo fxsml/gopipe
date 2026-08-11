@@ -2,30 +2,31 @@
 name: building-message-pipelines
 description: |
   Provides expertise in the message package architecture for building CloudEvents-based
-  pipelines in gopipe. Apply when working with the message package, Engine, Router,
+  pipelines in gopipe. Apply when working with the message package, Router,
   Handler, Matcher, or designing event-driven systems.
 user-invocable: false
 ---
 
 # Building Message Pipelines
 
-## Architecture: Single Merger
+## Architecture: Router Composition
 
 ```
-RawInputs → Unmarshal ─┐
-                       ├→ Merger → Router → Distributor
-TypedInputs ───────────┘                          │
-                                       ┌──────────┴──────────┐
-                                 TypedOutput            RawOutput
+RawInput → Router (handlers unmarshal/marshal internally) → RawOutput
 ```
 
-Each raw input has its own unmarshal pipe feeding into a single shared merger.
+`Router` is pure dispatch: it looks up a handler by CE type and calls `Handle`,
+never inspecting `Data`. `NewCommandHandler` marshals by default, so a `Router`
+built from command handlers can sit directly on raw broker/HTTP I/O. Set
+`CommandHandlerConfig.DisableMarshaler` per handler to operate typed-through
+instead, composing `NewUnmarshalPipe`/`NewMarshalPipe` explicitly at the
+boundary where raw ([]byte) messages meet typed ones. Use
+`channel.Merge`/`channel.Switch` for fan-in/fan-out.
 
-## Engine Configuration
+## Router Configuration
 
 ```go
-engine := message.NewEngine(message.EngineConfig{
-    Marshaler:       message.NewJSONMarshaler(),
+router := message.NewRouter(message.PipeConfig{
     ShutdownTimeout: 5 * time.Second,
 })
 ```
@@ -33,7 +34,7 @@ engine := message.NewEngine(message.EngineConfig{
 ## Adding Handlers
 
 ```go
-engine.AddHandler("handler-name", matcher, message.NewCommandHandler(
+router.AddHandler("handler-name", message.NewCommandHandler(
     func(ctx context.Context, cmd InputType) ([]OutputType, error) {
         return []OutputType{{...}}, nil
     },
@@ -49,7 +50,6 @@ engine.AddHandler("handler-name", matcher, message.NewCommandHandler(
 ```go
 type Handler interface {
     EventType() string          // CE type for routing (e.g., "order.created")
-    NewInput() any              // Creates instance for unmarshaling
     Handle(ctx context.Context, msg *Message) ([]*Message, error)
 }
 ```
@@ -64,30 +64,21 @@ type Matcher interface {
 
 Operates on Attributes only (not `*Message`) to avoid wrapper allocation for raw messages.
 
-## Inputs and Outputs
+## Raw and Typed I/O
 
 ```go
-// Raw input ([]byte data)
-input := make(chan *message.RawMessage, 10)
-engine.AddRawInput("name", matcher, input)
+// CommandHandler marshals by default — feed the router raw messages directly.
+rawInput := make(chan *message.Message, 10)
+rawOutput, _ := router.Pipe(ctx, rawInput)
 
-// Raw output
-output, _ := engine.AddRawOutput("name", matcher)
-
-// Typed input
-typedInput := make(chan *message.Message, 10)
-engine.AddInput("name", matcher, typedInput)
-
-// Typed output
-typedOutput, _ := engine.AddOutput("name", matcher)
-```
-
-## Loopback is a Plugin
-
-Loopback is NOT built into Engine. Use `plugin.Loopback`:
-
-```go
-engine.AddPlugin(plugin.Loopback("step1-loop", &typeMatcher{"step1.completed"}))
+// DisableMarshaler: true opts a handler out, for typed-through composition
+// via explicit NewUnmarshalPipe/NewMarshalPipe stages at the boundary:
+//
+//	unmarshal := message.NewUnmarshalPipe(registry, message.NewJSONMarshaler(), message.PipeConfig{})
+//	typedInput, _ := unmarshal.Pipe(ctx, rawInput)
+//	typedOutput, _ := router.Pipe(ctx, typedInput)
+//	marshal := message.NewMarshalPipe(message.NewJSONMarshaler(), message.PipeConfig{})
+//	rawOutput, _ := marshal.Pipe(ctx, typedOutput)
 ```
 
 ## Event Type Naming
@@ -102,16 +93,16 @@ engine.AddPlugin(plugin.Loopback("step1-loop", &typeMatcher{"step1.completed"}))
 
 ```go
 ctx, cancel := context.WithCancel(context.Background())
-done, _ := engine.Start(ctx)
+out, _ := router.Pipe(ctx, input)
 
-close(input)  // Close inputs first
+close(input)  // Close input first
 cancel()      // Then cancel context
-<-done        // Wait for shutdown
+for range out {}  // Drain until closed
 ```
 
 ## Rejected Alternatives
 
-**Combined Marshaler with Registry** — rejected: single responsibility. Marshaler is pure serialization; `Handler.NewInput()` provides instances.
+**Combined Marshaler with Registry** — rejected: single responsibility. Marshaler is pure serialization; `CommandHandlerConfig` decides whether and how a handler marshals.
 
 **PipeHandler Interface** — rejected: over-engineering. `EventType()` returning `"*"` for multi-type is a hack.
 

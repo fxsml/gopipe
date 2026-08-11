@@ -1,8 +1,10 @@
 # Plan: Redis Integration
 
-**Status:** Proposed
+**Status:** Proposed — likely separate repo
 **Depends On:** [transaction-handling](transaction-handling.md) (Tasks 0, 1, 2 — shared foundation)
 **Related:** [inbox-outbox](inbox-outbox.md) (SQL counterpart)
+
+**Scope note:** `TxMiddleware`, `NewSubscriber`, and other public constructors below take `go-redis/v9` types (`goredis.UniversalClient`, `goredis.Pipeliner`, `goredis.Cmdable`) directly in their signatures. Per [dependency & package boundary policy](../procedures/dependencies.md), a package whose public API exposes a foreign type doesn't belong in this repo — if implemented, this should ship as `gopipe-redis`, following the `gopipe-azservicebus` convention, not as `message/redis`.
 
 ## Overview
 

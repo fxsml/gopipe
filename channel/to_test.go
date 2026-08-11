@@ -13,7 +13,7 @@ func TestToSlice_Ints(t *testing.T) {
 	in <- 3
 	close(in)
 
-	slice := channel.ToSlice(in)
+	slice := <-channel.ToSlice(in)
 
 	if len(slice) != 3 {
 		t.Errorf("Expected slice length 3, got %d", len(slice))
@@ -27,7 +27,7 @@ func TestToSlice_Empty(t *testing.T) {
 	in := make(chan string)
 	close(in)
 
-	slice := channel.ToSlice(in)
+	slice := <-channel.ToSlice(in)
 
 	if len(slice) != 0 {
 		t.Errorf("Expected empty slice, got %v", slice)
@@ -40,12 +40,32 @@ func TestToSlice_Strings(t *testing.T) {
 	in <- "bar"
 	close(in)
 
-	slice := channel.ToSlice(in)
+	slice := <-channel.ToSlice(in)
 
 	if len(slice) != 2 {
 		t.Errorf("Expected slice length 2, got %d", len(slice))
 	}
 	if slice[0] != "foo" || slice[1] != "bar" {
 		t.Errorf("Expected [foo bar], got %v", slice)
+	}
+}
+
+func TestToSlice_RangeTerminates(t *testing.T) {
+	in := make(chan int, 3)
+	in <- 1
+	in <- 2
+	in <- 3
+	close(in)
+
+	var got []int
+	for slice := range channel.ToSlice(in) {
+		got = slice
+	}
+
+	if len(got) != 3 {
+		t.Errorf("Expected slice length 3, got %d", len(got))
+	}
+	if got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Errorf("Expected [1 2 3], got %v", got)
 	}
 }

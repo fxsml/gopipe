@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-func TestRoute_BasicRouting(t *testing.T) {
+func TestSwitch_BasicRouting(t *testing.T) {
 	in := make(chan int)
-	outs := Route(in, func(v int) int { return v % 3 }, 3)
+	outs := Switch(in, func(v int) int { return v % 3 }, 3)
 
 	go func() {
 		for i := 0; i < 6; i++ {
@@ -54,9 +54,9 @@ func TestRoute_BasicRouting(t *testing.T) {
 	}
 }
 
-func TestRoute_OutOfRangeIsDropped(t *testing.T) {
+func TestSwitch_OutOfRangeIsDropped(t *testing.T) {
 	in := make(chan int)
-	outs := Route(in, func(v int) int { return -1 }, 2)
+	outs := Switch(in, func(v int) int { return -1 }, 2)
 
 	go func() {
 		in <- 1
@@ -71,9 +71,9 @@ func TestRoute_OutOfRangeIsDropped(t *testing.T) {
 	}
 }
 
-func TestRoute_OutputsClosedOnInputClose(t *testing.T) {
+func TestSwitch_OutputsClosedOnInputClose(t *testing.T) {
 	in := make(chan int)
-	outs := Route(in, func(v int) int { return 0 }, 2)
+	outs := Switch(in, func(v int) int { return 0 }, 2)
 	close(in)
 	// wait for each output to close (avoid blocking) using a timeout
 	for _, out := range outs {

@@ -37,6 +37,19 @@ type MergerConfig struct {
 	// Called with ErrShutdownDropped when a message is dropped due to shutdown.
 	// Default logs via slog.Error.
 	ErrorHandler func(in any, err error)
+
+	// Metrics receives observability events (optional, nil = no overhead).
+	Metrics Metrics
+
+	// Labels provides static identifiers attached to every metrics event.
+	// Common keys: "stage", "pipeline", "handler", "service"
+	Labels map[string]string
+
+	// LabelFunc extracts dynamic labels from each forwarded value.
+	// Called before RecordWait (WaitOpSend). Returned labels are merged with Labels,
+	// with LabelFunc values taking precedence on conflicts.
+	// Only called when Metrics is non-nil. Nil means no dynamic labels.
+	LabelFunc func(val any) map[string]string
 }
 
 func (c MergerConfig) parse() MergerConfig {
@@ -148,8 +161,22 @@ func (m *Merger[T]) startInput(ch <-chan T, done chan struct{}) {
 				if !ok {
 					return
 				}
+				var sendStart time.Time
+				if m.cfg.Metrics != nil {
+					sendStart = time.Now()
+				}
+
+				labels := mergeLabels(m.cfg.Labels, m.cfg.LabelFunc, v)
+
 				select {
 				case m.out <- v:
+					if m.cfg.Metrics != nil {
+						m.cfg.Metrics.RecordWait(context.Background(), WaitInfo{
+							Labels:    labels,
+							Operation: WaitOpSend,
+							Duration:  time.Since(sendStart),
+						})
+					}
 				case <-m.done:
 					// Forced shutdown - report current value and exit
 					m.cfg.ErrorHandler(v, ErrShutdownDropped)
@@ -158,6 +185,17 @@ func (m *Merger[T]) startInput(ch <-chan T, done chan struct{}) {
 			}
 		}
 	}()
+}
+
+// Stats returns a point-in-time snapshot of the output buffer depth and capacity.
+// Use with a pull-based metrics backend (e.g. OTel observable gauge) to avoid
+// recording on every send.
+func (m *Merger[T]) Stats() Stats {
+	return Stats{
+		Depth:    len(m.out),
+		Capacity: cap(m.out),
+		Labels:   m.cfg.Labels,
+	}
 }
 
 func (m *Merger[T]) isStarted() bool {

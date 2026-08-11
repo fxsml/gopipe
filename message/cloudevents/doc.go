@@ -1,40 +1,33 @@
-// Package cloudevents provides integration between gopipe's [message.Engine]
+// Package cloudevents provides integration between gopipe's [message] package
 // and the CloudEvents SDK protocol bindings.
 //
 // This package wraps CloudEvents [protocol.Receiver] and [protocol.Sender] interfaces,
 // bridging their acknowledgment model (Finish) to gopipe's callback-based [message.Acking].
 //
-// # Usage with Plugins (Recommended)
+// # Usage
 //
-// Use [SubscriberPlugin] and [PublisherPlugin] for simplified registration:
+// Use [Subscriber] and [Publisher] directly, composed with [message.Router] via
+// [message.NewUnmarshalPipe] and [message.NewMarshalPipe]:
 //
 //	// Create protocol instances (using NATS as example)
 //	natsReceiver, _ := nats_ce.NewConsumer(conn, subject)
 //	kafkaSender, _ := kafka_ce.NewSender(brokers, topic)
 //
-//	// Register with engine using plugins
-//	engine.AddPlugin(
-//	    cloudevents.SubscriberPlugin(
-//	        ctx, "nats-in", nil,
-//	        natsReceiver, cloudevents.SubscriberConfig{},
-//	    ),
-//	    cloudevents.PublisherPlugin(
-//	        ctx, "kafka-out", nil,
-//	        kafkaSender, cloudevents.PublisherConfig{},
-//	    ),
-//	)
-//
-// # Direct Usage
-//
-// For more control, use [Subscriber] and [Publisher] directly:
-//
 //	sub := cloudevents.NewSubscriber(natsReceiver, cloudevents.SubscriberConfig{})
 //	pub := cloudevents.NewPublisher(kafkaSender, cloudevents.PublisherConfig{})
 //
-//	inCh, _ := sub.Subscribe(ctx)
-//	engine.AddRawInput("nats-in", nil, inCh)
-//	outCh, _ := engine.AddRawOutput("kafka-out", nil)
-//	pub.Publish(ctx, outCh)
+//	rawIn, _ := sub.Subscribe(ctx)
+//
+//	router := message.NewRouter(message.PipeConfig{})
+//	router.AddHandler("orders", handler)
+//
+//	unmarshal := message.NewUnmarshalPipe(router, message.NewJSONMarshaler(), message.PipeConfig{})
+//	typedIn, _ := unmarshal.Pipe(ctx, rawIn)
+//	typedOut, _ := router.Pipe(ctx, typedIn)
+//	marshal := message.NewMarshalPipe(message.NewJSONMarshaler(), message.PipeConfig{})
+//	rawOut, _ := marshal.Pipe(ctx, typedOut)
+//
+//	pub.Publish(ctx, rawOut)
 //
 // # Resource Cleanup
 //
@@ -56,14 +49,14 @@
 //   - Finish(err) = NACK (failed processing)
 //
 // This package bridges to gopipe's [message.Acking]:
-//   - [message.RawMessage.Ack] calls ceMsg.Finish(nil)
-//   - [message.RawMessage.Nack] calls ceMsg.Finish(err)
+//   - [message.Message.Ack] calls ceMsg.Finish(nil)
+//   - [message.Message.Nack] calls ceMsg.Finish(err)
 //
 // # Conversion Functions
 //
 // For manual conversion between CloudEvents and gopipe messages:
-//   - [FromCloudEvent] converts a CloudEvents event to [message.RawMessage]
-//   - [ToCloudEvent] converts a [message.RawMessage] to a CloudEvents event
+//   - [FromCloudEvent] converts a CloudEvents event to a [message.Message] with raw []byte Data
+//   - [ToCloudEvent] converts a [message.Message] with raw []byte Data to a CloudEvents event
 //
 // # Supported Protocol Bindings
 //

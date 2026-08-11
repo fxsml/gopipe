@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fxsml/gopipe/pipe"
@@ -21,7 +22,6 @@ type Middleware func(ProcessFunc) ProcessFunc
 // handlerEntry holds a handler and its configuration.
 type handlerEntry struct {
 	name    string
-	matcher Matcher
 	handler Handler
 }
 
@@ -66,6 +66,29 @@ type PipeConfig struct {
 	Logger Logger
 	// ErrorHandler is called on processing errors (default: no-op, errors logged via Logger).
 	ErrorHandler ErrorHandler
+	// Metrics receives observability events from the underlying pipe (optional).
+	Metrics pipe.Metrics
+	// Labels provides static identifiers attached to every metrics event.
+	Labels map[string]string
+	// LabelFunc extracts dynamic labels from each processed message.
+	// Default: extracts "cloudevents.type" from *Message when Metrics is set.
+	// Set to nil to disable dynamic label extraction.
+	LabelFunc func(val any) map[string]string
+}
+
+// messageLabelFunc is the default LabelFunc for all message-layer components.
+// It extracts the CloudEvents event type so process duration and error metrics carry
+// a type dimension without any explicit configuration.
+var messageLabelFunc = func(val any) map[string]string {
+	msg, ok := val.(*Message)
+	if !ok {
+		return nil
+	}
+	t, _ := msg.Attributes[AttrType].(string)
+	if t == "" {
+		return nil
+	}
+	return map[string]string{"cloudevents.type": t}
 }
 
 func (c PipeConfig) parse() PipeConfig {
@@ -75,6 +98,9 @@ func (c PipeConfig) parse() PipeConfig {
 	}
 	if c.ErrorHandler == nil {
 		c.ErrorHandler = func(msg *Message, err error) {}
+	}
+	if c.LabelFunc == nil {
+		c.LabelFunc = messageLabelFunc
 	}
 	return c
 }
@@ -89,6 +115,7 @@ type Router struct {
 	handlers   map[string]handlerEntry
 	middleware []Middleware
 	started    bool
+	inner      atomic.Pointer[pipe.ProcessPipe[*Message, *Message]]
 }
 
 // NewRouter creates a new message router.
@@ -107,8 +134,7 @@ func NewRouter(cfg PipeConfig) *Router {
 }
 
 // AddHandler registers a handler.
-// The optional matcher is applied after type matching.
-func (r *Router) AddHandler(name string, matcher Matcher, h Handler) error {
+func (r *Router) AddHandler(name string, h Handler) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.started {
@@ -118,7 +144,7 @@ func (r *Router) AddHandler(name string, matcher Matcher, h Handler) error {
 	if _, exists := r.handlers[eventType]; exists {
 		return ErrHandlerExists
 	}
-	r.handlers[eventType] = handlerEntry{name: name, matcher: matcher, handler: h}
+	r.handlers[eventType] = handlerEntry{name: name, handler: h}
 	r.cfg.Logger.Info("Adding handler",
 		"component", "router",
 		"handler", name,
@@ -178,6 +204,9 @@ func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message,
 		Concurrency:     r.cfg.Pool.Workers,
 		ProcessTimeout:  r.cfg.ProcessTimeout,
 		ShutdownTimeout: r.cfg.ShutdownTimeout,
+		Metrics:         r.cfg.Metrics,
+		Labels:          r.cfg.Labels,
+		LabelFunc:       r.cfg.LabelFunc,
 		ErrorHandler: func(in any, err error) {
 			msg := in.(*Message)
 			msg.Nack(err)
@@ -185,7 +214,17 @@ func (r *Router) Pipe(ctx context.Context, in <-chan *Message) (<-chan *Message,
 		},
 	}
 	p := pipe.NewProcessPipe(fn, cfg)
+	r.inner.Store(p)
 	return p.Pipe(ctx, in)
+}
+
+// Stats returns a point-in-time snapshot of the router's output buffer depth and capacity.
+// Use with a pull-based metrics backend (e.g. OTel observable gauge).
+func (r *Router) Stats() pipe.Stats {
+	if p := r.inner.Load(); p != nil {
+		return p.Stats()
+	}
+	return pipe.Stats{}
 }
 
 // handler returns the handler entry for the given CE type.
@@ -196,18 +235,8 @@ func (r *Router) handler(eventType string) (handlerEntry, bool) {
 	return entry, ok
 }
 
-// NewInput creates a typed instance for unmarshaling.
-// Implements InputRegistry.
-func (r *Router) NewInput(eventType string) any {
-	entry, ok := r.handler(eventType)
-	if !ok {
-		return nil
-	}
-	return entry.handler.NewInput()
-}
-
 func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) {
-	// handler lookup → matcher check → handler.Handle
+	// handler lookup → handler.Handle
 	// Messages are auto-nacked on error (consistent with other components).
 	// Acking on success is the handler's responsibility. Use AutoAck middleware
 	// for automatic ack-on-success behavior.
@@ -216,16 +245,6 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 		err := ErrNoHandler
 		r.cfg.Logger.Error("Routing message failed",
 			"component", "router",
-			"error", err,
-			"attributes", msg.Attributes)
-		return nil, err
-	}
-
-	if entry.matcher != nil && !entry.matcher.Match(msg.Attributes) {
-		err := ErrHandlerRejected
-		r.cfg.Logger.Error("Matching handler failed",
-			"component", "router",
-			"handler", entry.name,
 			"error", err,
 			"attributes", msg.Attributes)
 		return nil, err
@@ -252,9 +271,6 @@ func (r *Router) process(ctx context.Context, msg *Message) ([]*Message, error) 
 func (r *Router) ackingMiddleware() Middleware {
 	return r.cfg.AckStrategy.middleware()
 }
-
-// Verify Router implements InputRegistry.
-var _ InputRegistry = (*Router)(nil)
 
 // funcName extracts a readable name from a function.
 // For package-level functions, returns "package.Function" (e.g., "context.Background").

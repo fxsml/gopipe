@@ -4,8 +4,8 @@ go 1.24.1
 
 require (
 	github.com/fxsml/gopipe/channel v0.16.0
-	github.com/fxsml/gopipe/message v0.11.0
-	github.com/fxsml/gopipe/pipe v0.16.0
+	github.com/fxsml/gopipe/message v0.19.0
+	github.com/fxsml/gopipe/pipe v0.19.0
 	github.com/google/uuid v1.6.0
 )
 
@@ -15,9 +15,10 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+	github.com/stretchr/testify v1.11.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/text v0.25.0 // indirect
 )
 
 replace (

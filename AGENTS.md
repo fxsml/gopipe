@@ -29,7 +29,7 @@ Domain expertise loaded automatically from `.claude/skills/`:
 |-------|----------------|
 | `managing-git-workflow` | Git flow, branch naming, multi-module tagging, approval gates |
 | `developing-go-code` | Go standards, testing, common anti-patterns |
-| `building-message-pipelines` | Message package architecture, Engine, Router, Handler |
+| `building-message-pipelines` | Message package architecture, Router, Handler |
 
 ### Slash Commands
 
@@ -57,7 +57,7 @@ Domain expertise loaded automatically from `.claude/skills/`:
 |---------|---------|-----------|
 | `channel/` | Stateless channel operations | Filter, Transform, Merge, Broadcast |
 | `pipe/` | Stateful components with lifecycle | ProcessPipe, Merger, Distributor |
-| `message/` | CloudEvents message handling | Engine, Router, Handler |
+| `message/` | CloudEvents message handling | Router, Handler |
 
 ## Project Structure
 
@@ -95,8 +95,8 @@ TypedInputs ───────────┘                          │
 
 | Context | Pattern | Example |
 |---------|---------|---------|
-| Constructors | Config struct | `NewEngine(EngineConfig{})` |
-| Methods | Direct parameters | `AddHandler("name", matcher, h)` |
+| Constructors | Config struct | `NewRouter(PipeConfig{})` |
+| Methods | Direct parameters | `AddHandler("name", h)` |
 | Optional filtering | `nil` = match all | `AddOutput("out", nil)` |
 
 ### Matcher Interface
@@ -114,12 +114,13 @@ type Matcher interface {
 ```go
 type Handler interface {
     EventType() string   // CE type for routing
-    NewInput() any       // Creates instance for unmarshaling
     Handle(ctx, msg) ([]*Message, error)
 }
 ```
 
-**Why:** No central registry needed. Handler knows its type and can create instances.
+**Why:** No central registry needed — Router dispatches purely by CE type, never
+inspecting `Data`. Marshaling is a per-handler concern (`CommandHandlerConfig`),
+not Router's — see ADR 0031.
 
 ## Common Mistakes
 
@@ -144,13 +145,13 @@ channel.Filter(in, func(msg) bool {
 
 ```go
 // WRONG - creates forwarding complexity
-func (e *Engine) Start() {
-    e.distributor = NewDistributor()  // Too late
+func (o *Orchestrator) Start() {
+    o.distributor = NewDistributor()  // Too late
 }
 
 // CORRECT - create upfront, Add* calls component directly
-func NewEngine() *Engine {
-    return &Engine{
+func NewOrchestrator() *Orchestrator {
+    return &Orchestrator{
         distributor: NewDistributor(),  // Ready for AddOutput()
     }
 }
@@ -160,14 +161,14 @@ func NewEngine() *Engine {
 
 ### ❌ Handler.Name() method
 
-Handler should NOT own its name. Name is a wiring concern handled by Engine:
+Handler should NOT own its name. Name is a wiring concern handled by Router:
 
 ```go
 // WRONG
 type Handler interface { Name() string }
 
 // CORRECT - name is parameter to AddHandler
-engine.AddHandler("process-orders", matcher, handler)
+router.AddHandler("process-orders", handler)
 ```
 
 ### ❌ Copy() sharing Attributes map
@@ -199,7 +200,7 @@ type Marshaler interface {
 
 **Why:** Single responsibility. Split into:
 - `Marshaler` — pure serialization
-- `Handler.NewInput()` — provides instances for unmarshaling
+- `CommandHandlerConfig` — decides whether and how a handler marshals
 
 ### PipeHandler Interface
 
@@ -232,6 +233,53 @@ engine.AddSubscriber("orders", subscriber)
 
 **Why:** Doesn't handle leader election, dynamic scaling. External concern.
 
+### Semantic Interfaces (Filter/Mapper/Expander/Source/Processor/Sink) + `*Pipe` Suffix Rename
+
+```go
+// REJECTED
+type Mapper[In, Out any] interface { Map(in In) Out }
+type MapperPipe[In, Out any] struct{ /* sole implementation */ }
+func (m *MapperPipe[In, Out]) Map(in In) Out          { ... }
+func (m *MapperPipe[In, Out]) Pipe() Pipe[In, Out]    { ... }
+```
+
+**Why:** Violates documented Go convention — interfaces belong in the package that *uses* them, not beside their only implementation (go.dev Code Review Comments: "do not define interfaces before they are used"). The "direct invocation for testing" rationale is also moot: constructors already take the raw handler function, so callers already hold it. See [ADR 0029](docs/adr/0029-channel-pipe-interface-boundaries.md).
+
+### Producer/Trigger Separation
+
+```go
+// REJECTED
+type TriggerFunc func(ctx context.Context, trigger func()) error
+func NewProducer[Out any](source Source[Out], trigger TriggerFunc) *Producer[Out]
+package trigger // Interval, Cron, Immediate, OnDemand
+```
+
+**Why:** No proven real-world need — the one real periodic-generation use case found rolled entirely bespoke scheduling logic instead of using `pipe.Generator`. See [ADR 0029](docs/adr/0029-channel-pipe-interface-boundaries.md).
+
+### Unified Process() Method via Type Embedding
+
+```go
+// REJECTED
+func (f *FilterPipe[T]) Process(ctx context.Context, in T) ([]T, error) {
+    if f.Filter(in) {
+        return []T{in}, nil
+    }
+    return nil, nil
+}
+```
+
+**Why:** Wraps every pure operation's single value in a slice just to satisfy a common `Processor` interface, and blurs the pure/impure distinction. No clear benefit over explicit composition. See [ADR 0029](docs/adr/0029-channel-pipe-interface-boundaries.md).
+
+## Deferred Ideas (No Proven Need Yet)
+
+Surfaced during design exploration, not built — no real usage evidence, unlike the Rejected Alternatives above which have a specific reason *against* them. Revisit only if a concrete need appears.
+
+- **Router `PreMap`/`PostMap`** — optional type-conversion hooks on `RouterConfig` so handlers work with domain-specific types while `Router` converts at the boundary. Middleware may already cover this.
+- **Conditional/branching pipes** — `pipe.NewBranch(predicate, truePipe, falsePipe)`, route to one of two pipes by predicate.
+- **Error-recovery pipes** — `pipe.NewRecover(mainPipe, fallbackFunc)`, call a fallback on error instead of failing the pipeline. Distinct from `middleware.Recover` (panics, not errors).
+
+See [ADR 0029](docs/adr/0029-channel-pipe-interface-boundaries.md) for full context.
+
 ## Naming Decisions
 
 | Chosen | Rejected | Reason |
@@ -241,6 +289,8 @@ engine.AddSubscriber("orders", subscriber)
 | `Use()` | `ApplyMiddleware()` | Standard Go pattern (gin, echo, etc.) |
 | `DotNaming` | `KebabNaming` | Correctly describes output format: `order.created` (dots) |
 | `KebabNaming` | — | Fixed: now produces true kebab-case: `order-created` (hyphens) |
+| `channel.Transform`/`Process`/`Sink` (kept) | `Map`/`Expand`/`Drain` (channel-only rename) | Would break existing `pipe.NewTransformPipe`/`NewProcessPipe`/`NewSinkPipe` symmetry — see ADR 0029 |
+| `channel.Switch` (replaces `Route`, planned) | — | Avoids clash with `message.Router` — see ADR 0029 |
 
 ## File Organization
 
@@ -249,7 +299,6 @@ engine.AddSubscriber("orders", subscriber)
 ```
 message/
 ├── doc.go          # Package docs with Design Notes
-├── engine.go       # Engine orchestrator
 ├── router.go       # Handler routing with middleware
 ├── handler.go      # Handler interface, NewHandler, NewCommandHandler
 ├── message.go      # Message types, Copy, Acking
@@ -259,8 +308,7 @@ message/
 ├── matcher.go      # Matcher interface
 ├── errors.go       # Error types
 ├── match/          # Matcher implementations
-├── middleware/     # CorrelationID, AutoAck, etc.
-└── plugin/         # Engine plugins
+└── middleware/     # CorrelationID, AutoAck, etc.
 ```
 
 ## Deprecation Procedure

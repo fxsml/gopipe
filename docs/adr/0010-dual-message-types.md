@@ -1,7 +1,7 @@
 # ADR 0010: Dual Message Types
 
 **Date:** 2025-12-07
-**Status:** Implemented
+**Status:** Superseded by ADR 0033
 
 ## Context
 
@@ -38,7 +38,9 @@ type Message = TypedMessage[[]byte]
 
 - Related: ADR 0007 (Public Message Fields)
 - Related: ADR 0008 (Remove Attributes Thread-Safety)
+- Superseded by: [ADR 0033](0033-message-struct-simplification.md) (Message Struct Simplification)
 
 ## Updates
 
 **2025-12-22:** Fixed Links references. Updated Consequences format to match ADR template.
+**2026-08-05:** Superseded by ADR 0033 — `TypedMessage[T]`/`RawMessage` dropped in favor of a single concrete `Message` struct with a `Raw()` boundary check.

@@ -3,11 +3,12 @@ package jsonschema
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
-	jschema "github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/fxsml/gopipe/message"
+	jschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 const testSchema = `{
@@ -461,8 +462,8 @@ func TestNewValidationMiddleware(t *testing.T) {
 	registry.MustRegisterType(testData{}, testSchema)
 	mw := NewValidationMiddleware(registry)
 
-	passthrough := func(_ context.Context, raw *message.RawMessage) ([]*message.RawMessage, error) {
-		return []*message.RawMessage{raw}, nil
+	passthrough := func(_ context.Context, raw *message.Message) ([]*message.Message, error) {
+		return []*message.Message{raw}, nil
 	}
 	fn := mw(passthrough)
 
@@ -495,6 +496,14 @@ func TestNewValidationMiddleware(t *testing.T) {
 			t.Fatal("expected error for unregistered type")
 		}
 	})
+
+	t.Run("non-raw data rejected", func(t *testing.T) {
+		typed := message.New(testData{Name: "ok", Value: 1}, message.Attributes{"type": "test.data"}, nil)
+		_, err := fn(context.Background(), typed)
+		if !errors.Is(err, message.ErrUnexpectedDataType) {
+			t.Errorf("expected ErrUnexpectedDataType, got: %v", err)
+		}
+	})
 }
 
 func TestNewInputValidationMiddleware(t *testing.T) {
@@ -502,7 +511,7 @@ func TestNewInputValidationMiddleware(t *testing.T) {
 	registry.MustRegisterType(testData{}, testSchema)
 	mw := NewInputValidationMiddleware(registry)
 
-	next := func(_ context.Context, raw *message.RawMessage) ([]*message.Message, error) {
+	next := func(_ context.Context, raw *message.Message) ([]*message.Message, error) {
 		return []*message.Message{message.New(nil, raw.Attributes, nil)}, nil
 	}
 	fn := mw(next)
@@ -536,8 +545,8 @@ func TestNewOutputValidationMiddleware(t *testing.T) {
 	mw := NewOutputValidationMiddleware(registry)
 
 	t.Run("valid output passes", func(t *testing.T) {
-		next := func(_ context.Context, msg *message.Message) ([]*message.RawMessage, error) {
-			return []*message.RawMessage{
+		next := func(_ context.Context, msg *message.Message) ([]*message.Message, error) {
+			return []*message.Message{
 				message.NewRaw([]byte(`{"name":"ok","value":1}`), message.Attributes{"type": "test.data"}, nil),
 			}, nil
 		}
@@ -554,8 +563,8 @@ func TestNewOutputValidationMiddleware(t *testing.T) {
 	})
 
 	t.Run("invalid output rejected", func(t *testing.T) {
-		next := func(_ context.Context, msg *message.Message) ([]*message.RawMessage, error) {
-			return []*message.RawMessage{
+		next := func(_ context.Context, msg *message.Message) ([]*message.Message, error) {
+			return []*message.Message{
 				message.NewRaw([]byte(`{"name":"ok"}`), message.Attributes{"type": "test.data"}, nil),
 			}, nil
 		}
@@ -572,7 +581,7 @@ func TestNewOutputValidationMiddleware(t *testing.T) {
 	})
 
 	t.Run("next error propagated", func(t *testing.T) {
-		next := func(_ context.Context, msg *message.Message) ([]*message.RawMessage, error) {
+		next := func(_ context.Context, msg *message.Message) ([]*message.Message, error) {
 			return nil, context.Canceled
 		}
 		fn := mw(next)
@@ -583,6 +592,21 @@ func TestNewOutputValidationMiddleware(t *testing.T) {
 			t.Fatalf("expected context.Canceled, got: %v", err)
 		}
 	})
+
+	t.Run("non-raw output rejected", func(t *testing.T) {
+		next := func(_ context.Context, msg *message.Message) ([]*message.Message, error) {
+			return []*message.Message{
+				message.New(testData{Name: "ok", Value: 1}, message.Attributes{"type": "test.data"}, nil),
+			}, nil
+		}
+		fn := mw(next)
+
+		msg := message.New(nil, message.Attributes{"type": "test.data"}, nil)
+		_, err := fn(context.Background(), msg)
+		if !errors.Is(err, message.ErrUnexpectedDataType) {
+			t.Errorf("expected ErrUnexpectedDataType, got: %v", err)
+		}
+	})
 }
 
 func TestNewValidationMiddleware_typeFreeRegister(t *testing.T) {
@@ -590,8 +614,8 @@ func TestNewValidationMiddleware_typeFreeRegister(t *testing.T) {
 	registry.MustRegister("order.created", testSchema)
 	mw := NewValidationMiddleware(registry)
 
-	passthrough := func(_ context.Context, raw *message.RawMessage) ([]*message.RawMessage, error) {
-		return []*message.RawMessage{raw}, nil
+	passthrough := func(_ context.Context, raw *message.Message) ([]*message.Message, error) {
+		return []*message.Message{raw}, nil
 	}
 	fn := mw(passthrough)
 

@@ -3,6 +3,8 @@
 **Status:** Proposed
 **Depends On:** [locals](locals.md), [transaction-handling](transaction-handling.md)
 
+**Scope note:** Core design uses `database/sql` (stdlib) only, so it can stay in this repo. The one risk area is `isDuplicateKeyError`'s open question below about `pgconn.PgError` support — per [dependency & package boundary policy](../procedures/dependencies.md), driver-specific types like that must not leak into any exported signature; keep that detection internal or push it to a separate `gopipe-<driver>` helper if it needs to be public.
+
 ## Overview
 
 Add inbox (idempotent consumer) and outbox (transactional event publishing) middlewares that compose with TxMiddleware. All three share the same database transaction, giving exactly-once processing semantics: dedup check + business state + outbox entries commit atomically.

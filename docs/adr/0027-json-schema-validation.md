@@ -1,7 +1,7 @@
 # ADR 0027: JSON Schema Validation
 
 **Date:** 2026-02-16
-**Status:** Implemented
+**Status:** Superseded by ADR 0028
 
 ## Context
 
@@ -276,7 +276,7 @@ engine := message.NewEngine(message.EngineConfig{
 - Related: ADR 0021 (Marshaler and NamingStrategy)
 - Related: ADR 0022 (Message Package Redesign)
 - Related: ADR 0024 (HTTP CloudEvents Adapter)
-- Plan: [validating-marshaler-example-enhancement.md](../plans/validating-marshaler-example-enhancement.md)
+- Plan: [validating-marshaler-example-enhancement.md](../plans/archive/0014-validating-marshaler-example-enhancement.md)
 - Implementation: `message/jsonschema/registry.go`
 - Example: `examples/07-validating-marshaler/`
 
@@ -288,3 +288,9 @@ engine := message.NewEngine(message.EngineConfig{
 4. **Validation caching** - Cache validation results for identical payloads
 5. **Schema references** - Support `$ref` across registered schemas
 6. **Metrics** - Validation success/failure counters for observability
+
+## Updates
+
+**2026-07-26:** Superseded by ADR 0028 (External Dependency Policy). `message/jsonschema` is removed, not kept: the `Registry` maintains its own eventType↔Go-type mapping (`types`/`reverse`, populated via `RegisterType`) fully independent of `Router`'s own eventType→handler registry — a second, parallel source of truth for the same conceptual fact, with its own separately-configurable `EventTypeNaming` that can silently drift out of sync with `Router`'s. This is a real-world-proven pain point, not a hypothetical one. `santhosh-tekuri/jsonschema/v6` itself remains a reasonable dependency on its own merits (this ADR's library comparison table still holds); the wrapper `Registry`/middleware built around it in this package is what's being removed. Applications that need JSON Schema validation can depend on `santhosh-tekuri/jsonschema` directly.
+
+**Example replacement, decided, not a like-for-like port:** rather than leave this as an unguided "implement it yourself," `examples/07-validating-marshaler` is rewritten to demonstrate a `Marshaler`-decorator pattern — a `ValidatingMarshaler` wrapping `message.Marshaler` that keys schemas by `reflect.Type` (the same type `Router` already resolves via `Handler.NewInput()`) instead of a separately-derived CloudEvents type string. This sidesteps the naming-strategy-drift failure mode structurally, not just by convention, since there's no independent naming step to drift. It's deliberately *not* a shipped package — no `InputRegistry`, no schema-catalog HTTP serving, no proxy (no-Go-type) validation support; those are real capabilities this trades away, not oversights. Whether shipped JSON Schema support as a package ever comes back is a separate, distant, open question — not a qualifier on the removal or the example replacement, both of which are settled here.

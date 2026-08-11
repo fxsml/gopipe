@@ -6,11 +6,13 @@ Modular procedure library for gopipe development. Reusable across projects.
 
 | File | Topic | Description |
 |------|-------|-------------|
+| [coding.md](coding.md) | Coding | Behavioral rules: simplicity, scope discipline, TDD |
 | [git.md](git.md) | Git | Workflow, branching, commits |
 | [go.md](go.md) | Go | Standards, godoc, testing |
 | [documentation.md](documentation.md) | Docs | Structure, templates, ADRs |
 | [planning.md](planning.md) | Planning | Plan files and structure |
 | [adr.md](adr.md) | ADRs | Architecture Decision Records |
+| [dependencies.md](dependencies.md) | Dependencies | External dependency and package boundary rules |
 | [release.md](release.md) | Releases | Release and hotfix procedures |
 | [feature-release.md](feature-release.md) | Feature Release | Merge feature branches with history cleanup |
 

@@ -7,20 +7,13 @@
 //   - [pipe] — Stateful components with lifecycle management
 //   - [message] (this package) — CloudEvents message routing with type-based handlers
 //
-// The package centers around the [Engine], which orchestrates message flow between
-// inputs, handlers, and outputs. Messages follow the CloudEvents specification
+// The package centers around the [Router], which dispatches messages to
+// handlers by CloudEvents type. Messages follow the CloudEvents specification
 // with typed data payloads and context attributes.
-//
-// [gopipe]: https://github.com/fxsml/gopipe
-// [channel]: https://pkg.go.dev/github.com/fxsml/gopipe/channel
-// [pipe]: https://pkg.go.dev/github.com/fxsml/gopipe/pipe
-// [message]: https://pkg.go.dev/github.com/fxsml/gopipe/message
 //
 // # Quick Start
 //
-//	engine := message.NewEngine(message.EngineConfig{
-//		Marshaler: message.NewJSONMarshaler(),
-//	})
+//	router := message.NewRouter(message.PipeConfig{})
 //
 //	handler := message.NewCommandHandler(
 //		func(ctx context.Context, cmd OrderCmd) ([]OrderEvent, error) {
@@ -28,26 +21,33 @@
 //		},
 //		message.CommandHandlerConfig{Source: "/orders", Naming: message.DotNaming},
 //	)
-//	engine.AddHandler("orders", nil, handler)
+//	router.AddHandler("orders", handler)
 //
-//	engine.AddRawInput("in", nil, inputCh)
-//	output, _ := engine.AddRawOutput("out", nil)
-//
-//	done, _ := engine.Start(ctx)
+//	output, _ := router.Pipe(ctx, rawInputCh)
 //
 // # Architecture
 //
-// The engine uses a single merger for all inputs. Each raw input has its own
-// unmarshal pipe that feeds typed messages into the shared merger. Typed inputs
-// feed directly into the merger, then route to handlers via the router.
+// [Router] is pure dispatch: it looks up a handler by CE type and calls
+// [Handler.Handle], never inspecting Data itself. It takes and returns a
+// channel of [Message] values whose Data may be raw []byte or typed,
+// depending entirely on the handlers registered.
 //
-// See README.md in this package for detailed architecture diagrams.
+// [NewCommandHandler] marshals by default: input Data is unmarshaled from
+// raw []byte and output Data is marshaled back to raw []byte, so a Router
+// built entirely from command handlers can sit directly on raw broker/HTTP
+// I/O. Set [CommandHandlerConfig.DisableMarshaler] per handler to operate
+// typed-through instead — e.g. to feed further typed processing before an
+// explicit [NewMarshalPipe] stage, or when naming needs to be decoupled from
+// dispatch via [NewUnmarshalPipe]/[NewMarshalPipe] and an [InputRegistry].
+//
+// See README.md in this package for a worked example.
 //
 // # Design Notes
 //
-// Handler is self-describing via [Handler.EventType] and [Handler.NewInput],
-// eliminating the need for a central type registry. The engine reads these
-// methods to route messages and create instances for unmarshaling.
+// [Handler] is self-describing via [Handler.EventType], eliminating the need
+// for a central type registry — [Router] reads it to dispatch. Marshaling
+// is a per-handler concern ([CommandHandlerConfig]), not Router's: Router
+// never needs to know Data's concrete Go type to dispatch by CE type.
 //
 // [Matcher.Match] uses [Attributes] instead of *Message because all matchers
 // only access attributes, avoiding allocation when matching raw messages.
@@ -82,7 +82,7 @@
 //
 // For automatic ack-on-handler-success, use [middleware.AutoAck]:
 //
-//	engine.Use(middleware.AutoAck())
+//	router.Use(middleware.AutoAck())
 //
 // # Batch Processing
 //
@@ -112,18 +112,29 @@
 //
 // # Message Types
 //
-// [TypedMessage] is the generic base type. [Message] (any data) and [RawMessage]
-// ([]byte data) are type aliases for common use cases.
+// [Message] is a single concrete type: Data holds either raw []byte (broker
+// boundary) or a typed Go value, depending on where the message is in a
+// pipeline. Use [Message.Raw] to check which state Data is currently in.
+//
+// Messages crossing the broker boundary always have Data typed to []byte —
+// nil or an empty slice both represent "no payload," but Data must never be
+// a bare untyped nil. Use [NewRaw] to construct these messages: its []byte
+// parameter makes that guarantee structural rather than conventional. This
+// restriction applies only at the boundary; purely internal, typed-only
+// pipelines are free to use nil (or any other value) as they see fit — see
+// [New].
 //
 // # Subpackages
 //
 //   - [cloudevents]: Integration with CloudEvents SDK protocol bindings
 //   - [match]: Matchers for filtering messages by attributes
 //   - [middleware]: Cross-cutting concerns (correlation ID, logging)
-//   - [plugin]: Reusable engine plugins
 //
+// [gopipe]: https://github.com/fxsml/gopipe
+// [channel]: https://pkg.go.dev/github.com/fxsml/gopipe/channel
+// [pipe]: https://pkg.go.dev/github.com/fxsml/gopipe/pipe
+// [message]: https://pkg.go.dev/github.com/fxsml/gopipe/message
 // [cloudevents]: https://pkg.go.dev/github.com/fxsml/gopipe/message/cloudevents
 // [match]: https://pkg.go.dev/github.com/fxsml/gopipe/message/match
 // [middleware]: https://pkg.go.dev/github.com/fxsml/gopipe/message/middleware
-// [plugin]: https://pkg.go.dev/github.com/fxsml/gopipe/message/plugin
 package message
