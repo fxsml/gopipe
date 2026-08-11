@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-11
+
 ### Added
 
 - **message:** `Message.Raw() ([]byte, bool)` reports whether `Data` currently holds raw `[]byte` and returns it, following Go's comma-ok idiom (#148)
